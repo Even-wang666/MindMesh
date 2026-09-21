@@ -35,7 +35,13 @@ export type RuntimeStatus = {
   state: 'demo' | 'ready' | 'running' | 'error'
   label: string
   detail: string
-  version: string
+}
+
+export type ModelProviderStatus = {
+  id: 'deepseek-official'
+  name: 'DeepSeek'
+  configured: boolean
+  source: 'saved' | 'environment' | null
 }
 
 export type CreateAgentInput = Omit<Agent, 'id' | 'createdAt'>
@@ -73,5 +79,9 @@ export type MindMeshApi = {
   runtime: {
     status(): Promise<RuntimeStatus>
   }
+  settings: {
+    modelProvider(): Promise<ModelProviderStatus>
+    saveApiKey(apiKey: string): Promise<ModelProviderStatus>
+    removeApiKey(): Promise<ModelProviderStatus>
+  }
 }
-

@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
+import { ModelProviderSettings } from './model-provider-settings'
 import { MindMeshServices } from './services'
 
 let mainWindow: BrowserWindow | null = null
@@ -45,6 +46,9 @@ function registerIpc(current: MindMeshServices): void {
   ipcMain.handle('chat:sendPrivate', (_event, agentId, content) => current.sendPrivate(agentId, content))
   ipcMain.handle('chat:sendSpace', (_event, spaceId, content) => current.sendSpace(spaceId, content))
   ipcMain.handle('runtime:status', () => current.harness.status())
+  ipcMain.handle('settings:modelProvider', () => current.modelProvider())
+  ipcMain.handle('settings:saveApiKey', (_event, apiKey) => current.saveApiKey(apiKey))
+  ipcMain.handle('settings:removeApiKey', () => current.removeApiKey())
   ipcMain.handle('catalog:models', () => [
     { provider: 'deepseek-official', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
     { provider: 'deepseek-official', id: 'deepseek-v3.2', name: 'DeepSeek V3.2' },
@@ -65,8 +69,9 @@ app.whenReady().then(() => {
   app.setAppUserModelId('com.mindmesh.desktop')
   const dataDir = join(app.getPath('userData'), 'mindmesh-data')
   const db = new MindMeshDatabase(join(dataDir, 'mindmesh.sqlite'))
-  const harness = new DeepSeekHarnessAdapter(process.cwd(), dataDir)
-  services = new MindMeshServices(db, harness, () => mainWindow?.webContents)
+  const providerSettings = new ModelProviderSettings(join(dataDir, 'model-services.json'))
+  const harness = new DeepSeekHarnessAdapter(process.cwd(), dataDir, () => providerSettings.getApiKey())
+  services = new MindMeshServices(db, harness, providerSettings, () => mainWindow?.webContents)
   registerIpc(services)
   createWindow()
   app.on('activate', () => {

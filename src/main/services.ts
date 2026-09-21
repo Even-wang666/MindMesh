@@ -3,11 +3,13 @@ import type { CreateAgentInput, CreateSpaceInput, Message } from '../shared/cont
 import { buildPrivatePrompt, buildSpacePrompt, parseMentions } from '../shared/domain'
 import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
+import { ModelProviderSettings } from './model-provider-settings'
 
 export class MindMeshServices {
   constructor(
     readonly db: MindMeshDatabase,
     readonly harness: DeepSeekHarnessAdapter,
+    readonly providerSettings: ModelProviderSettings,
     private readonly renderer: () => WebContents | undefined,
   ) {}
 
@@ -17,6 +19,19 @@ export class MindMeshServices {
   listSpaces = () => this.db.listSpaces()
   createSpace = (input: CreateSpaceInput) => this.db.createSpace(input)
   messages = (scope: Message['scope'], scopeId: string) => this.db.listMessages(scope, scopeId)
+  modelProvider = () => this.providerSettings.status()
+
+  async saveApiKey(apiKey: string) {
+    const status = this.providerSettings.saveApiKey(apiKey)
+    await this.harness.shutdownAll()
+    return status
+  }
+
+  async removeApiKey() {
+    const status = this.providerSettings.removeApiKey()
+    await this.harness.shutdownAll()
+    return status
+  }
 
   async sendPrivate(agentId: string, content: string): Promise<Message[]> {
     const agent = this.db.getAgent(agentId)
@@ -70,4 +85,3 @@ export class MindMeshServices {
     this.renderer()?.send('chat:delta', { requestId, scope, scopeId, agentId, text })
   }
 }
-

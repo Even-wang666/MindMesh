@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Bot, Boxes, ChevronRight, CircleHelp, Command, FileText, Library, MessageCircle,
-  MoreHorizontal, Plus, Search, Send, Settings, Sparkles, Users, Wrench, X,
+  Activity, Bot, Boxes, Check, ChevronRight, CircleHelp, Command, Eye, EyeOff, HardDrive,
+  KeyRound, Library, MessageCircle, MoreHorizontal, Plus, Search, Send, Settings,
+  ShieldCheck, Sparkles, Trash2, Users, Wrench, X,
 } from 'lucide-react'
-import type { Agent, CreateAgentInput, Message, RuntimeStatus, Space } from '../../shared/contracts'
+import type {
+  Agent, CreateAgentInput, Message, ModelProviderStatus, RuntimeStatus, Space,
+} from '../../shared/contracts'
 import { BrandLogo } from './BrandLogo'
 
 type View = 'chats' | 'spaces' | 'agents' | 'skills' | 'tools' | 'settings'
@@ -87,7 +90,7 @@ export function App(): React.JSX.Element {
         {view === 'agents' && <AgentsPage agents={agents} onCreate={() => setAgentWizard(true)} onDetail={setDetailAgentId} />}
         {view === 'skills' && <CatalogPage kind="skills" />}
         {view === 'tools' && <CatalogPage kind="tools" />}
-        {view === 'settings' && <SettingsPage runtime={runtime} />}
+        {view === 'settings' && <SettingsPage runtime={runtime} onRuntimeChange={setRuntime} />}
       </section>
       {agentWizard && <AgentWizard onClose={() => setAgentWizard(false)} onCreated={async () => { setAgentWizard(false); await refresh() }} />}
       {spaceWizard && <SpaceWizard agents={agents} onClose={() => setSpaceWizard(false)} onCreated={async () => { setSpaceWizard(false); await refresh() }} />}
@@ -208,8 +211,92 @@ function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element 
   return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div></header><div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p><span className="status-tag">{item.status}</span></article>)}</div></div>
 }
 
-function SettingsPage({ runtime }: { runtime: RuntimeStatus | null }): React.JSX.Element {
-  return <div className="page management-page narrow"><header className="page-header"><div><span className="eyebrow">SETTINGS</span><h1>设置</h1><p>管理模型服务、运行状态与本地数据。</p></div></header><section className="settings-section"><h2>运行状态</h2><div className="setting-row"><div className="runtime-icon"><i /></div><div><strong>{runtime?.label ?? '检查中'}</strong><p>{runtime?.detail}</p><small>{runtime?.version}</small></div><span className={`state-badge ${runtime?.state}`}>{runtime?.state === 'demo' ? '演示' : '正常'}</span></div></section><section className="settings-section"><h2>模型服务</h2><div className="setting-row"><div className="provider-mark">D</div><div><strong>DeepSeek</strong><p>通过环境变量 DEEPSEEK_API_KEY 连接，密钥不会写入项目或数据库。</p></div><span className="state-badge">{runtime?.state === 'demo' ? '未连接' : '已连接'}</span></div></section><section className="settings-section"><h2>数据</h2><div className="setting-row"><FileText size={22} /><div><strong>本地优先</strong><p>智能体、空间和消息使用本机 SQLite 保存。</p></div></div></section></div>
+function SettingsPage({ runtime, onRuntimeChange }: {
+  runtime: RuntimeStatus | null
+  onRuntimeChange: (runtime: RuntimeStatus) => void
+}): React.JSX.Element {
+  const [provider, setProvider] = useState<ModelProviderStatus | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [apiKey, setApiKey] = useState('')
+  const [showKey, setShowKey] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => { void window.mindmesh.settings.modelProvider().then(setProvider) }, [])
+
+  async function refreshStatus(nextProvider: ModelProviderStatus): Promise<void> {
+    setProvider(nextProvider)
+    onRuntimeChange(await window.mindmesh.runtime.status())
+  }
+
+  async function save(): Promise<void> {
+    if (apiKey.trim().length < 8) {
+      setError('请输入有效的 API Key')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      await refreshStatus(await window.mindmesh.settings.saveApiKey(apiKey))
+      setApiKey('')
+      setEditing(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '保存失败，请稍后重试')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function remove(): Promise<void> {
+    if (!window.confirm('移除当前设备上保存的 DeepSeek API Key？')) return
+    setSaving(true)
+    setError('')
+    try {
+      await refreshStatus(await window.mindmesh.settings.removeApiKey())
+      setApiKey('')
+      setEditing(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '移除失败，请稍后重试')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const configured = provider?.configured ?? false
+  return (
+    <div className="page management-page narrow settings-page">
+      <header className="page-header"><div><span className="eyebrow">SETTINGS</span><h1>设置</h1><p>连接模型服务，管理应用状态与本地数据。</p></div></header>
+      <section className="settings-section">
+        <h2>模型服务</h2>
+        <div className="setting-row provider-row">
+          <div className="provider-mark">D</div>
+          <div><strong>DeepSeek</strong><p>{configured ? 'API 已配置，可以用于智能体对话。' : '连接你的 DeepSeek API，启用真实模型回复。'}</p></div>
+          <span className={`state-badge ${configured ? '' : 'inactive'}`}>{configured ? '已配置' : '需要配置'}</span>
+          <button className={configured ? 'secondary-button compact' : 'primary-button compact'} onClick={() => { setEditing(true); setError('') }}>
+            <KeyRound size={15} />{configured ? '编辑' : '连接'}
+          </button>
+        </div>
+        {editing && (
+          <div className="provider-form">
+            <div className="secure-note"><ShieldCheck size={17} /><span><strong>安全保存</strong><small>API Key 经过系统加密，仅保存在这台设备上。</small></span></div>
+            <label className="field api-key-field">
+              <span>API Key</span>
+              <div className="secret-input"><input autoFocus type={showKey ? 'text' : 'password'} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={configured ? '输入新的 API Key' : '输入 DeepSeek API Key'} /><button type="button" className="icon-button" onClick={() => setShowKey((current) => !current)} aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}>{showKey ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
+            </label>
+            {error && <p className="form-error">{error}</p>}
+            <div className="provider-actions">
+              {configured && provider?.source === 'saved' && <button className="danger-button" disabled={saving} onClick={() => void remove()}><Trash2 size={15} />移除</button>}
+              <span />
+              <button className="secondary-button compact" disabled={saving} onClick={() => { setEditing(false); setApiKey(''); setError('') }}>取消</button>
+              <button className="primary-button compact" disabled={saving || !apiKey.trim()} onClick={() => void save()}>{saving ? <span className="spinner" /> : <Check size={15} />}保存</button>
+            </div>
+          </div>
+        )}
+      </section>
+      <section className="settings-section"><h2>运行状态</h2><div className="setting-row"><div className="runtime-icon"><Activity size={19} /></div><div><strong>{runtime?.label ?? '检查中'}</strong><p>{runtime?.detail}</p></div><span className={`state-badge ${runtime?.state === 'demo' ? 'inactive' : ''}`}>{runtime?.state === 'demo' ? '等待连接' : '正常'}</span></div></section>
+      <section className="settings-section"><h2>本地数据</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>保存在这台设备上</strong><p>智能体、协作空间和消息不会自动上传到云端。</p></div></div></section>
+    </div>
+  )
 }
 
 function AgentWizard({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }): React.JSX.Element {

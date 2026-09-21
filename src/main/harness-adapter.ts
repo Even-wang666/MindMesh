@@ -15,27 +15,27 @@ export class DeepSeekHarnessAdapter {
   constructor(
     private readonly workspace: string,
     private readonly dataDirectory: string,
+    private readonly apiKey: () => string | undefined,
   ) {}
 
   status(): RuntimeStatus {
-    if (!process.env.DEEPSEEK_API_KEY) {
+    if (!this.apiKey()) {
       return {
         state: 'demo',
-        label: '演示模式',
-        detail: '未检测到 DEEPSEEK_API_KEY，界面与协作流程可用，模型回复使用本地模拟。',
-        version: 'DeepSeek Harness 0.1.6-alpha.2',
+        label: '等待配置',
+        detail: '连接模型服务后即可开始真实对话。',
       }
     }
     return {
       state: this.runtimes.size > 0 ? 'running' : 'ready',
-      label: this.runtimes.size > 0 ? '正常运行' : '就绪',
-      detail: 'DeepSeek Harness SDK 已配置，将在首次对话时启动。',
-      version: 'DeepSeek Harness 0.1.6-alpha.2',
+      label: this.runtimes.size > 0 ? '正常运行' : '准备就绪',
+      detail: this.runtimes.size > 0 ? '模型服务正在响应对话。' : '模型服务已连接，可以开始对话。',
     }
   }
 
   async run(agent: Agent, prompt: string, sessionId?: string): Promise<{ text: string; sessionId?: string }> {
-    if (!process.env.DEEPSEEK_API_KEY) {
+    const apiKey = this.apiKey()
+    if (!apiKey) {
       return { text: this.demoResponse(agent, prompt), sessionId }
     }
 
@@ -55,7 +55,7 @@ export class DeepSeekHarnessAdapter {
           cwd: this.workspace,
           processCwd: this.workspace,
           dshHome,
-          env: { ...process.env, DSH_HOME: dshHome, ELECTRON_RUN_AS_NODE: '1' },
+          env: { ...process.env, DEEPSEEK_API_KEY: apiKey, DSH_HOME: dshHome, ELECTRON_RUN_AS_NODE: '1' },
           maxTokens: 4096,
           initializeTimeoutMs: 30_000,
         }),

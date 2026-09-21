@@ -29,7 +29,11 @@ const api: MindMeshApi = {
   runtime: {
     status: () => ipcRenderer.invoke('runtime:status'),
   },
+  settings: {
+    modelProvider: () => ipcRenderer.invoke('settings:modelProvider'),
+    saveApiKey: (apiKey) => ipcRenderer.invoke('settings:saveApiKey', apiKey),
+    removeApiKey: () => ipcRenderer.invoke('settings:removeApiKey'),
+  },
 }
 
 contextBridge.exposeInMainWorld('mindmesh', api)
-

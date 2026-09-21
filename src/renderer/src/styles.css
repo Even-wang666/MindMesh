@@ -140,10 +140,30 @@ em, .tags i, .status-tag { width: fit-content; font-style: normal; padding: 4px 
 .setting-row strong { font-size: 13px; }
 .setting-row p { margin: 4px 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .setting-row small { color: var(--muted); font-size: 10px; }
-.runtime-icon, .provider-mark { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: #fff; background: var(--midnight); font-weight: 800; }
+.runtime-icon, .provider-mark, .data-icon { width: 38px; height: 38px; flex: 0 0 38px; border-radius: 11px; display: grid; place-items: center; color: #fff; background: var(--midnight); font-weight: 800; }
+.runtime-icon { background: var(--jade); }
+.data-icon { color: var(--iris); background: var(--soft-iris); }
 .runtime-icon i { width: 9px; height: 9px; }
 .state-badge { padding: 5px 9px; border-radius: 20px; color: var(--jade); background: rgb(30 158 143 / 9%); font-size: 10px; }
 .state-badge.demo { color: #9a671c; background: #fff4dc; }
+.state-badge.inactive { color: #8a611f; background: #fff4dc; }
+.compact { min-height: 34px; padding: 0 12px; font-size: 11px; }
+.provider-row .state-badge { flex: 0 0 auto; }
+.provider-form { padding: 20px; border-top: 1px solid var(--line); background: rgb(23 32 51 / 1.5%); }
+.secure-note { margin-bottom: 18px; padding: 12px 13px; display: flex; align-items: center; gap: 10px; border-radius: 10px; color: var(--jade); background: rgb(30 158 143 / 8%); }
+.secure-note > span { display: grid; gap: 3px; }
+.secure-note strong { font-size: 11px; }
+.secure-note small { color: var(--muted); font-size: 10px; }
+.api-key-field { max-width: 560px; }
+.secret-input { position: relative; }
+.secret-input input { padding-right: 48px; }
+.secret-input .icon-button { position: absolute; top: 4px; right: 4px; border: 0; background: transparent; }
+.provider-actions { display: flex; align-items: center; gap: 8px; }
+.provider-actions > span { flex: 1; }
+.danger-button { min-height: 34px; padding: 0 12px; border: 1px solid rgb(196 68 68 / 22%); border-radius: 10px; display: inline-flex; align-items: center; gap: 7px; color: #b94040; background: #fff; font-size: 11px; font-weight: 650; cursor: pointer; }
+.danger-button:hover { background: rgb(196 68 68 / 6%); }
+.danger-button:disabled { opacity: .45; cursor: not-allowed; }
+.form-error { margin: -7px 0 14px; color: #b94040; font-size: 11px; }
 
 .modal-backdrop, .drawer-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgb(23 32 51 / 32%); backdrop-filter: blur(2px); }
 .wizard { width: min(760px, calc(100vw - 48px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; border: 1px solid rgb(255 255 255 / 55%); border-radius: 16px; background: var(--porcelain); box-shadow: var(--shadow); overflow: hidden; }

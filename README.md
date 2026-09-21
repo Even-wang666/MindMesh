@@ -17,14 +17,14 @@ corepack pnpm@11.7.0 install
 corepack pnpm@11.7.0 dev
 ```
 
-未设置 `DEEPSEEK_API_KEY` 时，应用使用本地演示响应，所有页面和协作流程仍然可用。真实模型调用前，在当前终端设置：
+首次启动时，进入「设置 → 模型服务」，填写 DeepSeek API Key 即可启用真实模型回复。密钥由操作系统加密后保存在当前设备，不会写入项目、SQLite 或日志。
+
+未配置 API Key 时，应用使用本地演示响应，所有页面和协作流程仍然可用。开发环境也可以在当前终端设置：
 
 ```powershell
 $env:DEEPSEEK_API_KEY = "你的密钥"
 corepack pnpm@11.7.0 dev
 ```
-
-密钥不会写入项目、SQLite 或日志。
 
 ## 校验
 
