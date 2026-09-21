@@ -5,7 +5,7 @@ import {
   ShieldCheck, Sparkles, Trash2, Users, Wrench, X,
 } from 'lucide-react'
 import type {
-  Agent, CreateAgentInput, Message, ModelProviderId, ModelProviderStatus, RuntimeStatus,
+  Agent, ChatProgress, CreateAgentInput, Message, ModelProviderId, ModelProviderStatus, RuntimeStatus,
   SaveModelProviderInput, Space,
 } from '../../shared/contracts'
 import {
@@ -44,6 +44,11 @@ export function App(): React.JSX.Element {
   const [detailAgentId, setDetailAgentId] = useState<string>('')
   const [editingAgentId, setEditingAgentId] = useState<string>('')
   const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState<ChatProgress | null>(null)
+
+  const conversation = view === 'chats' ? `private:${selectedAgentId}` : view === 'spaces' ? `space:${selectedSpaceId}` : ''
+  const conversationRef = useRef(conversation)
+  conversationRef.current = conversation
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId)
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId)
@@ -60,24 +65,32 @@ export function App(): React.JSX.Element {
   }
 
   useEffect(() => { void refresh() }, [])
+  useEffect(() => window.mindmesh.chat.onProgress(setProgress), [])
   useEffect(() => {
     const scope = view === 'spaces' ? 'space' : 'private'
     const id = view === 'spaces' ? selectedSpaceId : selectedAgentId
     if (!id || (view !== 'chats' && view !== 'spaces')) return
-    void window.mindmesh.chat.messages(scope, id).then(setMessages)
+    let active = true
+    setMessages([])
+    void window.mindmesh.chat.messages(scope, id).then((next) => { if (active) setMessages(next) })
+    return () => { active = false }
   }, [view, selectedAgentId, selectedSpaceId])
 
   async function send(content: string): Promise<void> {
     if (!content.trim() || busy) return
+    const scope = view === 'chats' ? 'private' : 'space'
+    const id = view === 'chats' ? selectedAgentId : selectedSpaceId
+    if (!id || (view !== 'chats' && view !== 'spaces')) return
+    const requestConversation = `${scope}:${id}`
     setBusy(true)
     try {
-      if (view === 'chats' && selectedAgentId) {
-        setMessages(await window.mindmesh.chat.sendPrivate(selectedAgentId, content.trim()))
-      } else if (view === 'spaces' && selectedSpaceId) {
-        setMessages(await window.mindmesh.chat.sendSpace(selectedSpaceId, content.trim()))
-      }
+      const result = scope === 'private'
+        ? await window.mindmesh.chat.sendPrivate(id, content.trim())
+        : await window.mindmesh.chat.sendSpace(id, content.trim())
+      if (conversationRef.current === requestConversation) setMessages(result)
       setRuntime(await window.mindmesh.runtime.status())
     } finally {
+      setProgress(null)
       setBusy(false)
     }
   }
@@ -98,11 +111,11 @@ export function App(): React.JSX.Element {
       <section className="content">
         {view === 'chats' && (
           selectedAgent
-            ? <ChatPanel title={selectedAgent.name} subtitle={selectedAgent.role} messages={messages} busy={busy} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
+            ? <ChatPanel title={selectedAgent.name} subtitle={selectedAgent.role} messages={messages} busy={busy} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
             : <EmptyState onCreate={() => setAgentWizard(true)} />
         )}
         {view === 'spaces' && selectedSpace && (
-          <SpacePanel space={selectedSpace} agents={agents} messages={messages} busy={busy} onSend={send} />
+          <SpacePanel space={selectedSpace} agents={agents} messages={messages} busy={busy} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} />
         )}
         {view === 'agents' && <AgentsPage agents={agents} onCreate={() => setAgentWizard(true)} onDetail={setDetailAgentId} />}
         {view === 'skills' && <CatalogPage kind="skills" />}
@@ -169,39 +182,39 @@ function ObjectList(props: {
   )
 }
 
-function ChatPanel({ title, subtitle, messages, busy, onSend, onDetail }: {
-  title: string; subtitle: string; messages: Message[]; busy: boolean
+function ChatPanel({ title, subtitle, messages, busy, progress, onSend, onDetail }: {
+  title: string; subtitle: string; messages: Message[]; busy: boolean; progress?: string
   onSend: (content: string) => Promise<void>; onDetail: () => void
 }): React.JSX.Element {
   return (
     <div className="page chat-page">
       <header className="chat-header"><div><h1>{title}</h1><p>{subtitle}</p></div><button className="ghost-button" onClick={onDetail}>查看详情 <ChevronRight size={15} /></button></header>
-      <MessageList messages={messages} emptyText="开始一段新的对话" />
+      <MessageList messages={messages} emptyText="开始一段新的对话" progress={progress} />
       <Composer busy={busy} placeholder={`给 ${title} 发送消息…`} onSend={onSend} />
     </div>
   )
 }
 
-function SpacePanel({ space, agents, messages, busy, onSend }: {
-  space: Space; agents: Agent[]; messages: Message[]; busy: boolean; onSend: (content: string) => Promise<void>
+function SpacePanel({ space, agents, messages, busy, progress, onSend }: {
+  space: Space; agents: Agent[]; messages: Message[]; busy: boolean; progress?: string; onSend: (content: string) => Promise<void>
 }): React.JSX.Element {
   const members = agents.filter((agent) => space.memberIds.includes(agent.id))
   return (
     <div className="page space-page">
       <header className="chat-header"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p></div><button className="ghost-button"><Users size={16} /> 成员与背景</button></header>
       <div className="space-layout">
-        <div className="space-chat"><MessageList messages={messages} emptyText="使用 @智能体 开始协作" /><Composer busy={busy} placeholder="@智能体 输入消息…" members={members} onSend={onSend} /></div>
+        <div className="space-chat"><MessageList messages={messages} emptyText="使用 @智能体 开始协作" progress={progress} /><Composer busy={busy} placeholder="@智能体 输入消息…" members={members} onSend={onSend} /></div>
         <aside className="context-drawer"><span className="eyebrow">成员</span>{members.map((agent) => <div className="member" key={agent.id}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span><i /></div>)}<hr /><span className="eyebrow">背景信息</span><p>{space.context}</p><button className="text-button">编辑背景</button></aside>
       </div>
     </div>
   )
 }
 
-function MessageList({ messages, emptyText }: { messages: Message[]; emptyText: string }): React.JSX.Element {
+function MessageList({ messages, emptyText, progress }: { messages: Message[]; emptyText: string; progress?: string }): React.JSX.Element {
   const end = useRef<HTMLDivElement>(null)
-  useEffect(() => end.current?.scrollIntoView({ behavior: 'smooth' }), [messages])
-  if (!messages.length) return <div className="conversation-empty"><BrandLogo size={54} /><h3>{emptyText}</h3><p>消息仅保存在这台设备上。</p></div>
-  return <div className="messages">{messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}><Avatar name={message.authorName} /><div><header><strong>{message.authorName}</strong><time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header><p>{message.content}</p></div></article>)}<div ref={end} /></div>
+  useEffect(() => end.current?.scrollIntoView({ behavior: 'smooth' }), [messages, progress])
+  if (!messages.length && !progress) return <div className="conversation-empty"><BrandLogo size={54} /><h3>{emptyText}</h3><p>消息仅保存在这台设备上。</p></div>
+  return <div className="messages">{messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}><Avatar name={message.authorName} /><div><header><strong>{message.authorName}</strong><time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header><p>{message.content}</p></div></article>)}{progress && <div className="chat-progress" role="status"><span className="chat-progress-dot" />{progress} 正在回复…</div>}<div ref={end} /></div>
 }
 
 function Composer({ busy, placeholder, members = [], onSend }: { busy: boolean; placeholder: string; members?: Agent[]; onSend: (value: string) => Promise<void> }): React.JSX.Element {

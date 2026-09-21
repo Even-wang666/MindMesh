@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ChatDelta, MindMeshApi } from '../shared/contracts'
+import type { ChatDelta, ChatProgress, MindMeshApi } from '../shared/contracts'
 
 const api: MindMeshApi = {
   agents: {
@@ -20,6 +20,11 @@ const api: MindMeshApi = {
       const handler = (_event: Electron.IpcRendererEvent, payload: ChatDelta): void => listener(payload)
       ipcRenderer.on('chat:delta', handler)
       return () => ipcRenderer.removeListener('chat:delta', handler)
+    },
+    onProgress: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: ChatProgress): void => listener(payload)
+      ipcRenderer.on('chat:progress', handler)
+      return () => ipcRenderer.removeListener('chat:progress', handler)
     },
   },
   catalog: {

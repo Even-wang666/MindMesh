@@ -80,6 +80,8 @@ button { color: inherit; }
 .message.system { justify-content: center; opacity: .72; }
 .message.system .avatar, .message.system header { display: none; }
 .message.system p { border-style: dashed; background: transparent; }
+.chat-progress { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.chat-progress-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--iris); }
 .conversation-empty { flex: 1; display: grid; place-content: center; justify-items: center; color: var(--muted); }
 .conversation-empty h3 { margin: 15px 0 5px; color: var(--midnight); font-size: 17px; }
 .conversation-empty p { margin: 0; font-size: 12px; }

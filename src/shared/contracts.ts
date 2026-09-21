@@ -68,6 +68,8 @@ export type ChatDelta = {
   text: string
 }
 
+export type ChatProgress = Pick<Message, 'scope' | 'scopeId'> & { agentName: string }
+
 export type MindMeshApi = {
   agents: {
     list(): Promise<Agent[]>
@@ -84,6 +86,7 @@ export type MindMeshApi = {
     sendPrivate(agentId: string, content: string): Promise<Message[]>
     sendSpace(spaceId: string, content: string): Promise<Message[]>
     onDelta(listener: (event: ChatDelta) => void): () => void
+    onProgress(listener: (event: ChatProgress) => void): () => void
   }
   catalog: {
     skills(): Promise<Array<{ id: string; name: string; description: string; status: string }>>

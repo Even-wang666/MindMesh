@@ -49,12 +49,22 @@ export class MindMeshServices {
     if (!agent) throw new Error('智能体不存在')
     this.db.addMessage({ scope: 'private', scopeId: agentId, authorType: 'user', authorName: '你', content })
     const requestId = crypto.randomUUID()
-    const result = await this.harness.run(agent, buildPrivatePrompt(agent, content), `private-${agentId}`)
-    this.emitText(requestId, 'private', agentId, agent.id, result.text)
+    this.emitProgress('private', agentId, agent.name)
+    let result
+    try {
+      result = await this.harness.run(agent, buildPrivatePrompt(agent, content), `private-${agentId}`)
+    } catch {
+      this.db.addMessage({
+        scope: 'private', scopeId: agentId, authorType: 'system', authorName: 'MindMesh',
+        content: `${agent.name} 回复失败，请检查模型服务配置或网络后重试。`,
+      })
+      return this.db.listMessages('private', agentId)
+    }
     this.db.addMessage({
       scope: 'private', scopeId: agentId, authorType: 'agent', authorId: agent.id,
       authorName: agent.name, content: result.text,
     })
+    this.emitText(requestId, 'private', agentId, agent.id, result.text)
     return this.db.listMessages('private', agentId)
   }
 
@@ -75,15 +85,28 @@ export class MindMeshServices {
     for (const agent of mentioned) {
       const visibleMessages = this.db.listMessages('space', spaceId).slice(-30)
       const prompt = buildSpacePrompt(agent, space, visibleMessages)
-      const result = await this.harness.run(agent, prompt, `space-${spaceId}-${agent.id}`)
-      const requestId = crypto.randomUUID()
-      this.emitText(requestId, 'space', spaceId, agent.id, result.text)
+      this.emitProgress('space', spaceId, agent.name)
+      let result
+      try {
+        result = await this.harness.run(agent, prompt, `space-${spaceId}-${agent.id}`)
+      } catch {
+        this.db.addMessage({
+          scope: 'space', scopeId: spaceId, authorType: 'system', authorName: 'MindMesh',
+          content: `${agent.name} 回复失败，请检查模型服务配置或网络后重试。`,
+        })
+        continue
+      }
       this.db.addMessage({
         scope: 'space', scopeId: spaceId, authorType: 'agent', authorId: agent.id,
         authorName: agent.name, content: result.text,
       })
+      this.emitText(crypto.randomUUID(), 'space', spaceId, agent.id, result.text)
     }
     return this.db.listMessages('space', spaceId)
+  }
+
+  private emitProgress(scope: Message['scope'], scopeId: string, agentName: string): void {
+    this.renderer()?.send('chat:progress', { scope, scopeId, agentName })
   }
 
   private emitText(

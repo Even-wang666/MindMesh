@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
-import type { Agent, MindMeshApi } from '../src/shared/contracts'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Agent, ChatProgress, Message, MindMeshApi } from '../src/shared/contracts'
 import { App } from '../src/renderer/src/App'
+
+afterEach(cleanup)
+beforeEach(() => { Element.prototype.scrollIntoView = vi.fn() })
 
 const agent: Agent = {
   id: 'researcher',
@@ -27,6 +30,7 @@ function mockApi(): MindMeshApi {
       sendPrivate: vi.fn(async () => []),
       sendSpace: vi.fn(async () => []),
       onDelta: vi.fn(() => () => undefined),
+      onProgress: vi.fn(() => () => undefined),
     },
     catalog: { skills: vi.fn(async () => []), tools: vi.fn(async () => []), models: vi.fn(async () => []) },
     runtime: {
@@ -78,5 +82,44 @@ describe('chat details', () => {
     expect((await screen.findAllByText('高级研究员')).length).toBeGreaterThanOrEqual(2)
     expect(api.agents.update).toHaveBeenCalledOnce()
     expect(currentAgent.id).toBe(agent.id)
+  })
+})
+
+describe('chat flow', () => {
+  it('keeps a completed reply in its original conversation', async () => {
+    const secondAgent = { ...agent, id: 'developer', name: 'Developer', role: '软件工程师' }
+    const api = mockApi()
+    api.agents.list = vi.fn(async () => [agent, secondAgent])
+    let resolveSend!: (messages: Message[]) => void
+    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { resolveSend = resolve }))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.change(await screen.findByPlaceholderText('给 Researcher 发送消息…'), { target: { value: '问题' } })
+    fireEvent.keyDown(screen.getByPlaceholderText('给 Researcher 发送消息…'), { key: 'Enter' })
+    fireEvent.click(screen.getByRole('button', { name: /Developer 软件工程师/ }))
+    expect(await screen.findByPlaceholderText('给 Developer 发送消息…')).toBeInTheDocument()
+
+    await act(async () => resolveSend([{
+      id: 'old-reply', scope: 'private', scopeId: agent.id, authorType: 'agent',
+      authorName: agent.name, content: '旧会话回复', sequence: 1, createdAt: new Date().toISOString(),
+    }]))
+    expect(screen.queryByText('旧会话回复')).not.toBeInTheDocument()
+  })
+
+  it('shows progress only for the active conversation', async () => {
+    const secondAgent = { ...agent, id: 'developer', name: 'Developer', role: '软件工程师' }
+    const api = mockApi()
+    api.agents.list = vi.fn(async () => [agent, secondAgent])
+    let notify!: (event: ChatProgress) => void
+    api.chat.onProgress = vi.fn((listener) => { notify = listener; return () => undefined })
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    act(() => notify({ scope: 'private', scopeId: agent.id, agentName: agent.name }))
+    expect(screen.getByRole('status')).toHaveTextContent('Researcher 正在回复')
+    fireEvent.click(screen.getByRole('button', { name: /Developer 软件工程师/ }))
+    expect(screen.queryByText(/Researcher 正在回复/)).not.toBeInTheDocument()
   })
 })
