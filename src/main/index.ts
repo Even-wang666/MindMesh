@@ -46,13 +46,10 @@ function registerIpc(current: MindMeshServices): void {
   ipcMain.handle('chat:sendPrivate', (_event, agentId, content) => current.sendPrivate(agentId, content))
   ipcMain.handle('chat:sendSpace', (_event, spaceId, content) => current.sendSpace(spaceId, content))
   ipcMain.handle('runtime:status', () => current.harness.status())
-  ipcMain.handle('settings:modelProvider', () => current.modelProvider())
-  ipcMain.handle('settings:saveApiKey', (_event, apiKey) => current.saveApiKey(apiKey))
-  ipcMain.handle('settings:removeApiKey', () => current.removeApiKey())
-  ipcMain.handle('catalog:models', () => [
-    { provider: 'deepseek-official', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
-    { provider: 'deepseek-official', id: 'deepseek-v3.2', name: 'DeepSeek V3.2' },
-  ])
+  ipcMain.handle('settings:modelProviders', () => current.modelProviders())
+  ipcMain.handle('settings:saveModelProvider', (_event, input) => current.saveModelProvider(input))
+  ipcMain.handle('settings:removeModelProvider', (_event, id) => current.removeModelProvider(id))
+  ipcMain.handle('catalog:models', () => current.models())
   ipcMain.handle('catalog:skills', () => [
     { id: 'research', name: '研究分析', description: '整理资料、比较证据并形成结构化结论。', status: '已安装' },
     { id: 'report', name: '报告撰写', description: '将分析结果组织为清晰的专业报告。', status: '已安装' },
@@ -70,7 +67,7 @@ app.whenReady().then(() => {
   const dataDir = join(app.getPath('userData'), 'mindmesh-data')
   const db = new MindMeshDatabase(join(dataDir, 'mindmesh.sqlite'))
   const providerSettings = new ModelProviderSettings(join(dataDir, 'model-services.json'))
-  const harness = new DeepSeekHarnessAdapter(process.cwd(), dataDir, () => providerSettings.getApiKey())
+  const harness = new DeepSeekHarnessAdapter(process.cwd(), dataDir, providerSettings)
   services = new MindMeshServices(db, harness, providerSettings, () => mainWindow?.webContents)
   registerIpc(services)
   createWindow()

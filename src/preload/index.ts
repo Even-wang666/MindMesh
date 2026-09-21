@@ -30,9 +30,9 @@ const api: MindMeshApi = {
     status: () => ipcRenderer.invoke('runtime:status'),
   },
   settings: {
-    modelProvider: () => ipcRenderer.invoke('settings:modelProvider'),
-    saveApiKey: (apiKey) => ipcRenderer.invoke('settings:saveApiKey', apiKey),
-    removeApiKey: () => ipcRenderer.invoke('settings:removeApiKey'),
+    modelProviders: () => ipcRenderer.invoke('settings:modelProviders'),
+    saveModelProvider: (input) => ipcRenderer.invoke('settings:saveModelProvider', input),
+    removeModelProvider: (id) => ipcRenderer.invoke('settings:removeModelProvider', id),
   },
 }
 

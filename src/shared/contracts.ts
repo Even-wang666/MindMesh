@@ -37,11 +37,24 @@ export type RuntimeStatus = {
   detail: string
 }
 
+export type ModelProviderId = 'deepseek-official' | 'moonshotai-cn' | 'openai' | 'anthropic' | 'custom'
+
 export type ModelProviderStatus = {
-  id: 'deepseek-official'
-  name: 'DeepSeek'
+  id: ModelProviderId
+  name: string
+  description: string
   configured: boolean
   source: 'saved' | 'environment' | null
+  baseUrl?: string
+  model?: string
+}
+
+export type SaveModelProviderInput = {
+  id: ModelProviderId
+  apiKey: string
+  name?: string
+  baseUrl?: string
+  model?: string
 }
 
 export type CreateAgentInput = Omit<Agent, 'id' | 'createdAt'>
@@ -80,8 +93,8 @@ export type MindMeshApi = {
     status(): Promise<RuntimeStatus>
   }
   settings: {
-    modelProvider(): Promise<ModelProviderStatus>
-    saveApiKey(apiKey: string): Promise<ModelProviderStatus>
-    removeApiKey(): Promise<ModelProviderStatus>
+    modelProviders(): Promise<ModelProviderStatus[]>
+    saveModelProvider(input: SaveModelProviderInput): Promise<ModelProviderStatus[]>
+    removeModelProvider(id: ModelProviderId): Promise<ModelProviderStatus[]>
   }
 }

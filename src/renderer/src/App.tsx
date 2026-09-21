@@ -5,15 +5,27 @@ import {
   ShieldCheck, Sparkles, Trash2, Users, Wrench, X,
 } from 'lucide-react'
 import type {
-  Agent, CreateAgentInput, Message, ModelProviderStatus, RuntimeStatus, Space,
+  Agent, CreateAgentInput, Message, ModelProviderId, ModelProviderStatus, RuntimeStatus,
+  SaveModelProviderInput, Space,
 } from '../../shared/contracts'
 import {
-  DEEPSEEK_API_KEY_EXAMPLE, DEEPSEEK_API_KEY_MAX_LENGTH, DEEPSEEK_API_KEY_MIN_LENGTH,
-  getDeepSeekApiKeyError,
-} from '../../shared/domain'
+  getModelProviderApiKeyError, getModelProviderDefinition, MODEL_PROVIDER_DEFINITIONS,
+} from '../../shared/model-providers'
 import { BrandLogo } from './BrandLogo'
+import anthropicLogo from './assets/providers/anthropic.svg'
+import deepseekLogo from './assets/providers/deepseek.svg'
+import kimiLogo from './assets/providers/kimi.png'
+import openaiLogo from './assets/providers/openai.svg'
 
 type View = 'chats' | 'spaces' | 'agents' | 'skills' | 'tools' | 'settings'
+type ModelOption = { provider: string; id: string; name: string }
+
+const providerLogos: Partial<Record<ModelProviderId, string>> = {
+  'deepseek-official': deepseekLogo,
+  'moonshotai-cn': kimiLogo,
+  openai: openaiLogo,
+  anthropic: anthropicLogo,
+}
 
 const defaultAgent: CreateAgentInput = {
   name: '', role: '', persona: '', provider: 'deepseek-official', model: 'deepseek-v4-flash', skills: [], tools: [],
@@ -219,22 +231,22 @@ function SettingsPage({ runtime, onRuntimeChange }: {
   runtime: RuntimeStatus | null
   onRuntimeChange: (runtime: RuntimeStatus) => void
 }): React.JSX.Element {
-  const [provider, setProvider] = useState<ModelProviderStatus | null>(null)
-  const [editing, setEditing] = useState(false)
-  const [apiKey, setApiKey] = useState('')
+  const [providers, setProviders] = useState<ModelProviderStatus[]>([])
+  const [editing, setEditing] = useState<ModelProviderId | null>(null)
+  const [form, setForm] = useState<SaveModelProviderInput>({ id: 'deepseek-official', apiKey: '' })
   const [showKey, setShowKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => { void window.mindmesh.settings.modelProvider().then(setProvider) }, [])
+  useEffect(() => { void window.mindmesh.settings.modelProviders().then(setProviders) }, [])
 
-  async function refreshStatus(nextProvider: ModelProviderStatus): Promise<void> {
-    setProvider(nextProvider)
+  async function refreshStatus(nextProviders: ModelProviderStatus[]): Promise<void> {
+    setProviders(nextProviders)
     onRuntimeChange(await window.mindmesh.runtime.status())
   }
 
   async function save(): Promise<void> {
-    const validationError = getDeepSeekApiKeyError(apiKey)
+    const validationError = getModelProviderApiKeyError(form.id, form.apiKey)
     if (validationError) {
       setError(validationError)
       return
@@ -242,9 +254,8 @@ function SettingsPage({ runtime, onRuntimeChange }: {
     setSaving(true)
     setError('')
     try {
-      await refreshStatus(await window.mindmesh.settings.saveApiKey(apiKey))
-      setApiKey('')
-      setEditing(false)
+      await refreshStatus(await window.mindmesh.settings.saveModelProvider(form))
+      closeEditor()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '保存失败，请稍后重试')
     } finally {
@@ -252,14 +263,13 @@ function SettingsPage({ runtime, onRuntimeChange }: {
     }
   }
 
-  async function remove(): Promise<void> {
-    if (!window.confirm('移除当前设备上保存的 DeepSeek API Key？')) return
+  async function remove(provider: ModelProviderStatus): Promise<void> {
+    if (!window.confirm(`移除当前设备上保存的 ${provider.name} API 配置？`)) return
     setSaving(true)
     setError('')
     try {
-      await refreshStatus(await window.mindmesh.settings.removeApiKey())
-      setApiKey('')
-      setEditing(false)
+      await refreshStatus(await window.mindmesh.settings.removeModelProvider(provider.id))
+      closeEditor()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '移除失败，请稍后重试')
     } finally {
@@ -267,53 +277,132 @@ function SettingsPage({ runtime, onRuntimeChange }: {
     }
   }
 
-  const configured = provider?.configured ?? false
-  const validationError = apiKey ? getDeepSeekApiKeyError(apiKey) : null
+  function openEditor(provider: ModelProviderStatus | { id: 'custom' }): void {
+    setEditing(provider.id)
+    setForm(provider.id === 'custom'
+      ? {
+          id: 'custom',
+          apiKey: '',
+          name: 'name' in provider ? provider.name : '自定义服务',
+          baseUrl: 'baseUrl' in provider ? provider.baseUrl : 'https://api.example.com/v1',
+          model: 'model' in provider ? provider.model : 'your-model-id',
+        }
+      : { id: provider.id, apiKey: '' })
+    setShowKey(false)
+    setError('')
+  }
+
+  function closeEditor(): void {
+    setEditing(null)
+    setForm({ id: 'deepseek-official', apiKey: '' })
+    setShowKey(false)
+    setError('')
+  }
+
+  const definition = editing ? getModelProviderDefinition(editing) : undefined
+  const validationError = form.apiKey ? getModelProviderApiKeyError(form.id, form.apiKey) : null
+  const maxLength = definition?.maxLength ?? 300
+  const customConfigured = providers.some((provider) => provider.id === 'custom')
+
   return (
     <div className="page management-page narrow settings-page">
       <header className="page-header"><div><span className="eyebrow">SETTINGS</span><h1>设置</h1><p>连接模型服务，管理应用状态与本地数据。</p></div></header>
       <section className="settings-section">
         <h2>模型服务</h2>
-        <div className="setting-row provider-row">
-          <div className="provider-mark">D</div>
-          <div><strong>DeepSeek</strong><p>{configured ? 'API 已配置，可以用于智能体对话。' : '连接你的 DeepSeek API，启用真实模型回复。'}</p></div>
-          <span className={`state-badge ${configured ? '' : 'inactive'}`}>{configured ? '已配置' : '需要配置'}</span>
-          <button className={configured ? 'secondary-button compact' : 'primary-button compact'} onClick={() => { setEditing(true); setError('') }}>
-            <KeyRound size={15} />{configured ? '编辑' : '连接'}
-          </button>
-        </div>
-        {editing && (
-          <div className="provider-form">
-            <div className="secure-note"><ShieldCheck size={17} /><span><strong>安全保存</strong><small>API Key 经过系统加密，仅保存在这台设备上。</small></span></div>
-            <label className="field api-key-field">
-              <span>DeepSeek API Key</span>
-              <div className="secret-input"><input autoFocus type={showKey ? 'text' : 'password'} value={apiKey} onChange={(event) => { setApiKey(event.target.value); setError('') }} placeholder={`例如：${DEEPSEEK_API_KEY_EXAMPLE}`} maxLength={DEEPSEEK_API_KEY_MAX_LENGTH} autoComplete="off" spellCheck={false} aria-describedby="deepseek-key-hint" /><button type="button" className="icon-button" onClick={() => setShowKey((current) => !current)} aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}>{showKey ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
-              <span id="deepseek-key-hint" className="field-hint"><span>以 <code>sk-</code> 开头，完整长度 {DEEPSEEK_API_KEY_MIN_LENGTH}-{DEEPSEEK_API_KEY_MAX_LENGTH} 位</span><span className={validationError ? 'invalid' : ''}>{apiKey.trim().length}/{DEEPSEEK_API_KEY_MAX_LENGTH}</span></span>
-            </label>
-            {(validationError || error) && <p className="form-error">{validationError || error}</p>}
-            <div className="provider-actions">
-              {configured && provider?.source === 'saved' && <button className="danger-button" disabled={saving} onClick={() => void remove()}><Trash2 size={15} />移除</button>}
-              <span />
-              <button className="secondary-button compact" disabled={saving} onClick={() => { setEditing(false); setApiKey(''); setError('') }}>取消</button>
-              <button className="primary-button compact" disabled={saving || !apiKey.trim() || validationError !== null} onClick={() => void save()}>{saving ? <span className="spinner" /> : <Check size={15} />}保存</button>
+        {providers.map((provider) => (
+          <div className="provider-entry" key={provider.id}>
+            <div className="setting-row provider-row">
+              <ProviderLogo provider={provider.id} />
+              <div><strong>{provider.name}</strong><p>{provider.configured ? `${provider.description} 已连接，可以用于智能体对话。` : provider.description}</p></div>
+              <span className={`state-badge ${provider.configured ? '' : 'inactive'}`}>{provider.configured ? '已配置' : '需要配置'}</span>
+              <button className={provider.configured ? 'secondary-button compact' : 'primary-button compact'} onClick={() => openEditor(provider)}>
+                <KeyRound size={15} />{provider.configured ? '编辑' : '连接'}
+              </button>
             </div>
+            {editing === provider.id && renderProviderForm(provider)}
           </div>
+        ))}
+        {!customConfigured && (
+          <button className="add-provider-row" onClick={() => openEditor({ id: 'custom' })}>
+            <span className="provider-add-icon"><Plus size={18} /></span>
+            <span><strong>添加自定义服务</strong><small>连接其他兼容 OpenAI API 的模型服务</small></span>
+            <ChevronRight size={17} />
+          </button>
         )}
+        {editing === 'custom' && !customConfigured && renderProviderForm()}
       </section>
       <section className="settings-section"><h2>运行状态</h2><div className="setting-row"><div className="runtime-icon"><Activity size={19} /></div><div><strong>{runtime?.label ?? '检查中'}</strong><p>{runtime?.detail}</p></div><span className={`state-badge ${runtime?.state === 'demo' ? 'inactive' : ''}`}>{runtime?.state === 'demo' ? '等待连接' : '正常'}</span></div></section>
       <section className="settings-section"><h2>本地数据</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>保存在这台设备上</strong><p>智能体、协作空间和消息不会自动上传到云端。</p></div></div></section>
     </div>
   )
+
+  function renderProviderForm(provider?: ModelProviderStatus): React.JSX.Element {
+    return (
+      <div className="provider-form">
+        <div className="secure-note"><ShieldCheck size={17} /><span><strong>安全保存</strong><small>API Key 经过系统加密，仅保存在这台设备上。</small></span></div>
+        {form.id === 'custom' && (
+          <div className="custom-provider-fields">
+            <Field label="服务名称"><input value={form.name ?? ''} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：公司内部模型" maxLength={50} /></Field>
+            <Field label="API Base URL"><input value={form.baseUrl ?? ''} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} placeholder="例如：https://api.example.com/v1" /></Field>
+            <Field label="模型 ID"><input value={form.model ?? ''} onChange={(event) => setForm({ ...form, model: event.target.value })} placeholder="例如：my-chat-model" maxLength={100} /></Field>
+          </div>
+        )}
+        <label className="field api-key-field">
+          <span>{provider?.name ?? '自定义服务'} API Key</span>
+          <div className="secret-input">
+            <input autoFocus type={showKey ? 'text' : 'password'} value={form.apiKey} onChange={(event) => { setForm({ ...form, apiKey: event.target.value }); setError('') }} placeholder={`例如：${definition?.apiKeyExample ?? 'your-api-key-0123456789'}`} maxLength={maxLength} autoComplete="off" spellCheck={false} />
+            <button type="button" className="icon-button" onClick={() => setShowKey((current) => !current)} aria-label={showKey ? '隐藏 API Key' : '显示 API Key'} title={showKey ? '隐藏 API Key' : '显示 API Key'}>{showKey ? <EyeOff size={17} /> : <Eye size={17} />}</button>
+          </div>
+          <span className="field-hint"><span>{definition?.apiKeyHint ?? '请输入服务商提供的完整 API Key'}</span><span className={validationError ? 'invalid' : ''}>{form.apiKey.trim().length}/{maxLength}</span></span>
+        </label>
+        {(validationError || error) && <p className="form-error">{validationError || error}</p>}
+        <div className="provider-actions">
+          {provider?.source === 'saved' && <button className="danger-button" disabled={saving} onClick={() => void remove(provider)}><Trash2 size={15} />移除</button>}
+          <span />
+          <button className="secondary-button compact" disabled={saving} onClick={closeEditor}>取消</button>
+          <button className="primary-button compact" disabled={saving || !form.apiKey.trim() || validationError !== null} onClick={() => void save()}>{saving ? <span className="spinner" /> : <Check size={15} />}保存</button>
+        </div>
+      </div>
+    )
+  }
+}
+
+function ProviderLogo({ provider }: { provider: ModelProviderId }): React.JSX.Element {
+  const logo = providerLogos[provider]
+  return logo
+    ? <span className={`provider-logo ${provider}`}><img src={logo} alt="" /></span>
+    : <span className="provider-logo custom"><Plus size={19} /></span>
 }
 
 function AgentWizard({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }): React.JSX.Element {
   const [step, setStep] = useState(0)
   const [form, setForm] = useState<CreateAgentInput>(defaultAgent)
+  const [models, setModels] = useState<ModelOption[]>([])
   const steps = ['身份', '模型', '技能', '工具']
   const options = step === 2 ? ['研究分析', '报告撰写', '代码审查'] : ['网页搜索', '文件', 'Shell']
+  useEffect(() => { void window.mindmesh.catalog.models().then(setModels) }, [])
+  const providerIds = [...new Set(models.map((model) => model.provider))]
+  const providerModels = models.filter((model) => model.provider === form.provider)
+  function selectProvider(provider: string): void {
+    const firstModel = models.find((model) => model.provider === provider)
+    setForm({ ...form, provider, model: firstModel?.id ?? '' })
+  }
   function toggle(value: string): void { const key = step === 2 ? 'skills' : 'tools'; setForm((current) => ({ ...current, [key]: current[key].includes(value) ? current[key].filter((item) => item !== value) : [...current[key], value] })) }
   async function next(): Promise<void> { if (step < 3) setStep(step + 1); else { await window.mindmesh.agents.create(form); await onCreated() } }
-  return <div className="modal-backdrop"><div className="wizard"><header><div><span className="eyebrow">CREATE AGENT</span><h2>创建你的智能体</h2><p>定义它是谁、会什么，以及可以使用哪些工具。</p></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header><div className="stepper">{steps.map((label, index) => <div key={label} className={index === step ? 'current' : index < step ? 'done' : ''}><i>{index < step ? '✓' : index + 1}</i><span>{label}</span></div>)}</div><div className="wizard-body">{step === 0 && <><h3>它是谁？</h3><div className="avatar-picker"><Avatar name={form.name || 'M'} large /><button className="secondary-button">选择头像</button><small>MVP 使用默认头像</small></div><Field label="名称"><input autoFocus value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 Researcher" /></Field><Field label="角色定位"><input value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} placeholder="例如 研究分析专家" /></Field><Field label="身份设定"><textarea value={form.persona} onChange={(event) => setForm({ ...form, persona: event.target.value })} placeholder="描述它是谁、擅长什么，以及应该如何回答。" /></Field></>}{step === 1 && <><h3>选择模型</h3><Field label="模型服务商"><select value={form.provider} onChange={(event) => setForm({ ...form, provider: event.target.value })}><option value="deepseek-official">DeepSeek</option></select></Field><Field label="模型"><select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })}><option value="deepseek-v4-flash">DeepSeek V4 Flash</option><option value="deepseek-v3.2">DeepSeek V3.2</option></select></Field><div className="info-box"><CircleHelp size={18} /><p>不同模型在推理、编程、创作和速度方面各有特点。</p></div></>}{(step === 2 || step === 3) && <><h3>{step === 2 ? '它会什么？' : '它可以使用哪些工具？'}</h3><div className="choice-list">{options.map((option) => { const checked = (step === 2 ? form.skills : form.tools).includes(option); return <button key={option} className={checked ? 'checked' : ''} onClick={() => toggle(option)}><i>{checked ? '✓' : '+'}</i><span><strong>{option}</strong><small>{step === 2 ? '为智能体添加可复用能力' : '允许智能体调用此工具'}</small></span></button> })}</div></>}</div><footer><button className="secondary-button" onClick={step === 0 ? onClose : () => setStep(step - 1)}>{step === 0 ? '取消' : '上一步'}</button><button className="primary-button" disabled={step === 0 && (!form.name || !form.persona)} onClick={() => void next()}>{step === 3 ? '创建智能体' : '下一步'} <ChevronRight size={16} /></button></footer></div></div>
+  return (
+    <div className="modal-backdrop">
+      <div className="wizard">
+        <header><div><span className="eyebrow">CREATE AGENT</span><h2>创建你的智能体</h2><p>定义它是谁、会什么，以及可以使用哪些工具。</p></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header>
+        <div className="stepper">{steps.map((label, index) => <div key={label} className={index === step ? 'current' : index < step ? 'done' : ''}><i>{index < step ? '✓' : index + 1}</i><span>{label}</span></div>)}</div>
+        <div className="wizard-body">
+          {step === 0 && <><h3>它是谁？</h3><div className="avatar-picker"><Avatar name={form.name || 'M'} large /><button className="secondary-button">选择头像</button><small>MVP 使用默认头像</small></div><Field label="名称"><input autoFocus value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 Researcher" /></Field><Field label="角色定位"><input value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} placeholder="例如 研究分析专家" /></Field><Field label="身份设定"><textarea value={form.persona} onChange={(event) => setForm({ ...form, persona: event.target.value })} placeholder="描述它是谁、擅长什么，以及应该如何回答。" /></Field></>}
+          {step === 1 && <><h3>选择模型</h3><Field label="模型服务商"><select value={form.provider} onChange={(event) => selectProvider(event.target.value)}>{providerIds.map((provider) => <option key={provider} value={provider}>{provider === 'custom' ? '自定义服务' : getModelProviderDefinition(provider)?.name ?? provider}</option>)}</select></Field><Field label="模型"><select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })}>{providerModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></Field><div className="info-box"><CircleHelp size={18} /><p>不同模型在推理、编程、创作和速度方面各有特点。</p></div></>}
+          {(step === 2 || step === 3) && <><h3>{step === 2 ? '它会什么？' : '它可以使用哪些工具？'}</h3><div className="choice-list">{options.map((option) => { const checked = (step === 2 ? form.skills : form.tools).includes(option); return <button key={option} className={checked ? 'checked' : ''} onClick={() => toggle(option)}><i>{checked ? '✓' : '+'}</i><span><strong>{option}</strong><small>{step === 2 ? '为智能体添加可复用能力' : '允许智能体调用此工具'}</small></span></button> })}</div></>}
+        </div>
+        <footer><button className="secondary-button" onClick={step === 0 ? onClose : () => setStep(step - 1)}>{step === 0 ? '取消' : '上一步'}</button><button className="primary-button" disabled={step === 0 && (!form.name || !form.persona)} onClick={() => void next()}>{step === 3 ? '创建智能体' : '下一步'} <ChevronRight size={16} /></button></footer>
+      </div>
+    </div>
+  )
 }
 
 function SpaceWizard({ agents, onClose, onCreated }: { agents: Agent[]; onClose: () => void; onCreated: () => Promise<void> }): React.JSX.Element {

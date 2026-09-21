@@ -1,6 +1,9 @@
 import type { WebContents } from 'electron'
-import type { CreateAgentInput, CreateSpaceInput, Message } from '../shared/contracts'
+import type {
+  CreateAgentInput, CreateSpaceInput, Message, ModelProviderId, SaveModelProviderInput,
+} from '../shared/contracts'
 import { buildPrivatePrompt, buildSpacePrompt, parseMentions } from '../shared/domain'
+import { MODEL_CATALOG } from '../shared/model-providers'
 import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
@@ -19,18 +22,25 @@ export class MindMeshServices {
   listSpaces = () => this.db.listSpaces()
   createSpace = (input: CreateSpaceInput) => this.db.createSpace(input)
   messages = (scope: Message['scope'], scopeId: string) => this.db.listMessages(scope, scopeId)
-  modelProvider = () => this.providerSettings.status()
+  modelProviders = () => this.providerSettings.statuses()
 
-  async saveApiKey(apiKey: string) {
-    const status = this.providerSettings.saveApiKey(apiKey)
+  async saveModelProvider(input: SaveModelProviderInput) {
+    const statuses = this.providerSettings.save(input)
     await this.harness.shutdownAll()
-    return status
+    return statuses
   }
 
-  async removeApiKey() {
-    const status = this.providerSettings.removeApiKey()
+  async removeModelProvider(id: ModelProviderId) {
+    const statuses = this.providerSettings.remove(id)
     await this.harness.shutdownAll()
-    return status
+    return statuses
+  }
+
+  models = () => {
+    const custom = this.providerSettings.statuses().find((provider) => provider.id === 'custom')
+    return custom?.model
+      ? [...MODEL_CATALOG, { provider: 'custom', id: custom.model, name: custom.model }]
+      : MODEL_CATALOG
   }
 
   async sendPrivate(agentId: string, content: string): Promise<Message[]> {
