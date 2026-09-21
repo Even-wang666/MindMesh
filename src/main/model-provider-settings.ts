@@ -3,8 +3,12 @@ import { dirname } from 'node:path'
 import { safeStorage } from 'electron'
 import { z } from 'zod'
 import type { ModelProviderStatus } from '../shared/contracts'
+import { getDeepSeekApiKeyError } from '../shared/domain'
 
-const apiKeySchema = z.string().trim().min(8, 'API Key 至少需要 8 个字符').max(4096)
+const apiKeySchema = z.string().trim().superRefine((value, context) => {
+  const message = getDeepSeekApiKeyError(value)
+  if (message) context.addIssue({ code: z.ZodIssueCode.custom, message })
+})
 const storedSettingsSchema = z.object({ deepseekApiKey: z.string().min(1) })
 
 export class ModelProviderSettings {

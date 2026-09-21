@@ -158,6 +158,9 @@ em, .tags i, .status-tag { width: fit-content; font-style: normal; padding: 4px 
 .secret-input { position: relative; }
 .secret-input input { padding-right: 48px; }
 .secret-input .icon-button { position: absolute; top: 4px; right: 4px; border: 0; background: transparent; }
+.field > .field-hint { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 10px; font-weight: 400; }
+.field-hint code { padding: 1px 4px; border-radius: 4px; color: var(--iris); background: var(--soft-iris); font-family: inherit; }
+.field-hint .invalid { color: #b94040; }
 .provider-actions { display: flex; align-items: center; gap: 8px; }
 .provider-actions > span { flex: 1; }
 .danger-button { min-height: 34px; padding: 0 12px; border: 1px solid rgb(196 68 68 / 22%); border-radius: 10px; display: inline-flex; align-items: center; gap: 7px; color: #b94040; background: #fff; font-size: 11px; font-weight: 650; cursor: pointer; }

@@ -7,6 +7,10 @@ import {
 import type {
   Agent, CreateAgentInput, Message, ModelProviderStatus, RuntimeStatus, Space,
 } from '../../shared/contracts'
+import {
+  DEEPSEEK_API_KEY_EXAMPLE, DEEPSEEK_API_KEY_MAX_LENGTH, DEEPSEEK_API_KEY_MIN_LENGTH,
+  getDeepSeekApiKeyError,
+} from '../../shared/domain'
 import { BrandLogo } from './BrandLogo'
 
 type View = 'chats' | 'spaces' | 'agents' | 'skills' | 'tools' | 'settings'
@@ -230,8 +234,9 @@ function SettingsPage({ runtime, onRuntimeChange }: {
   }
 
   async function save(): Promise<void> {
-    if (apiKey.trim().length < 8) {
-      setError('请输入有效的 API Key')
+    const validationError = getDeepSeekApiKeyError(apiKey)
+    if (validationError) {
+      setError(validationError)
       return
     }
     setSaving(true)
@@ -263,6 +268,7 @@ function SettingsPage({ runtime, onRuntimeChange }: {
   }
 
   const configured = provider?.configured ?? false
+  const validationError = apiKey ? getDeepSeekApiKeyError(apiKey) : null
   return (
     <div className="page management-page narrow settings-page">
       <header className="page-header"><div><span className="eyebrow">SETTINGS</span><h1>设置</h1><p>连接模型服务，管理应用状态与本地数据。</p></div></header>
@@ -280,15 +286,16 @@ function SettingsPage({ runtime, onRuntimeChange }: {
           <div className="provider-form">
             <div className="secure-note"><ShieldCheck size={17} /><span><strong>安全保存</strong><small>API Key 经过系统加密，仅保存在这台设备上。</small></span></div>
             <label className="field api-key-field">
-              <span>API Key</span>
-              <div className="secret-input"><input autoFocus type={showKey ? 'text' : 'password'} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={configured ? '输入新的 API Key' : '输入 DeepSeek API Key'} /><button type="button" className="icon-button" onClick={() => setShowKey((current) => !current)} aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}>{showKey ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
+              <span>DeepSeek API Key</span>
+              <div className="secret-input"><input autoFocus type={showKey ? 'text' : 'password'} value={apiKey} onChange={(event) => { setApiKey(event.target.value); setError('') }} placeholder={`例如：${DEEPSEEK_API_KEY_EXAMPLE}`} maxLength={DEEPSEEK_API_KEY_MAX_LENGTH} autoComplete="off" spellCheck={false} aria-describedby="deepseek-key-hint" /><button type="button" className="icon-button" onClick={() => setShowKey((current) => !current)} aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}>{showKey ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
+              <span id="deepseek-key-hint" className="field-hint"><span>以 <code>sk-</code> 开头，完整长度 {DEEPSEEK_API_KEY_MIN_LENGTH}-{DEEPSEEK_API_KEY_MAX_LENGTH} 位</span><span className={validationError ? 'invalid' : ''}>{apiKey.trim().length}/{DEEPSEEK_API_KEY_MAX_LENGTH}</span></span>
             </label>
-            {error && <p className="form-error">{error}</p>}
+            {(validationError || error) && <p className="form-error">{validationError || error}</p>}
             <div className="provider-actions">
               {configured && provider?.source === 'saved' && <button className="danger-button" disabled={saving} onClick={() => void remove()}><Trash2 size={15} />移除</button>}
               <span />
               <button className="secondary-button compact" disabled={saving} onClick={() => { setEditing(false); setApiKey(''); setError('') }}>取消</button>
-              <button className="primary-button compact" disabled={saving || !apiKey.trim()} onClick={() => void save()}>{saving ? <span className="spinner" /> : <Check size={15} />}保存</button>
+              <button className="primary-button compact" disabled={saving || !apiKey.trim() || validationError !== null} onClick={() => void save()}>{saving ? <span className="spinner" /> : <Check size={15} />}保存</button>
             </div>
           </div>
         )}
