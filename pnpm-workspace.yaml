@@ -1,0 +1,25 @@
+packages:
+  - .
+
+onlyBuiltDependencies:
+  - '@deepseek-ai/dsh-subprocess-local'
+  - '@google/genai'
+  - electron
+  - electron-winstaller
+  - esbuild
+  - koffi
+  - node-pty
+  - protobufjs
+  - sharp
+
+overrides:
+  '@electron/get': 5.1.0
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': true
+  electron-winstaller: true
+  esbuild: true
+  koffi: true
+  node-pty: true
+  protobufjs: true
+  sharp: true

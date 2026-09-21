@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">MindMesh Scheme B</title>
+  <desc id="desc">Interwoven M mark with three connected nodes.</desc>
+  <rect width="512" height="512" rx="112" fill="#172033"/>
+  <path d="M96 384V184c0-64 64-88 112-40l200 200" fill="none" stroke="#1E9E8F" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M416 384V184c0-64-64-88-112-40L104 344" fill="none" stroke="#4F56D9" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="98" cy="272" r="38" fill="#1E9E8F"/>
+  <circle cx="256" cy="256" r="42" fill="#4F56D9" stroke="#172033" stroke-width="16"/>
+  <circle cx="414" cy="344" r="38" fill="#F7F8F6" stroke="#172033" stroke-width="16"/>
+</svg>
+
