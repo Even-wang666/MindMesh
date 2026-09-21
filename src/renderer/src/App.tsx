@@ -65,7 +65,12 @@ export function App(): React.JSX.Element {
   }
 
   useEffect(() => { void refresh() }, [])
-  useEffect(() => window.mindmesh.chat.onProgress(setProgress), [])
+  useEffect(() => {
+  const off = window.mindmesh.chat.onProgress?.(setProgress)
+  return () => {
+    if (typeof off === 'function') off()
+  }
+  }, [])
   useEffect(() => {
     const scope = view === 'spaces' ? 'space' : 'private'
     const id = view === 'spaces' ? selectedSpaceId : selectedAgentId
@@ -212,7 +217,9 @@ function SpacePanel({ space, agents, messages, busy, progress, onSend }: {
 
 function MessageList({ messages, emptyText, progress }: { messages: Message[]; emptyText: string; progress?: string }): React.JSX.Element {
   const end = useRef<HTMLDivElement>(null)
-  useEffect(() => end.current?.scrollIntoView({ behavior: 'smooth' }), [messages, progress])
+  useEffect(() => {
+    end.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, progress])
   if (!messages.length && !progress) return <div className="conversation-empty"><BrandLogo size={54} /><h3>{emptyText}</h3><p>消息仅保存在这台设备上。</p></div>
   return <div className="messages">{messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}><Avatar name={message.authorName} /><div><header><strong>{message.authorName}</strong><time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header><p>{message.content}</p></div></article>)}{progress && <div className="chat-progress" role="status"><span className="chat-progress-dot" />{progress} 正在回复…</div>}<div ref={end} /></div>
 }
