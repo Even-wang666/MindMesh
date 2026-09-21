@@ -97,7 +97,7 @@ export function App(): React.JSX.Element {
       <section className="content">
         {view === 'chats' && (
           selectedAgent
-            ? <ChatPanel title={selectedAgent.name} subtitle={selectedAgent.role} messages={messages} busy={busy} onSend={send} />
+            ? <ChatPanel title={selectedAgent.name} subtitle={selectedAgent.role} messages={messages} busy={busy} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
             : <EmptyState onCreate={() => setAgentWizard(true)} />
         )}
         {view === 'spaces' && selectedSpace && (
@@ -167,12 +167,13 @@ function ObjectList(props: {
   )
 }
 
-function ChatPanel({ title, subtitle, messages, busy, onSend }: {
-  title: string; subtitle: string; messages: Message[]; busy: boolean; onSend: (content: string) => Promise<void>
+function ChatPanel({ title, subtitle, messages, busy, onSend, onDetail }: {
+  title: string; subtitle: string; messages: Message[]; busy: boolean
+  onSend: (content: string) => Promise<void>; onDetail: () => void
 }): React.JSX.Element {
   return (
     <div className="page chat-page">
-      <header className="chat-header"><div><h1>{title}</h1><p>{subtitle}</p></div><button className="ghost-button">查看详情 <ChevronRight size={15} /></button></header>
+      <header className="chat-header"><div><h1>{title}</h1><p>{subtitle}</p></div><button className="ghost-button" onClick={onDetail}>查看详情 <ChevronRight size={15} /></button></header>
       <MessageList messages={messages} emptyText="开始一段新的对话" />
       <Composer busy={busy} placeholder={`给 ${title} 发送消息…`} onSend={onSend} />
     </div>
