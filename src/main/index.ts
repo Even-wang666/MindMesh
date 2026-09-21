@@ -39,6 +39,7 @@ function createWindow(): void {
 function registerIpc(current: MindMeshServices): void {
   ipcMain.handle('agents:list', () => current.listAgents())
   ipcMain.handle('agents:create', (_event, input) => current.createAgent(input))
+  ipcMain.handle('agents:update', (_event, id, input) => current.updateAgent(id, input))
   ipcMain.handle('agents:remove', (_event, id) => current.removeAgent(id))
   ipcMain.handle('spaces:list', () => current.listSpaces())
   ipcMain.handle('spaces:create', (_event, input) => current.createSpace(input))

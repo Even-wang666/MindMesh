@@ -42,6 +42,7 @@ export function App(): React.JSX.Element {
   const [agentWizard, setAgentWizard] = useState(false)
   const [spaceWizard, setSpaceWizard] = useState(false)
   const [detailAgentId, setDetailAgentId] = useState<string>('')
+  const [editingAgentId, setEditingAgentId] = useState<string>('')
   const [busy, setBusy] = useState(false)
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId)
@@ -108,9 +109,10 @@ export function App(): React.JSX.Element {
         {view === 'tools' && <CatalogPage kind="tools" />}
         {view === 'settings' && <SettingsPage runtime={runtime} onRuntimeChange={setRuntime} />}
       </section>
-      {agentWizard && <AgentWizard onClose={() => setAgentWizard(false)} onCreated={async () => { setAgentWizard(false); await refresh() }} />}
+      {agentWizard && <AgentWizard onClose={() => setAgentWizard(false)} onSaved={async () => { setAgentWizard(false); await refresh() }} />}
+      {editingAgentId && <AgentWizard initialAgent={agents.find((item) => item.id === editingAgentId)} onClose={() => setEditingAgentId('')} onSaved={async () => { setEditingAgentId(''); await refresh() }} />}
       {spaceWizard && <SpaceWizard agents={agents} onClose={() => setSpaceWizard(false)} onCreated={async () => { setSpaceWizard(false); await refresh() }} />}
-      {detailAgentId && <AgentDrawer agent={agents.find((item) => item.id === detailAgentId)} onClose={() => setDetailAgentId('')} onChat={(id) => { setSelectedAgentId(id); setView('chats'); setDetailAgentId('') }} />}
+      {detailAgentId && <AgentDrawer agent={agents.find((item) => item.id === detailAgentId)} onClose={() => setDetailAgentId('')} onChat={(id) => { setSelectedAgentId(id); setView('chats'); setDetailAgentId('') }} onEdit={(id) => { setDetailAgentId(''); setEditingAgentId(id) }} />}
     </main>
   )
 }
@@ -375,10 +377,22 @@ function ProviderLogo({ provider }: { provider: ModelProviderId }): React.JSX.El
     : <span className="provider-logo custom"><Plus size={19} /></span>
 }
 
-function AgentWizard({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }): React.JSX.Element {
+function AgentWizard({ initialAgent, onClose, onSaved }: {
+  initialAgent?: Agent; onClose: () => void; onSaved: () => Promise<void>
+}): React.JSX.Element {
   const [step, setStep] = useState(0)
-  const [form, setForm] = useState<CreateAgentInput>(defaultAgent)
+  const [form, setForm] = useState<CreateAgentInput>(initialAgent ? {
+    name: initialAgent.name,
+    role: initialAgent.role,
+    persona: initialAgent.persona,
+    provider: initialAgent.provider,
+    model: initialAgent.model,
+    skills: initialAgent.skills,
+    tools: initialAgent.tools,
+  } : defaultAgent)
   const [models, setModels] = useState<ModelOption[]>([])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const steps = ['身份', '模型', '技能', '工具']
   const options = step === 2 ? ['研究分析', '报告撰写', '代码审查'] : ['网页搜索', '文件', 'Shell']
   useEffect(() => { void window.mindmesh.catalog.models().then(setModels) }, [])
@@ -389,18 +403,31 @@ function AgentWizard({ onClose, onCreated }: { onClose: () => void; onCreated: (
     setForm({ ...form, provider, model: firstModel?.id ?? '' })
   }
   function toggle(value: string): void { const key = step === 2 ? 'skills' : 'tools'; setForm((current) => ({ ...current, [key]: current[key].includes(value) ? current[key].filter((item) => item !== value) : [...current[key], value] })) }
-  async function next(): Promise<void> { if (step < 3) setStep(step + 1); else { await window.mindmesh.agents.create(form); await onCreated() } }
+  async function next(): Promise<void> {
+    if (step < 3) { setStep(step + 1); return }
+    setSaving(true)
+    setError('')
+    try {
+      if (initialAgent) await window.mindmesh.agents.update(initialAgent.id, form)
+      else await window.mindmesh.agents.create(form)
+      await onSaved()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '保存智能体失败')
+    } finally {
+      setSaving(false)
+    }
+  }
   return (
     <div className="modal-backdrop">
       <div className="wizard">
-        <header><div><span className="eyebrow">CREATE AGENT</span><h2>创建你的智能体</h2><p>定义它是谁、会什么，以及可以使用哪些工具。</p></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header>
+        <header><div><span className="eyebrow">{initialAgent ? 'EDIT AGENT' : 'CREATE AGENT'}</span><h2>{initialAgent ? '编辑智能体' : '创建你的智能体'}</h2><p>定义它是谁、会什么，以及可以使用哪些工具。</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>
         <div className="stepper">{steps.map((label, index) => <div key={label} className={index === step ? 'current' : index < step ? 'done' : ''}><i>{index < step ? '✓' : index + 1}</i><span>{label}</span></div>)}</div>
         <div className="wizard-body">
           {step === 0 && <><h3>它是谁？</h3><div className="avatar-picker"><Avatar name={form.name || 'M'} large /><button className="secondary-button">选择头像</button><small>MVP 使用默认头像</small></div><Field label="名称"><input autoFocus value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 Researcher" /></Field><Field label="角色定位"><input value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} placeholder="例如 研究分析专家" /></Field><Field label="身份设定"><textarea value={form.persona} onChange={(event) => setForm({ ...form, persona: event.target.value })} placeholder="描述它是谁、擅长什么，以及应该如何回答。" /></Field></>}
           {step === 1 && <><h3>选择模型</h3><Field label="模型服务商"><select value={form.provider} onChange={(event) => selectProvider(event.target.value)}>{providerIds.map((provider) => <option key={provider} value={provider}>{provider === 'custom' ? '自定义服务' : getModelProviderDefinition(provider)?.name ?? provider}</option>)}</select></Field><Field label="模型"><select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })}>{providerModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></Field><div className="info-box"><CircleHelp size={18} /><p>不同模型在推理、编程、创作和速度方面各有特点。</p></div></>}
           {(step === 2 || step === 3) && <><h3>{step === 2 ? '它会什么？' : '它可以使用哪些工具？'}</h3><div className="choice-list">{options.map((option) => { const checked = (step === 2 ? form.skills : form.tools).includes(option); return <button key={option} className={checked ? 'checked' : ''} onClick={() => toggle(option)}><i>{checked ? '✓' : '+'}</i><span><strong>{option}</strong><small>{step === 2 ? '为智能体添加可复用能力' : '允许智能体调用此工具'}</small></span></button> })}</div></>}
         </div>
-        <footer><button className="secondary-button" onClick={step === 0 ? onClose : () => setStep(step - 1)}>{step === 0 ? '取消' : '上一步'}</button><button className="primary-button" disabled={step === 0 && (!form.name || !form.persona)} onClick={() => void next()}>{step === 3 ? '创建智能体' : '下一步'} <ChevronRight size={16} /></button></footer>
+        <footer>{error && <p className="form-error" role="alert">{error}</p>}<button className="secondary-button" disabled={saving} onClick={step === 0 ? onClose : () => setStep(step - 1)}>{step === 0 ? '取消' : '上一步'}</button><button className="primary-button" disabled={saving || (step === 0 && (!form.name.trim() || !form.persona.trim()))} onClick={() => void next()}>{step === 3 ? (initialAgent ? '保存修改' : '创建智能体') : '下一步'} <ChevronRight size={16} /></button></footer>
       </div>
     </div>
   )
@@ -415,9 +442,11 @@ function SpaceWizard({ agents, onClose, onCreated }: { agents: Agent[]; onClose:
   return <div className="modal-backdrop"><div className="wizard compact"><header><div><span className="eyebrow">NEW SPACE</span><h2>创建协作空间</h2><p>让多个智能体共享背景并一起协作。</p></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header><div className="wizard-body"><Field label="空间名称"><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 AI Product Research" /></Field><Field label="简介"><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个空间用来做什么？" /></Field><Field label="背景信息"><textarea value={context} onChange={(event) => setContext(event.target.value)} placeholder="当前目标、项目背景、主要限制和关键规则" /></Field><label className="field"><span>添加智能体</span><div className="member-choices">{agents.map((agent) => <button key={agent.id} className={members.includes(agent.id) ? 'selected' : ''} onClick={() => setMembers((items) => items.includes(agent.id) ? items.filter((id) => id !== agent.id) : [...items, agent.id])}><Avatar name={agent.name} />{agent.name}</button>)}</div></label></div><footer><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={!name} onClick={() => void create()}>创建空间</button></footer></div></div>
 }
 
-function AgentDrawer({ agent, onClose, onChat }: { agent?: Agent; onClose: () => void; onChat: (id: string) => void }): React.JSX.Element | null {
+function AgentDrawer({ agent, onClose, onChat, onEdit }: {
+  agent?: Agent; onClose: () => void; onChat: (id: string) => void; onEdit: (id: string) => void
+}): React.JSX.Element | null {
   if (!agent) return null
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="agent-drawer" onMouseDown={(event) => event.stopPropagation()}><header><Avatar name={agent.name} large /><div><h2>{agent.name}</h2><p>{agent.role}</p></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header><section><span className="eyebrow">身份设定</span><p>{agent.persona}</p></section><section><span className="eyebrow">模型</span><p><em>{agent.model}</em></p></section><section><span className="eyebrow">技能</span><div className="tags">{agent.skills.map((item) => <i key={item}>{item}</i>)}</div></section><section><span className="eyebrow">工具</span><div className="tags">{agent.tools.map((item) => <i key={item}>{item}</i>)}</div></section><footer><button className="primary-button" onClick={() => onChat(agent.id)}>开始对话</button><button className="secondary-button">编辑智能体</button></footer></aside></div>
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="agent-drawer" onMouseDown={(event) => event.stopPropagation()}><header><Avatar name={agent.name} large /><div><h2>{agent.name}</h2><p>{agent.role}</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header><section><span className="eyebrow">身份设定</span><p>{agent.persona}</p></section><section><span className="eyebrow">模型</span><p><em>{agent.model}</em></p></section><section><span className="eyebrow">技能</span><div className="tags">{agent.skills.map((item) => <i key={item}>{item}</i>)}</div></section><section><span className="eyebrow">工具</span><div className="tags">{agent.tools.map((item) => <i key={item}>{item}</i>)}</div></section><footer><button className="primary-button" onClick={() => onChat(agent.id)}>开始对话</button><button className="secondary-button" onClick={() => onEdit(agent.id)}>编辑智能体</button></footer></aside></div>
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element { return <label className="field"><span>{label}</span>{children}</label> }

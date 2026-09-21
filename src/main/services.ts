@@ -18,6 +18,7 @@ export class MindMeshServices {
 
   listAgents = () => this.db.listAgents()
   createAgent = (input: CreateAgentInput) => this.db.createAgent(input)
+  updateAgent = (id: string, input: CreateAgentInput) => this.db.updateAgent(id, input)
   removeAgent = (id: string) => this.db.removeAgent(id)
   listSpaces = () => this.db.listSpaces()
   createSpace = (input: CreateSpaceInput) => this.db.createSpace(input)

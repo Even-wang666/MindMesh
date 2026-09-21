@@ -72,6 +72,7 @@ export type MindMeshApi = {
   agents: {
     list(): Promise<Agent[]>
     create(input: CreateAgentInput): Promise<Agent>
+    update(id: string, input: CreateAgentInput): Promise<Agent>
     remove(id: string): Promise<void>
   }
   spaces: {

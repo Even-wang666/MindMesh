@@ -5,6 +5,7 @@ const api: MindMeshApi = {
   agents: {
     list: () => ipcRenderer.invoke('agents:list'),
     create: (input) => ipcRenderer.invoke('agents:create', input),
+    update: (id, input) => ipcRenderer.invoke('agents:update', id, input),
     remove: (id) => ipcRenderer.invoke('agents:remove', id),
   },
   spaces: {

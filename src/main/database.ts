@@ -118,6 +118,28 @@ export class MindMeshDatabase {
     return agent
   }
 
+  updateAgent(id: string, input: CreateAgentInput): Agent {
+    const existing = this.getAgent(id)
+    if (!existing) throw new Error('智能体不存在')
+    if (!input.name.trim() || !input.persona.trim()) throw new Error('名称和身份设定不能为空')
+    const agent: Agent = {
+      ...existing,
+      name: input.name.trim(),
+      role: input.role.trim(),
+      persona: input.persona.trim(),
+      provider: input.provider,
+      model: input.model,
+      skills: input.skills,
+      tools: input.tools,
+    }
+    this.db.prepare(`
+      UPDATE agents SET name = ?, role = ?, persona = ?, provider = ?, model = ?, skills = ?, tools = ?
+      WHERE id = ?
+    `).run(agent.name, agent.role, agent.persona, agent.provider, agent.model,
+      JSON.stringify(agent.skills), JSON.stringify(agent.tools), id)
+    return agent
+  }
+
   removeAgent(id: string): void {
     this.db.prepare('DELETE FROM agents WHERE id = ?').run(id)
   }
