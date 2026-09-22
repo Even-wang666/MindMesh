@@ -1,12 +1,13 @@
 import { join } from 'node:path'
 import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs'
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
 import { MindMeshServices } from './services'
 import { listSkillCatalog, toolCatalog } from './capabilities'
 import { appendRuntimeError } from './runtime-errors'
+import { installNavigationGuards } from './navigation'
 
 let mainWindow: BrowserWindow | null = null
 let services: MindMeshServices | null = null
@@ -28,10 +29,7 @@ function createWindow(): void {
     },
   })
   mainWindow.on('ready-to-show', () => mainWindow?.show())
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  installNavigationGuards(mainWindow.webContents)
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {

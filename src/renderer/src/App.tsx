@@ -115,12 +115,13 @@ export function App(): React.JSX.Element {
     return () => { active = false }
   }, [view, selectedAgentId, selectedSpaceId])
 
-  async function send(content: string): Promise<void> {
-    if (!content.trim() || busy) return
+  async function send(content: string): Promise<boolean> {
+    if (!content.trim() || busy) return true
     const scope = view === 'chats' ? 'private' : 'space'
     const id = view === 'chats' ? selectedAgentId : selectedSpaceId
-    if (!id || (view !== 'chats' && view !== 'spaces')) return
+    if (!id || (view !== 'chats' && view !== 'spaces')) return false
     const requestConversation = `${scope}:${id}`
+    const knownIds = new Set(messages.map((message) => message.id))
     setBusy(true)
     setStreamingText('')
     setStreamingReasoning('')
@@ -140,7 +141,27 @@ export function App(): React.JSX.Element {
         setStreamingText('')
         setStreamingReasoning('')
       }
-      setRuntime(await window.mindmesh.runtime.status())
+      try { setRuntime(await window.mindmesh.runtime.status()) }
+      catch { /* A status refresh must not turn a completed send into a failure. */ }
+      return true
+    } catch {
+      let saved = true
+      let next: Message[] | null = null
+      try {
+        next = await window.mindmesh.chat.messages(scope, id)
+        saved = next.some((message) => message.authorType === 'user' && message.content === content.trim() && !knownIds.has(message.id))
+      } catch { /* Keep the pending message when persistence cannot be checked. */ }
+      if (conversationRef.current === requestConversation) {
+        const error = next
+          ? saved ? '发送未完成，请检查会话后再重试。' : '发送失败，消息未保存。请重试。'
+          : '发送状态未确认，请检查会话后再重试。'
+        const notice: Message = { id: crypto.randomUUID(), scope, scopeId: id, authorType: 'system',
+          authorName: 'MindMesh', content: error, sequence: 0, createdAt: new Date().toISOString() }
+        setMessages((current) => [...(next ?? current), notice])
+        setStreamingText('')
+        setStreamingReasoning('')
+      }
+      return saved || conversationRef.current !== requestConversation
     } finally {
       setProgress(null)
       setBusy(false)
@@ -240,7 +261,7 @@ function ObjectList(props: {
 
 function ChatPanel({ title, subtitle, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onDetail }: {
   title: string; subtitle: string; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
-  onSend: (content: string) => Promise<void>; onDetail: () => void
+  onSend: (content: string) => Promise<boolean>; onDetail: () => void
 }): React.JSX.Element {
   return (
     <div className="page chat-page">
@@ -253,7 +274,7 @@ function ChatPanel({ title, subtitle, messages, profile, busy, progress, streami
 
 function SpacePanel({ space, agents, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onEdit, onRemove, onUpdateContext }: {
   space: Space; agents: Agent[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
-  onSend: (content: string) => Promise<void>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
+  onSend: (content: string) => Promise<boolean>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
 }): React.JSX.Element {
   const members = agents.filter((agent) => space.memberIds.includes(agent.id))
   const [editingContext, setEditingContext] = useState(false)
@@ -341,13 +362,14 @@ function MessageBody({ content, animated = false }: { content: string; animated?
   return <div className="message-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']} components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{visible}</ReactMarkdown></div>
 }
 
-function Composer({ busy, placeholder, members = [], onSend }: { busy: boolean; placeholder: string; members?: Agent[]; onSend: (value: string) => Promise<void> }): React.JSX.Element {
+function Composer({ busy, placeholder, members = [], onSend }: { busy: boolean; placeholder: string; members?: Agent[]; onSend: (value: string) => Promise<boolean> }): React.JSX.Element {
   const [value, setValue] = useState('')
-  const showMentions = members.length > 0 && /(^|\s)@[\w-]*$/.test(value)
-  async function submit(): Promise<void> { const current = value; if (busy || !current.trim()) return; setValue(''); await onSend(current) }
+  const mention = /@([\p{L}\p{N}_-]*)$/u.exec(value)
+  const matchingMembers = mention ? members.filter((agent) => agent.name.toLowerCase().startsWith(mention[1].toLowerCase())) : []
+  async function submit(): Promise<void> { const current = value; if (busy || !current.trim()) return; setValue(''); if (!await onSend(current)) setValue((draft) => draft || current) }
   return (
     <div className="composer-wrap">
-      {showMentions && <div className="mention-menu"><span className="eyebrow">选择智能体</span>{members.map((agent) => <button key={agent.id} onClick={() => setValue(value.replace(/@[\w-]*$/, `@${agent.name} `))}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></button>)}</div>}
+      {matchingMembers.length > 0 && <div className="mention-menu"><span className="eyebrow">选择智能体</span>{matchingMembers.map((agent) => <button key={agent.id} onClick={() => setValue(value.replace(/@[\p{L}\p{N}_-]*$/u, `@${agent.name} `))}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></button>)}</div>}
       <div className="composer"><textarea value={value} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit() } }} placeholder={placeholder} /><div className="composer-actions"><span><Command size={14} /> Enter 发送</span><button disabled={busy || !value.trim()} onClick={() => void submit()}>{busy ? <span className="spinner" /> : <Send size={17} />}</button></div></div>
     </div>
   )

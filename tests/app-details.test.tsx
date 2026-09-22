@@ -218,6 +218,97 @@ describe('space background', () => {
 })
 
 describe('chat flow', () => {
+  it('reconciles a failed send before persistence and tells the user', async () => {
+    const api = mockApi()
+    api.chat.sendPrivate = vi.fn(async () => { throw new Error('智能体不存在') })
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    fireEvent.change(input, { target: { value: '待发送内容' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText('发送失败，消息未保存。请重试。')).toBeInTheDocument()
+    expect(document.querySelector('.message.user')).not.toBeInTheDocument()
+    expect(input).toHaveValue('待发送内容')
+    expect(api.chat.messages).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps an already persisted message when the send call fails', async () => {
+    const api = mockApi()
+    api.chat.sendPrivate = vi.fn(async () => { throw new Error('response lost') })
+    api.chat.messages = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        id: 'saved', scope: 'private', scopeId: agent.id, authorType: 'user',
+        authorName: '你', content: '已经保存', sequence: 1, createdAt: new Date().toISOString(),
+      }])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    fireEvent.change(input, { target: { value: '已经保存' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText('发送未完成，请检查会话后再重试。')).toBeInTheDocument()
+    expect(screen.getAllByText('已经保存')).toHaveLength(1)
+  })
+
+  it('keeps a pending message when persistence cannot be checked', async () => {
+    const api = mockApi()
+    api.chat.sendPrivate = vi.fn(async () => { throw new Error('send failed') })
+    api.chat.messages = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('read failed'))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    fireEvent.change(input, { target: { value: '状态未知' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText('发送状态未确认，请检查会话后再重试。')).toBeInTheDocument()
+    expect(document.querySelector('.message.user')).toHaveTextContent('状态未知')
+  })
+
+  it('does not show a failed send in another conversation', async () => {
+    const second = { ...agent, id: 'developer', name: 'Developer' }
+    const api = mockApi()
+    api.agents.list = vi.fn(async () => [agent, second])
+    let rejectSend!: (error: Error) => void
+    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((_resolve, reject) => { rejectSend = reject }))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    fireEvent.change(input, { target: { value: '仅发给 Researcher' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(screen.getByRole('button', { name: /Developer 研究分析专家/ }))
+    await screen.findByPlaceholderText('给 Developer 发送消息…')
+    await act(async () => rejectSend(new Error('send failed')))
+    expect(screen.queryByText('发送失败，消息未保存。请重试。')).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText('给 Developer 发送消息…')).toHaveValue('')
+  })
+
+  it('completes a Chinese agent mention in a space message', async () => {
+    const chineseAgent = { ...agent, id: 'analyst', name: '数据分析师' }
+    const space: Space = { id: 'space', name: '协作', description: '', context: '',
+      memberIds: [chineseAgent.id], createdAt: '' }
+    const api = mockApi()
+    api.agents.list = vi.fn(async () => [chineseAgent])
+    api.spaces.list = vi.fn(async () => [space])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
+    const input = await screen.findByPlaceholderText('@智能体 输入消息…')
+    fireEvent.change(input, { target: { value: '你好 @数据' } })
+    fireEvent.click(screen.getByRole('button', { name: /数据分析师/ }))
+    expect(input).toHaveValue('你好 @数据分析师 ')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(api.chat.sendSpace).toHaveBeenCalledWith('space', '你好 @数据分析师'))
+  })
+
   it('renders a sent user Markdown message as structured content', async () => {
     const api = mockApi()
     let resolveSend!: (messages: Message[]) => void
