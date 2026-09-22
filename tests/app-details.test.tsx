@@ -249,9 +249,13 @@ describe('chat flow', () => {
 
     fireEvent.change(await screen.findByPlaceholderText('给 Researcher 发送消息…'), { target: { value: '你好' } })
     fireEvent.keyDown(screen.getByPlaceholderText('给 Researcher 发送消息…'), { key: 'Enter' })
+    expect(screen.getByText('你好')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('思考中')
+    expect(screen.getByRole('status').closest('.message')).toHaveTextContent('Researcher')
     act(() => notify({ requestId: 'request', scope: 'private', scopeId: agent.id,
       agentId: agent.id, text: '**正在生成**' }))
     expect(screen.getByText('正在生成').tagName).toBe('STRONG')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
     await act(async () => resolveSend([]))
   })
 
@@ -304,8 +308,36 @@ describe('chat flow', () => {
 
     await screen.findByPlaceholderText('给 Researcher 发送消息…')
     act(() => notify({ scope: 'private', scopeId: agent.id, agentName: agent.name }))
-    expect(screen.getByRole('status')).toHaveTextContent('Researcher 正在回复')
+    expect(screen.getByRole('status')).toHaveTextContent('思考中')
+    expect(screen.getByRole('status').closest('.message')).toHaveTextContent('Researcher')
     fireEvent.click(screen.getByRole('button', { name: /Developer 软件工程师/ }))
-    expect(screen.queryByText(/Researcher 正在回复/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('keeps the first space reply visible while the next agent thinks', async () => {
+    const second = { ...agent, id: 'developer', name: 'Developer' }
+    const space: Space = { id: 'space', name: '协作', description: '', context: '',
+      memberIds: [agent.id, second.id], createdAt: '' }
+    const api = mockApi()
+    api.agents.list = vi.fn(async () => [agent, second])
+    api.spaces.list = vi.fn(async () => [space])
+    let notify!: (event: ChatProgress) => void
+    api.chat.onProgress = vi.fn((listener) => { notify = listener; return () => undefined })
+    let spaceReads = 0
+    api.chat.messages = vi.fn(async (scope) => {
+      if (scope !== 'space' || ++spaceReads === 1) return []
+      return [{ id: 'reply', scope: 'space', scopeId: space.id, authorType: 'agent',
+        authorName: agent.name, content: '第一位已完成', sequence: 1,
+        createdAt: new Date().toISOString() }]
+    })
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
+    await screen.findByRole('heading', { name: '协作' })
+    await waitFor(() => expect(api.chat.messages).toHaveBeenCalledWith('space', space.id))
+    act(() => notify({ scope: 'space', scopeId: space.id, agentName: second.name }))
+    expect(await screen.findByText('第一位已完成')).toBeInTheDocument()
+    expect(screen.getByRole('status').closest('.message')).toHaveTextContent('Developer')
   })
 })

@@ -102,8 +102,10 @@ button { color: inherit; }
 .message.system { justify-content: center; opacity: .72; }
 .message.system .avatar, .message.system header { display: none; }
 .message.system .message-body { border-style: dashed; background: transparent; }
-.chat-progress { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
-.chat-progress-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--iris); }
+.chat-progress { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 4px 13px 13px 13px; background: #fff; color: var(--muted); font-size: 12px; }
+.chat-progress-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--iris); animation: thinking-pulse 1s ease-in-out infinite alternate; }
+@keyframes thinking-pulse { to { opacity: .3; transform: scale(.7); } }
+@media (prefers-reduced-motion: reduce) { .chat-progress-dot { animation: none; } }
 .conversation-empty { flex: 1; display: grid; place-content: center; justify-items: center; color: var(--muted); }
 .conversation-empty h3 { margin: 15px 0 5px; color: var(--midnight); font-size: 17px; }
 .conversation-empty p { margin: 0; font-size: 12px; }

@@ -73,7 +73,15 @@ export function App(): React.JSX.Element {
 
   useEffect(() => { void refresh() }, [])
   useEffect(() => {
-    const offProgress = window.mindmesh.chat.onProgress(setProgress)
+    const offProgress = window.mindmesh.chat.onProgress((event) => {
+      setProgress(event)
+      setStreamingText('')
+      if (event.scope === 'space') {
+        void window.mindmesh.chat.messages(event.scope, event.scopeId).then((next) => {
+          if (conversationRef.current === `${event.scope}:${event.scopeId}`) setMessages(next)
+        })
+      }
+    })
     const offDelta = window.mindmesh.chat.onDelta((event) => {
       if (conversationRef.current === `${event.scope}:${event.scopeId}`) {
         setStreamingText((current) => current + event.text)
@@ -100,6 +108,13 @@ export function App(): React.JSX.Element {
     const requestConversation = `${scope}:${id}`
     setBusy(true)
     setStreamingText('')
+    setMessages((current) => [...current, {
+      id: crypto.randomUUID(), scope, scopeId: id, authorType: 'user', authorName: profile.name,
+      content: content.trim(), sequence: 0, createdAt: new Date().toISOString(),
+    }])
+    if (scope === 'private' && selectedAgent) {
+      setProgress({ scope, scopeId: id, agentName: selectedAgent.name })
+    }
     try {
       const result = scope === 'private'
         ? await window.mindmesh.chat.sendPrivate(id, content.trim())
@@ -266,7 +281,7 @@ function MessageList({ messages, profile, emptyText, progress, streamingText }: 
     end.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, progress, streamingText])
   if (!messages.length && !progress && !streamingText) return <div className="conversation-empty"><BrandLogo size={54} /><h3>{emptyText}</h3><p>消息仅保存在这台设备上。</p></div>
-  return <div className="messages">{messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}><Avatar name={message.authorType === 'user' ? profile.name : message.authorName} image={message.authorType === 'user' ? profile.avatar : null} /><div><header><strong>{message.authorType === 'user' ? profile.name : message.authorName}</strong><time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header><MessageBody content={message.content} /></div></article>)}{streamingText && <article className="message agent"><Avatar name={progress ?? '智能体'} /><div><header><strong>{progress ?? '智能体'}</strong></header><MessageBody content={streamingText} /></div></article>}{progress && <div className="chat-progress" role="status"><span className="chat-progress-dot" />{progress} 正在回复…</div>}<div ref={end} /></div>
+  return <div className="messages">{messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}><Avatar name={message.authorType === 'user' ? profile.name : message.authorName} image={message.authorType === 'user' ? profile.avatar : null} /><div><header><strong>{message.authorType === 'user' ? profile.name : message.authorName}</strong><time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header><MessageBody content={message.content} /></div></article>)}{(progress || streamingText) && <article className="message agent"><Avatar name={progress ?? '智能体'} /><div><header><strong>{progress ?? '智能体'}</strong></header>{streamingText ? <MessageBody content={streamingText} /> : <div className="chat-progress" role="status"><span className="chat-progress-dot" />思考中…</div>}</div></article>}<div ref={end} /></div>
 }
 
 function MessageBody({ content }: { content: string }): React.JSX.Element {
