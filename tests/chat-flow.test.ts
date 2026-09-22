@@ -62,6 +62,25 @@ describe('chat failures', () => {
 })
 
 describe('session context', () => {
+  it('keeps an agent reasoning trace with its reply', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const send = vi.fn()
+    const run = vi.fn(async (_agent, _prompt, _id, onText: (text: string, kind: 'text' | 'reasoning') => void) => {
+      onText('第一步\n\n第二步', 'reasoning')
+      onText('最终回答', 'text')
+      return { text: '最终回答', reasoning: '第一步\n\n第二步', sessionId: 'session' }
+    })
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => ({ send }) as unknown as WebContents)
+    try {
+      const agent = db.listAgents()[0]
+      const messages = await service.sendPrivate(agent.id, '问题')
+      expect(messages.at(-1)).toMatchObject({ content: '最终回答', reasoning: '第一步\n\n第二步' })
+      expect(db.listMessages('private', agent.id).at(-1)?.reasoning).toBe('第一步\n\n第二步')
+      expect(send).toHaveBeenCalledWith('chat:delta', expect.objectContaining({ kind: 'reasoning', text: '第一步\n\n第二步' }))
+    } finally { db.close() }
+  })
+
   it('includes every unread space message after a long absence', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '已阅读', sessionId: 'session' })

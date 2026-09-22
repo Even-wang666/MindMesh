@@ -87,7 +87,7 @@ export class MindMeshServices {
     }
     this.db.addMessage({
       scope: 'private', scopeId: agentId, authorType: 'agent', authorId: agent.id,
-      authorName: session.agent.name, content: result.text,
+      authorName: session.agent.name, content: result.text, reasoning: result.reasoning,
     })
     this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, 0)
     return this.db.listMessages('private', agentId)
@@ -132,7 +132,7 @@ export class MindMeshServices {
       }
       const reply = this.db.addMessage({
         scope: 'space', scopeId: spaceId, authorType: 'agent', authorId: agent.id,
-        authorName: session.agent.name, content: result.text,
+        authorName: session.agent.name, content: result.text, reasoning: result.reasoning,
       })
       this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, reply.sequence)
     }
@@ -150,9 +150,9 @@ export class MindMeshServices {
     scope: Message['scope'], scopeId: string, requestId: string, recoveryPrompt: () => string,
   ): ReturnType<DeepSeekHarnessAdapter['run']> {
     let streamed = ''
-    const run = (input: string, id: string) => this.harness.run(agent, input, id, (text) => {
-      streamed += text
-      this.emitText(requestId, scope, scopeId, agent.id, text)
+    const run = (input: string, id: string) => this.harness.run(agent, input, id, (text, kind) => {
+      if (kind !== 'reasoning') streamed += text
+      this.emitText(requestId, scope, scopeId, agent.id, text, kind)
     })
     let result
     try {
@@ -179,7 +179,8 @@ export class MindMeshServices {
     scopeId: string,
     agentId: string,
     text: string,
+    kind: 'text' | 'reasoning' = 'text',
   ): void {
-    this.renderer()?.send('chat:delta', { requestId, scope, scopeId, agentId, text })
+    this.renderer()?.send('chat:delta', { requestId, scope, scopeId, agentId, text, kind })
   }
 }

@@ -218,6 +218,25 @@ describe('space background', () => {
 })
 
 describe('chat flow', () => {
+  it('keeps separate reasoning paragraphs in a collapsed reply', async () => {
+    const api = mockApi()
+    api.chat.messages = vi.fn(async () => [{
+      id: 'reply', scope: 'private' as const, scopeId: agent.id, authorType: 'agent' as const,
+      authorName: agent.name, content: '最终回答', reasoning: '第一步\n\n第二步',
+      sequence: 1, createdAt: new Date().toISOString(),
+    }])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const summary = await screen.findByText('思考过程')
+    const details = summary.closest('details')!
+    expect(details.open).toBe(false)
+    expect(details.querySelectorAll('p')).toHaveLength(2)
+    expect(screen.getByText('最终回答')).toBeInTheDocument()
+    fireEvent.click(summary)
+    expect(details.open).toBe(true)
+  })
+
   it('renders a long Markdown reply as readable structure', async () => {
     const api = mockApi()
     api.chat.messages = vi.fn(async (): Promise<Message[]> => [{
@@ -253,6 +272,11 @@ describe('chat flow', () => {
     expect(screen.getByRole('status')).toHaveTextContent('思考中')
     expect(screen.getByRole('status').closest('.message')).toHaveTextContent('Researcher')
     act(() => notify({ requestId: 'request', scope: 'private', scopeId: agent.id,
+      agentId: agent.id, kind: 'reasoning', text: '先分析\n\n再回答' }))
+    const thinking = screen.getByText('思考过程').closest('details')!
+    expect(thinking.open).toBe(true)
+    await waitFor(() => expect(thinking.querySelectorAll('p')).toHaveLength(2))
+    act(() => notify({ requestId: 'request', scope: 'private', scopeId: agent.id,
       agentId: agent.id, text: '**正在生成**' }))
     await waitFor(() => expect(screen.getByText('正在生成').tagName).toBe('STRONG'))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
@@ -271,10 +295,15 @@ describe('chat flow', () => {
     await act(async () => resolveSend([{
       id: 'reply', scope: 'private', scopeId: agent.id, authorType: 'agent',
       authorName: agent.name, content: '这是一段需要逐字展示的完整回答。',
+      reasoning: '先分析问题\n\n再整理答案',
       sequence: 1, createdAt: new Date().toISOString(),
     }]))
     expect(screen.queryByText('这是一段需要逐字展示的完整回答。')).not.toBeInTheDocument()
     expect(await screen.findByText('这是一段需要逐字展示的完整回答。')).toBeInTheDocument()
+    const details = screen.getByText('思考过程').closest('details')!
+    expect(details.open).toBe(true)
+    fireEvent.click(screen.getByText('思考过程'))
+    expect(details.open).toBe(false)
   })
 
   it('keeps a new draft when Enter is pressed while a reply is pending', async () => {

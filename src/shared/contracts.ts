@@ -27,6 +27,7 @@ export type Message = {
   authorId?: string
   authorName: string
   content: string
+  reasoning?: string | null
   sequence: number
   createdAt: string
 }
@@ -68,6 +69,7 @@ export type ChatDelta = {
   scopeId: string
   agentId: string
   text: string
+  kind?: 'text' | 'reasoning'
 }
 
 export type ChatProgress = Pick<Message, 'scope' | 'scopeId'> & { agentName: string }

@@ -63,6 +63,7 @@ export class MindMeshDatabase {
         authorId TEXT,
         authorName TEXT NOT NULL,
         content TEXT NOT NULL,
+        reasoning TEXT,
         sequence INTEGER NOT NULL,
         createdAt TEXT NOT NULL
       );
@@ -94,6 +95,10 @@ export class MindMeshDatabase {
     }
     if (!columns.some((column) => column.name === 'lastConsumedMessageSequence')) {
       this.db.exec('ALTER TABLE runtime_sessions ADD COLUMN lastConsumedMessageSequence INTEGER NOT NULL DEFAULT 0')
+    }
+    const messageColumns = this.db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>
+    if (!messageColumns.some((column) => column.name === 'reasoning')) {
+      this.db.exec('ALTER TABLE messages ADD COLUMN reasoning TEXT')
     }
   }
 
@@ -343,15 +348,16 @@ export class MindMeshDatabase {
     ).get(input.scope, input.scopeId) as { sequence: number }
     const message: Message = {
       ...input,
+      reasoning: input.reasoning ?? null,
       id: randomUUID(),
       sequence: next.sequence,
       createdAt: new Date().toISOString(),
     }
     this.db.prepare(`
-      INSERT INTO messages (id, scope, scopeId, authorType, authorId, authorName, content, sequence, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, scope, scopeId, authorType, authorId, authorName, content, reasoning, sequence, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(message.id, message.scope, message.scopeId, message.authorType, message.authorId ?? null,
-      message.authorName, message.content, message.sequence, message.createdAt)
+      message.authorName, message.content, message.reasoning ?? null, message.sequence, message.createdAt)
     return message
   }
 

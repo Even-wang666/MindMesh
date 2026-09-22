@@ -239,3 +239,32 @@ describe('runtime sessions', () => {
     }
   })
 })
+
+describe('message reasoning', () => {
+  it('upgrades existing messages and keeps new reasoning after reopening', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-reasoning-'))
+    const path = join(directory, 'mindmesh.sqlite')
+    const old = new DatabaseSync(path)
+    old.exec(`CREATE TABLE messages (
+      id TEXT PRIMARY KEY, scope TEXT NOT NULL, scopeId TEXT NOT NULL,
+      authorType TEXT NOT NULL, authorId TEXT, authorName TEXT NOT NULL,
+      content TEXT NOT NULL, sequence INTEGER NOT NULL, createdAt TEXT NOT NULL
+    )`)
+    old.prepare(`INSERT INTO messages (id, scope, scopeId, authorType, authorName, content, sequence, createdAt)
+      VALUES ('old', 'private', 'agent', 'user', '你', '旧消息', 1, '2026-01-01')`).run()
+    old.close()
+    try {
+      const db = new MindMeshDatabase(path)
+      expect(db.listMessages('private', 'agent')[0]).toMatchObject({ content: '旧消息', reasoning: null })
+      db.addMessage({ scope: 'private', scopeId: 'agent', authorType: 'agent',
+        authorName: 'Agent', content: '回答', reasoning: '先分析\n\n再回答' })
+      db.close()
+      const reopened = new MindMeshDatabase(path)
+      try {
+        expect(reopened.listMessages('private', 'agent')[1]).toMatchObject({
+          content: '回答', reasoning: '先分析\n\n再回答',
+        })
+      } finally { reopened.close() }
+    } finally { rmSync(directory, { recursive: true, force: true }) }
+  })
+})

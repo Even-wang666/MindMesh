@@ -49,10 +49,21 @@ describe('model provider runtime settings', () => {
       options?.onNotification?.({
         method: 'session.event',
         params: { sessionId: 'session', event: {
-          type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '第一段' }] } },
+          type: 'assistant/message', data: { message: { content: [
+            { type: 'reasoning', text: '先检查条件' },
+            { type: 'reasoning', text: '再计算结果' },
+            { type: 'text', text: '分析第一段' },
+            { type: 'text', text: '分析第二段' },
+          ] } },
         } },
       } as never)
-      return { finalResponse: '第一段', sessionId: 'session', events: [], notifications: [] }
+      options?.onNotification?.({
+        method: 'session.event',
+        params: { sessionId: 'session', event: {
+          type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '最终回答' }] } },
+        } },
+      } as never)
+      return { finalResponse: '最终回答', sessionId: 'session', events: [], notifications: [] }
     })
     const close = vi.spyOn(DeepSeekHarness.prototype, 'close').mockResolvedValue()
     const providerSettings = {
@@ -64,10 +75,17 @@ describe('model provider runtime settings', () => {
       model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '',
     }
     const adapter = new DeepSeekHarnessAdapter(directory, directory, providerSettings)
-    const chunks: string[] = []
+    const chunks: Array<{ text: string; kind?: string }> = []
     try {
-      await adapter.run(agent, '你好', 'session', (text) => chunks.push(text))
-      expect(chunks).toEqual(['第一段'])
+      const result = await adapter.run(agent, '你好', 'session', (text, kind) => chunks.push({ text, kind }))
+      expect(chunks).toEqual([
+        { text: '先检查条件', kind: 'reasoning' },
+        { text: '\n\n再计算结果', kind: 'reasoning' },
+        { text: '分析第一段\n\n分析第二段', kind: 'text' },
+        { text: '\n\n最终回答', kind: 'text' },
+      ])
+      expect(result.text).toBe('最终回答')
+      expect(result.reasoning).toBe('先检查条件\n\n再计算结果\n\n分析第一段\n\n分析第二段')
     } finally {
       await adapter.shutdownAll()
       run.mockRestore()

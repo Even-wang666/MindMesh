@@ -47,7 +47,7 @@ export class DeepSeekHarnessAdapter {
     }
   }
 
-  async run(agent: Agent, prompt: string, sessionId?: string, onText?: (text: string) => void): Promise<{ text: string; sessionId?: string }> {
+  async run(agent: Agent, prompt: string, sessionId?: string, onText?: (text: string, kind: 'text' | 'reasoning') => void): Promise<{ text: string; reasoning?: string; sessionId?: string }> {
     const provider = this.providerSettings.getProvider(agent.provider)
     if (!provider) {
       return { text: this.demoResponse(agent, prompt), sessionId }
@@ -87,6 +87,9 @@ export class DeepSeekHarnessAdapter {
       this.runtimes.set(key, entry)
     }
     entry.lastUsed = Date.now()
+    const reasoning: string[] = []
+    const assistantTexts: string[] = []
+    const trace: string[] = []
     let result
     try {
       result = await entry.harness.run(prompt, {
@@ -95,8 +98,20 @@ export class DeepSeekHarnessAdapter {
           if (notification.method !== 'session.event') return
           const event = notification.params.event as SessionEvent
           if (event.type !== 'assistant/message') return
+          const textParts: string[] = []
           for (const block of event.data.message.content) {
-            if (block.type === 'text' && block.text) onText?.(block.text)
+            if (block.type === 'reasoning' && block.text.trim()) {
+              const part = block.text.trim()
+              onText?.(`${reasoning.length ? '\n\n' : ''}${part}`, 'reasoning')
+              reasoning.push(part)
+              trace.push(part)
+            } else if (block.type === 'text' && block.text) textParts.push(block.text)
+          }
+          if (textParts.length) {
+            const text = textParts.join('\n\n')
+            onText?.(`${assistantTexts.length ? '\n\n' : ''}${text}`, 'text')
+            assistantTexts.push(text)
+            trace.push(text)
           }
         },
       })
@@ -106,7 +121,11 @@ export class DeepSeekHarnessAdapter {
       }
       throw error
     }
-    return { text: result.finalResponse, sessionId: result.sessionId }
+    return {
+      text: assistantTexts.at(-1) ?? result.finalResponse,
+      reasoning: (assistantTexts.length ? trace.slice(0, -1) : trace).join('\n\n') || undefined,
+      sessionId: result.sessionId,
+    }
   }
 
   private packagedDshBin(): { dshBin?: string } {
