@@ -83,6 +83,10 @@ export class MindMeshDatabase {
         name TEXT NOT NULL,
         avatar TEXT
       );
+      CREATE TABLE IF NOT EXISTS app_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `)
     const columns = this.db.prepare('PRAGMA table_info(runtime_sessions)').all() as Array<{ name: string }>
     if (!columns.some((column) => column.name === 'agentSnapshot')) {
@@ -94,9 +98,13 @@ export class MindMeshDatabase {
   }
 
   private seed(): void {
+    if (this.db.prepare("SELECT value FROM app_meta WHERE key = 'seeded'").get()) return
     const count = this.db.prepare('SELECT COUNT(*) AS count FROM agents').get() as { count: number }
     const spaces = this.db.prepare('SELECT COUNT(*) AS count FROM spaces').get() as { count: number }
-    if (count.count > 0 || spaces.count > 0) return
+    if (count.count > 0 || spaces.count > 0) {
+      this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('seeded', '1')").run()
+      return
+    }
 
     const researcher = this.createAgent({
       name: 'Researcher',
@@ -122,6 +130,7 @@ export class MindMeshDatabase {
       context: '当前目标：完成 MindMesh MVP。优先验证 Agent 创建、私聊和 Space 协作。',
       memberIds: [researcher.id, developer.id],
     })
+    this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('seeded', '1')").run()
   }
 
   listAgents(): Agent[] {
@@ -240,6 +249,21 @@ export class MindMeshDatabase {
       throw error
     }
     return this.getSpace(id)!
+  }
+
+  removeSpace(id: string): void {
+    if (!this.getSpace(id)) throw new Error('协作空间不存在')
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare("DELETE FROM messages WHERE scope = 'space' AND scopeId = ?").run(id)
+      this.db.prepare('DELETE FROM runtime_sessions WHERE contextKey LIKE ?').run(`space:${id}:%`)
+      this.db.prepare('DELETE FROM space_members WHERE spaceId = ?').run(id)
+      this.db.prepare('DELETE FROM spaces WHERE id = ?').run(id)
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   listMessages(scope: Message['scope'], scopeId: string): Message[] {

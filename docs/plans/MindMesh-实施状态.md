@@ -33,8 +33,15 @@
 - 数据库和界面测试覆盖 Space 成员增删、Agent 删除及删除最后一个 Agent 后重启；完整测试、类型检查和构建通过。
 - Windows NSIS 安装包成功生成并静默安装到临时目录；安装版真实私聊、双 Agent Space 协作和连续两轮重启验证通过，历史消息保留且无残留 Harness 子进程；静默卸载成功。
 - Electron CDP 端到端脚本增加 Space 编辑和 Agent 删除界面操作，已在真实 Electron 进程通过。
+- Space 删除入口已完成确认交互；SQLite 同一事务清理该空间的成员、消息和运行会话，其他空间及私聊保留。删除最后一个 Space 与 Agent 后重启不会重新生成默认数据。
+- Skill 页面从本地技能目录读取已安装的 `SKILL.md`；Agent 选择的技能被复制到独立 Harness 技能根目录，所选工具通过 SDK 启动补丁启用，未选中的内置工具关闭。
+- 新增脱敏运行错误 JSONL 日志，仅记录时间、范围、Agent ID、已知错误类型和安全代码，不记录提示词、原始错误消息或密钥。
+- 新增跨 Space／私聊隔离、双 Provider 启动路由、能力补丁与删除范围测试。真实 DeepSeek SDK 已使用选中的“文件”工具读取随机标记，并从 Skill Registry 加载自定义技能返回技能正文中的隐藏标记；Windows unpacked 包的真实对话及 Space 删除界面通过，运行依赖检查缺失 0 项。
 
 ## 下一阶段
 
-- 将现有 Electron CDP 端到端冒烟脚本纳入稳定的发布检查。NSIS 安装版首轮真实请求曾返回一次通用失败提示，随后单轮及连续两轮重启测试均通过；如再次发生，应记录模型服务或网络的原始错误以定位间歇性原因。
+- 将现有 Electron CDP 端到端冒烟脚本纳入稳定的发布检查。NSIS 安装版首轮真实请求曾返回一次通用失败提示，随后单轮及连续两轮重启测试均通过；如再次发生，先读取 `mindmesh-data/runtime-errors.jsonl` 的脱敏错误代码定位来源。
+- 使用第二个真实模型服务的凭据完成跨 Provider 请求验收；当前只配置了 DeepSeek Key，双 Provider 的配置路由已有确定性测试覆盖。
+- SDK 暂无可供桌面应用直接列举工具 Registry 的接口；工具页当前展示受 MindMesh 支持的三个内置工具，实际启用状态由 Harness 补丁控制。
+- Space 删除目前清理 MindMesh SQLite 记录；Harness SDK 的底层会话文件没有删除接口，后续需在 SDK 提供安全删除能力时补上物理清理。
 - 当前 SDK 只在完整 `assistant/message` 事件中提供文本；token 级流式输出需等待 SDK 协议支持，跨进程继续原 Harness Session 也需 SDK 提供恢复入口。

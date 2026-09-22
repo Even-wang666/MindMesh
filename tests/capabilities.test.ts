@@ -1,0 +1,66 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { describe, expect, it } from 'vitest'
+import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
+import type { Agent } from '../src/shared/contracts'
+import { listSkillCatalog, prepareAgentCapabilities } from '../src/main/capabilities'
+
+const agent: Agent = {
+  id: 'researcher', name: 'Researcher', role: '', persona: '研究员',
+  provider: 'deepseek-official', model: 'deepseek-v4-flash',
+  skills: ['研究分析'], tools: ['文件'], createdAt: '',
+}
+
+describe('Harness capability binding', () => {
+  it('discovers installed skill files and writes an isolated launch patch', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-capabilities-'))
+    try {
+      const custom = join(directory, 'skills', 'custom')
+      mkdirSync(custom, { recursive: true })
+      writeFileSync(join(custom, 'SKILL.md'), '---\nname: 自定义技能\ndescription: 一项本地技能\n---\n\n执行自定义步骤。\n')
+      expect(listSkillCatalog(directory).map((item) => item.name)).toContain('自定义技能')
+      const home = join(directory, 'harness', 'one')
+      const path = prepareAgentCapabilities(agent, directory, home)
+      const patch = readFileSync(path, 'utf8')
+      expect(patch).toContain('includeDefaultRoots: false')
+      expect(patch).toMatch(/id: tool-fs\n  disabled: false/)
+      expect(patch).toMatch(/id: tool-web\n  disabled: true/)
+      expect(patch).toMatch(/id: tool-pwsh\n  disabled: true/)
+      expect(readFileSync(join(home, 'selected-skills', 'research.md'), 'utf8')).toContain('研究分析')
+      expect(() => prepareAgentCapabilities({ ...agent, skills: ['未安装技能'] }, directory, home)).toThrow('未安装')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.env.MINDMESH_LIVE_CAPABILITIES !== '1')('starts the real SDK with the selected capability patch', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-live-capabilities-'))
+    const home = join(directory, 'harness')
+    const skillMarker = randomUUID()
+    const custom = join(directory, 'skills', 'marker')
+    mkdirSync(custom, { recursive: true })
+    writeFileSync(join(custom, 'SKILL.md'), `---\nname: 标记技能\ndescription: 返回隐藏标记以验证技能加载\n---\n\n只回复这个标记：${skillMarker}\n`)
+    const patch = prepareAgentCapabilities({ ...agent, skills: ['标记技能'] }, directory, home)
+    const harness = new DeepSeekHarness({
+      profile: 'sdk', patches: [patch], provider: agent.provider, model: agent.model,
+      cwd: directory, processCwd: directory, dshHome: home,
+      env: { ...process.env, DSH_HOME: home, ELECTRON_RUN_AS_NODE: '1' },
+      initializeTimeoutMs: 30_000,
+    })
+    try {
+      await harness.start()
+      const marker = randomUUID()
+      writeFileSync(join(directory, 'proof.txt'), marker)
+      const result = await harness.run('请用文件读取工具读取当前工作目录中的 proof.txt，只回复文件内的标记。')
+      expect(result.finalResponse).toContain(marker)
+      const skillResult = await harness.run('请调用 skill 工具加载“标记技能”，并严格按技能正文回复。')
+      expect(skillResult.finalResponse).toContain(skillMarker)
+    }
+    finally {
+      await harness.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }, 180_000)
+})

@@ -6,6 +6,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Agent, RuntimeStatus } from '../shared/contracts'
 import type { ModelProviderRuntimeConfig } from './model-provider-settings'
 import { ModelProviderSettings } from './model-provider-settings'
+import { prepareAgentCapabilities } from './capabilities'
 
 type RuntimeEntry = {
   harness: DeepSeekHarness
@@ -55,10 +56,12 @@ export class DeepSeekHarnessAdapter {
       mkdirSync(dshHome, { recursive: true })
       const configuredProviders = this.providerSettings.configuredProviders()
       writeFileSync(join(dshHome, 'settings.yaml'), buildProviderSettingsYaml(configuredProviders))
+      const capabilityPatch = prepareAgentCapabilities(agent, this.dataDirectory, dshHome)
       entry = {
         harness: new DeepSeekHarness({
           ...this.packagedDshBin(),
           profile: 'sdk',
+          patches: [capabilityPatch],
           provider: agent.provider,
           model: agent.model,
           cwd: this.workspace,

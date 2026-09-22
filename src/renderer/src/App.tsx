@@ -134,12 +134,12 @@ export function App(): React.JSX.Element {
             ? <ChatPanel title={selectedAgent.name} subtitle={selectedAgent.role} messages={messages} profile={profile} busy={busy} streamingText={streamingText} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
             : <EmptyState onCreate={() => setAgentWizard(true)} />
         )}
-        {view === 'spaces' && selectedSpace && (
-          <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} messages={messages} profile={profile} busy={busy} streamingText={streamingText} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onEdit={() => setEditingSpaceId(selectedSpace.id)} onUpdateContext={async (id, context) => {
+        {view === 'spaces' && (selectedSpace ? (
+          <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} messages={messages} profile={profile} busy={busy} streamingText={streamingText} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onEdit={() => setEditingSpaceId(selectedSpace.id)} onRemove={async (id) => { await window.mindmesh.spaces.remove(id); await refresh() }} onUpdateContext={async (id, context) => {
             const updated = await window.mindmesh.spaces.updateContext(id, context)
             setSpaces((current) => current.map((space) => space.id === id ? updated : space))
           }} />
-        )}
+        ) : <div className="empty-state"><BrandLogo size={76} /><h1>还没有协作空间</h1><p>创建空间，邀请智能体一起讨论。</p><button className="primary-button" onClick={() => setSpaceWizard(true)}><Plus size={17} />创建空间</button></div>)}
         {view === 'agents' && <AgentsPage agents={agents} onCreate={() => setAgentWizard(true)} onDetail={setDetailAgentId} />}
         {view === 'skills' && <CatalogPage kind="skills" />}
         {view === 'tools' && <CatalogPage kind="tools" />}
@@ -219,15 +219,24 @@ function ChatPanel({ title, subtitle, messages, profile, busy, progress, streami
   )
 }
 
-function SpacePanel({ space, agents, messages, profile, busy, progress, streamingText, onSend, onEdit, onUpdateContext }: {
+function SpacePanel({ space, agents, messages, profile, busy, progress, streamingText, onSend, onEdit, onRemove, onUpdateContext }: {
   space: Space; agents: Agent[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string
-  onSend: (content: string) => Promise<void>; onEdit: () => void; onUpdateContext: (id: string, context: string) => Promise<void>
+  onSend: (content: string) => Promise<void>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
 }): React.JSX.Element {
   const members = agents.filter((agent) => space.memberIds.includes(agent.id))
   const [editingContext, setEditingContext] = useState(false)
   const [contextDraft, setContextDraft] = useState(space.context)
   const [savingContext, setSavingContext] = useState(false)
   const [contextError, setContextError] = useState('')
+  const [removeError, setRemoveError] = useState('')
+  const [removing, setRemoving] = useState(false)
+  async function remove(): Promise<void> {
+    if (!window.confirm(`确定删除协作空间「${space.name}」吗？空间及其聊天消息会从应用中删除。`)) return
+    setRemoving(true)
+    setRemoveError('')
+    try { await onRemove(space.id) }
+    catch { setRemoveError('删除失败，请重试。'); setRemoving(false) }
+  }
   async function saveContext(): Promise<void> {
     setSavingContext(true)
     setContextError('')
@@ -242,7 +251,7 @@ function SpacePanel({ space, agents, messages, profile, busy, progress, streamin
   }
   return (
     <div className="page space-page">
-      <header className="chat-header"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p></div><button className="ghost-button" onClick={onEdit}>编辑空间 <ChevronRight size={15} /></button></header>
+      <header className="chat-header"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p>{removeError && <p className="form-error" role="alert">{removeError}</p>}</div><div className="space-header-actions"><button className="ghost-button" disabled={busy || removing} onClick={onEdit}>编辑空间 <ChevronRight size={15} /></button><button className="danger-button" disabled={busy || removing} onClick={() => void remove()}><Trash2 size={15} />删除空间</button></div></header>
       <div className="space-layout">
         <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} /><Composer busy={busy} placeholder="@智能体 输入消息…" members={members} onSend={onSend} /></div>
         <aside className="context-drawer"><span className="eyebrow">成员</span>{members.map((agent) => <div className="member" key={agent.id}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span><i /></div>)}<hr /><span className="eyebrow">背景信息</span>{editingContext ? <div className="context-editor"><textarea aria-label="背景信息" autoFocus value={contextDraft} onChange={(event) => setContextDraft(event.target.value)} />{contextError && <p className="form-error" role="alert">{contextError}</p>}<div><button className="secondary-button" disabled={savingContext} onClick={() => setEditingContext(false)}>取消</button><button className="primary-button" disabled={savingContext} onClick={() => void saveContext()}>保存背景</button></div></div> : <><p>{space.context || '暂无背景信息。'}</p><button className="text-button" onClick={() => { setContextDraft(space.context); setContextError(''); setEditingContext(true) }}>编辑背景</button></>}</aside>
@@ -497,11 +506,16 @@ function AgentWizard({ initialAgent, onClose, onSaved }: {
     tools: initialAgent.tools,
   } : defaultAgent)
   const [models, setModels] = useState<ModelOption[]>([])
+  const [skills, setSkills] = useState<Array<{ name: string; description: string }>>([])
+  const [tools, setTools] = useState<Array<{ name: string; description: string }>>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const steps = ['身份', '模型', '技能', '工具']
-  const options = step === 2 ? ['研究分析', '报告撰写', '代码审查'] : ['网页搜索', '文件', 'Shell']
-  useEffect(() => { void window.mindmesh.catalog.models().then(setModels) }, [])
+  const options = step === 2 ? skills : tools
+  useEffect(() => {
+    void Promise.all([window.mindmesh.catalog.models(), window.mindmesh.catalog.skills(), window.mindmesh.catalog.tools()])
+      .then(([nextModels, nextSkills, nextTools]) => { setModels(nextModels); setSkills(nextSkills); setTools(nextTools) })
+  }, [])
   const providerIds = [...new Set(models.map((model) => model.provider))]
   const providerModels = models.filter((model) => model.provider === form.provider)
   function selectProvider(provider: string): void {
@@ -531,7 +545,7 @@ function AgentWizard({ initialAgent, onClose, onSaved }: {
         <div className="wizard-body">
           {step === 0 && <><h3>它是谁？</h3><div className="avatar-picker"><Avatar name={form.name || 'M'} large /><button className="secondary-button">选择头像</button><small>MVP 使用默认头像</small></div><Field label="名称"><input autoFocus value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 Researcher" /></Field><Field label="角色定位"><input value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} placeholder="例如 研究分析专家" /></Field><Field label="身份设定"><textarea value={form.persona} onChange={(event) => setForm({ ...form, persona: event.target.value })} placeholder="描述它是谁、擅长什么，以及应该如何回答。" /></Field></>}
           {step === 1 && <><h3>选择模型</h3><Field label="模型服务商"><select value={form.provider} onChange={(event) => selectProvider(event.target.value)}>{providerIds.map((provider) => <option key={provider} value={provider}>{provider === 'custom' ? '自定义服务' : getModelProviderDefinition(provider)?.name ?? provider}</option>)}</select></Field><Field label="模型"><select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })}>{providerModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></Field><div className="info-box"><CircleHelp size={18} /><p>不同模型在推理、编程、创作和速度方面各有特点。</p></div></>}
-          {(step === 2 || step === 3) && <><h3>{step === 2 ? '它会什么？' : '它可以使用哪些工具？'}</h3><div className="choice-list">{options.map((option) => { const checked = (step === 2 ? form.skills : form.tools).includes(option); return <button key={option} className={checked ? 'checked' : ''} onClick={() => toggle(option)}><i>{checked ? '✓' : '+'}</i><span><strong>{option}</strong><small>{step === 2 ? '为智能体添加可复用能力' : '允许智能体调用此工具'}</small></span></button> })}</div></>}
+          {(step === 2 || step === 3) && <><h3>{step === 2 ? '它会什么？' : '它可以使用哪些工具？'}</h3><div className="choice-list">{options.map((option) => { const checked = (step === 2 ? form.skills : form.tools).includes(option.name); return <button key={option.name} className={checked ? 'checked' : ''} onClick={() => toggle(option.name)}><i>{checked ? '✓' : '+'}</i><span><strong>{option.name}</strong><small>{option.description}</small></span></button> })}</div></>}
         </div>
         <footer>{error && <p className="form-error" role="alert">{error}</p>}<button className="secondary-button" disabled={saving} onClick={step === 0 ? onClose : () => setStep(step - 1)}>{step === 0 ? '取消' : '上一步'}</button><button className="primary-button" disabled={saving || (step === 0 && (!form.name.trim() || !form.persona.trim()))} onClick={() => void next()}>{step === 3 ? (initialAgent ? '保存修改' : '创建智能体') : '下一步'} <ChevronRight size={16} /></button></footer>
       </div>

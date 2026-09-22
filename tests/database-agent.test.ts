@@ -61,6 +61,31 @@ describe('updateSpaceContext', () => {
 })
 
 describe('space membership and agent deletion', () => {
+  it('deletes only the selected space, its messages, and runtime sessions', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-space-delete-'))
+    const db = new MindMeshDatabase(join(directory, 'mindmesh.sqlite'))
+    try {
+      const first = db.listSpaces()[0]
+      const second = db.createSpace({ name: '另一个空间', description: '', context: '', memberIds: first.memberIds })
+      const agent = db.getAgent(first.memberIds[0])!
+      db.addMessage({ scope: 'space', scopeId: first.id, authorType: 'user', authorName: '你', content: '删除我' })
+      db.addMessage({ scope: 'space', scopeId: second.id, authorType: 'user', authorName: '你', content: '保留我' })
+      db.addMessage({ scope: 'private', scopeId: agent.id, authorType: 'user', authorName: '你', content: '私聊' })
+      db.getOrCreateRuntimeSession(`space:${first.id}:${agent.id}`, agent, 'first-session', 'hash')
+      db.getOrCreateRuntimeSession(`space:${second.id}:${agent.id}`, agent, 'second-session', 'hash')
+      db.removeSpace(first.id)
+      expect(db.getSpace(first.id)).toBeUndefined()
+      expect(db.listMessages('space', first.id)).toEqual([])
+      expect(db.listMessages('space', second.id)).toHaveLength(1)
+      expect(db.listMessages('private', agent.id)).toHaveLength(1)
+      expect(db.getOrCreateRuntimeSession(`space:${second.id}:${agent.id}`, agent, 'new', 'hash').harnessSessionId).toBe('second-session')
+      expect(db.getOrCreateRuntimeSession(`space:${first.id}:${agent.id}`, agent, 'new', 'hash').harnessSessionId).toBe('new')
+    } finally {
+      db.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('updates space details and members atomically while preserving messages', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-space-edit-'))
     const path = join(directory, 'mindmesh.sqlite')
@@ -94,6 +119,22 @@ describe('space membership and agent deletion', () => {
     try {
       const reopened = new MindMeshDatabase(path)
       try { expect(reopened.listAgents()).toEqual([]) }
+      finally { reopened.close() }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('does not restore starter data after the last Space and Agent are deleted', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-delete-all-'))
+    const path = join(directory, 'mindmesh.sqlite')
+    const db = new MindMeshDatabase(path)
+    db.listSpaces().forEach((item) => db.removeSpace(item.id))
+    db.listAgents().forEach((item) => db.removeAgent(item.id))
+    db.close()
+    try {
+      const reopened = new MindMeshDatabase(path)
+      try { expect(reopened.listSpaces()).toEqual([]); expect(reopened.listAgents()).toEqual([]) }
       finally { reopened.close() }
     } finally {
       rmSync(directory, { recursive: true, force: true })

@@ -161,6 +161,13 @@ async function runRound(round) {
       await until(() => evaluate('document.querySelector(".chat-page h1")?.textContent === "Developer"'))
       assert.equal(await evaluate('window.mindmesh.agents.list().then(agents => agents.length)'), 1)
       console.log('Electron Agent delete UI: OK')
+
+      await evaluate(`Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '协作空间').click()`)
+      await until(() => evaluate('Boolean(document.querySelector(".space-page .danger-button"))'))
+      await evaluate("document.querySelector('.space-page .danger-button').click()")
+      await until(() => evaluate('Boolean(document.querySelector(".empty-state h1"))'))
+      assert.equal(await evaluate('window.mindmesh.spaces.list().then(spaces => spaces.length)'), 0)
+      console.log('Electron Space delete UI: OK')
     }
 
     await evaluate('setTimeout(() => window.close(), 100)')

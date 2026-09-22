@@ -14,6 +14,7 @@ export class MindMeshServices {
     readonly harness: DeepSeekHarnessAdapter,
     readonly providerSettings: ModelProviderSettings,
     private readonly renderer: () => WebContents | undefined,
+    private readonly onRuntimeError: (scope: 'private' | 'space', agentId: string, error: unknown) => void = () => {},
   ) {}
 
   listAgents = () => this.db.listAgents()
@@ -23,6 +24,7 @@ export class MindMeshServices {
   listSpaces = () => this.db.listSpaces()
   createSpace = (input: CreateSpaceInput) => this.db.createSpace(input)
   updateSpace = (id: string, input: CreateSpaceInput) => this.db.updateSpace(id, input)
+  removeSpace = (id: string) => this.db.removeSpace(id)
   updateSpaceContext = (id: string, context: string) => this.db.updateSpaceContext(id, context)
   messages = (scope: Message['scope'], scopeId: string) => this.db.listMessages(scope, scopeId)
   modelProviders = () => this.providerSettings.statuses()
@@ -64,7 +66,8 @@ export class MindMeshServices {
         session.harnessSessionId, 'private', agentId, requestId,
         () => buildPrivatePrompt(session.agent, content,
           this.db.listMessages('private', agentId).slice(-31, -1)))
-    } catch {
+    } catch (error) {
+      this.recordRuntimeError('private', agent.id, error)
       this.db.addMessage({
         scope: 'private', scopeId: agentId, authorType: 'system', authorName: 'MindMesh',
         content: `${agent.name} 回复失败，请检查模型服务配置或网络后重试。`,
@@ -108,7 +111,8 @@ export class MindMeshServices {
         result = await this.runAgent(session.agent, prompt, session.harnessSessionId,
           'space', spaceId, crypto.randomUUID(),
           () => buildSpacePrompt(session.agent, space, this.db.listMessages('space', spaceId).slice(-30)))
-      } catch {
+      } catch (error) {
+        this.recordRuntimeError('space', agent.id, error)
         this.db.addMessage({
           scope: 'space', scopeId: spaceId, authorType: 'system', authorName: 'MindMesh',
           content: `${agent.name} 回复失败，请检查模型服务配置或网络后重试。`,
@@ -122,6 +126,11 @@ export class MindMeshServices {
       this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, reply.sequence)
     }
     return this.db.listMessages('space', spaceId)
+  }
+
+  private recordRuntimeError(scope: 'private' | 'space', agentId: string, error: unknown): void {
+    try { this.onRuntimeError(scope, agentId, error) }
+    catch { /* Logging must not replace the visible failure message. */ }
   }
 
   private async runAgent(

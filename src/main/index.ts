@@ -4,6 +4,8 @@ import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
 import { MindMeshServices } from './services'
+import { listSkillCatalog, toolCatalog } from './capabilities'
+import { appendRuntimeError } from './runtime-errors'
 
 let mainWindow: BrowserWindow | null = null
 let services: MindMeshServices | null = null
@@ -36,7 +38,7 @@ function createWindow(): void {
   }
 }
 
-function registerIpc(current: MindMeshServices): void {
+function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('agents:list', () => current.listAgents())
   ipcMain.handle('agents:create', (_event, input) => current.createAgent(input))
   ipcMain.handle('agents:update', (_event, id, input) => current.updateAgent(id, input))
@@ -44,6 +46,7 @@ function registerIpc(current: MindMeshServices): void {
   ipcMain.handle('spaces:list', () => current.listSpaces())
   ipcMain.handle('spaces:create', (_event, input) => current.createSpace(input))
   ipcMain.handle('spaces:update', (_event, id, input) => current.updateSpace(id, input))
+  ipcMain.handle('spaces:remove', (_event, id) => current.removeSpace(id))
   ipcMain.handle('spaces:updateContext', (_event, id, context) => current.updateSpaceContext(id, context))
   ipcMain.handle('chat:messages', (_event, scope, scopeId) => current.messages(scope, scopeId))
   ipcMain.handle('chat:sendPrivate', (_event, agentId, content) => current.sendPrivate(agentId, content))
@@ -55,16 +58,12 @@ function registerIpc(current: MindMeshServices): void {
   ipcMain.handle('settings:saveModelProvider', (_event, input) => current.saveModelProvider(input))
   ipcMain.handle('settings:removeModelProvider', (_event, id) => current.removeModelProvider(id))
   ipcMain.handle('catalog:models', () => current.models())
-  ipcMain.handle('catalog:skills', () => [
-    { id: 'research', name: '研究分析', description: '整理资料、比较证据并形成结构化结论。', status: '已安装' },
-    { id: 'report', name: '报告撰写', description: '将分析结果组织为清晰的专业报告。', status: '已安装' },
-    { id: 'review', name: '代码审查', description: '检查代码质量、风险和可维护性。', status: '已安装' },
-  ])
-  ipcMain.handle('catalog:tools', () => [
-    { id: 'files', name: '文件', description: '读取和管理工作区文件。', status: '可用' },
-    { id: 'shell', name: 'Shell', description: '在本机执行受控命令。', status: '可用' },
-    { id: 'web', name: '网页搜索', description: '检索公开网页资料。', status: '需要配置' },
-  ])
+  ipcMain.handle('catalog:skills', () => listSkillCatalog(dataDir).map(({ id, name, description }) =>
+    ({ id, name, description, status: '已安装' })))
+  ipcMain.handle('catalog:tools', () => toolCatalog.map((tool) => ({
+    ...tool, status: tool.id === 'web' && !current.modelProviders().some((provider) => provider.id === 'deepseek-official' && provider.configured)
+      ? '需要配置' : '可用',
+  })))
 }
 
 app.whenReady().then(() => {
@@ -73,8 +72,9 @@ app.whenReady().then(() => {
   const db = new MindMeshDatabase(join(dataDir, 'mindmesh.sqlite'))
   const providerSettings = new ModelProviderSettings(join(dataDir, 'model-services.json'))
   const harness = new DeepSeekHarnessAdapter(process.cwd(), dataDir, providerSettings)
-  services = new MindMeshServices(db, harness, providerSettings, () => mainWindow?.webContents)
-  registerIpc(services)
+  services = new MindMeshServices(db, harness, providerSettings, () => mainWindow?.webContents,
+    (scope, agentId, error) => appendRuntimeError(join(dataDir, 'runtime-errors.jsonl'), scope, agentId, error))
+  registerIpc(services, dataDir)
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

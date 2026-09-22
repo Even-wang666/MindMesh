@@ -47,6 +47,31 @@ describe('chat failures', () => {
 })
 
 describe('session context', () => {
+  it('isolates one agent across two Spaces and its private conversation', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockImplementation(async () => ({ text: `回复 ${run.mock.calls.length}`, sessionId: `session-${run.mock.calls.length}` }))
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const first = db.listSpaces()[0]
+      const agent = db.getAgent(first.memberIds[0])!
+      const second = db.createSpace({ name: '独立空间', description: '', context: '只属于第二空间的背景', memberIds: [agent.id] })
+      await service.sendSpace(first.id, `@${agent.name} 仅在空间一出现的标记甲`)
+      await service.sendPrivate(agent.id, '仅在私聊出现的标记乙')
+      await service.sendSpace(second.id, `@${agent.name} 仅在空间二出现的标记丙`)
+      expect(run.mock.calls[0][1]).toContain('标记甲')
+      expect(run.mock.calls[1][1]).toContain('标记乙')
+      expect(run.mock.calls[1][1]).not.toContain('标记甲')
+      expect(run.mock.calls[2][1]).toContain('标记丙')
+      expect(run.mock.calls[2][1]).toContain('只属于第二空间的背景')
+      expect(run.mock.calls[2][1]).not.toContain('标记甲')
+      expect(run.mock.calls[2][1]).not.toContain('标记乙')
+      expect(new Set(run.mock.calls.map((call) => call[2])).size).toBe(3)
+    } finally {
+      db.close()
+    }
+  })
+
   it('recovers a private conversation when the SDK rejects a persisted session after restart', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn()

@@ -12,6 +12,7 @@ const api: MindMeshApi = {
     list: () => ipcRenderer.invoke('spaces:list'),
     create: (input) => ipcRenderer.invoke('spaces:create', input),
     update: (id, input) => ipcRenderer.invoke('spaces:update', id, input),
+    remove: (id) => ipcRenderer.invoke('spaces:remove', id),
     updateContext: (id, context) => ipcRenderer.invoke('spaces:updateContext', id, context),
   },
   chat: {
