@@ -82,6 +82,7 @@ export type MindMeshApi = {
   spaces: {
     list(): Promise<Space[]>
     create(input: CreateSpaceInput): Promise<Space>
+    update(id: string, input: CreateSpaceInput): Promise<Space>
     updateContext(id: string, context: string): Promise<Space>
   }
   chat: {

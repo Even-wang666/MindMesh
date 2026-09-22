@@ -95,7 +95,8 @@ export class MindMeshDatabase {
 
   private seed(): void {
     const count = this.db.prepare('SELECT COUNT(*) AS count FROM agents').get() as { count: number }
-    if (count.count > 0) return
+    const spaces = this.db.prepare('SELECT COUNT(*) AS count FROM spaces').get() as { count: number }
+    if (count.count > 0 || spaces.count > 0) return
 
     const researcher = this.createAgent({
       name: 'Researcher',
@@ -220,6 +221,25 @@ export class MindMeshDatabase {
       throw error
     }
     return space
+  }
+
+  updateSpace(id: string, input: CreateSpaceInput): Space {
+    if (!this.getSpace(id)) throw new Error('协作空间不存在')
+    if (!input.name.trim()) throw new Error('空间名称不能为空')
+    if (new Set(input.memberIds).size !== input.memberIds.length) throw new Error('成员不能重复')
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare('UPDATE spaces SET name = ?, description = ?, context = ? WHERE id = ?')
+        .run(input.name.trim(), input.description.trim(), input.context.trim(), id)
+      this.db.prepare('DELETE FROM space_members WHERE spaceId = ?').run(id)
+      const addMember = this.db.prepare('INSERT INTO space_members (spaceId, agentId, position) VALUES (?, ?, ?)')
+      input.memberIds.forEach((agentId, index) => addMember.run(id, agentId, index))
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+    return this.getSpace(id)!
   }
 
   listMessages(scope: Message['scope'], scopeId: string): Message[] {

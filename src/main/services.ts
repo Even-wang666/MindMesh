@@ -22,6 +22,7 @@ export class MindMeshServices {
   removeAgent = (id: string) => this.db.removeAgent(id)
   listSpaces = () => this.db.listSpaces()
   createSpace = (input: CreateSpaceInput) => this.db.createSpace(input)
+  updateSpace = (id: string, input: CreateSpaceInput) => this.db.updateSpace(id, input)
   updateSpaceContext = (id: string, context: string) => this.db.updateSpaceContext(id, context)
   messages = (scope: Message['scope'], scopeId: string) => this.db.listMessages(scope, scopeId)
   modelProviders = () => this.providerSettings.statuses()

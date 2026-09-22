@@ -24,7 +24,7 @@ const agent: Agent = {
 function mockApi(): MindMeshApi {
   return {
     agents: { list: vi.fn(async () => [agent]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
-    spaces: { list: vi.fn(async () => []), create: vi.fn(), updateContext: vi.fn() },
+    spaces: { list: vi.fn(async () => []), create: vi.fn(), update: vi.fn(), updateContext: vi.fn() },
     chat: {
       messages: vi.fn(async () => []),
       sendPrivate: vi.fn(async () => []),
@@ -110,6 +110,28 @@ describe('user profile', () => {
   })
 })
 
+describe('agent deletion', () => {
+  it('requires confirmation before deleting an agent and selects a remaining agent', async () => {
+    const second = { ...agent, id: 'developer', name: 'Developer' }
+    let current = [agent, second]
+    const api = mockApi()
+    api.agents.list = vi.fn(async () => current)
+    api.agents.remove = vi.fn(async (id) => { current = current.filter((item) => item.id !== id) })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    try {
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /查看详情/ }))
+      fireEvent.click(screen.getByRole('button', { name: '删除智能体' }))
+      expect(api.agents.remove).not.toHaveBeenCalled()
+      confirm.mockReturnValue(true)
+      fireEvent.click(screen.getByRole('button', { name: '删除智能体' }))
+      await waitFor(() => expect(api.agents.remove).toHaveBeenCalledWith(agent.id))
+      expect(await screen.findByPlaceholderText('给 Developer 发送消息…')).toBeInTheDocument()
+    } finally { confirm.mockRestore() }
+  })
+})
+
 describe('space background', () => {
   it('shows one working edit action and refreshes the saved background', async () => {
     let space: Space = {
@@ -138,6 +160,25 @@ describe('space background', () => {
     expect(updateContext).toHaveBeenCalledWith(space.id, '新的背景')
     await screen.findByRole('button', { name: '编辑背景' })
     expect(await screen.findByText('新的背景')).toBeInTheDocument()
+  })
+
+  it('edits space details and removes and adds members', async () => {
+    const second = { ...agent, id: 'developer', name: 'Developer' }
+    let space: Space = { id: 'space', name: '原空间', description: '原简介', context: '原背景', memberIds: [agent.id], createdAt: '' }
+    const api = mockApi()
+    api.agents.list = vi.fn(async () => [agent, second])
+    api.spaces.list = vi.fn(async () => [space])
+    api.spaces.update = vi.fn(async (id, input) => { space = { ...space, ...input }; expect(id).toBe('space'); return space })
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
+    fireEvent.click(await screen.findByRole('button', { name: '编辑空间' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '空间名称' }), { target: { value: '新空间' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Researcher' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Developer' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(api.spaces.update).toHaveBeenCalledWith('space', expect.objectContaining({ name: '新空间', memberIds: ['developer'] })))
+    expect(await screen.findByRole('heading', { name: '新空间' })).toBeInTheDocument()
   })
 })
 

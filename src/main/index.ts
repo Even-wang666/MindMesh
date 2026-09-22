@@ -43,6 +43,7 @@ function registerIpc(current: MindMeshServices): void {
   ipcMain.handle('agents:remove', (_event, id) => current.removeAgent(id))
   ipcMain.handle('spaces:list', () => current.listSpaces())
   ipcMain.handle('spaces:create', (_event, input) => current.createSpace(input))
+  ipcMain.handle('spaces:update', (_event, id, input) => current.updateSpace(id, input))
   ipcMain.handle('spaces:updateContext', (_event, id, context) => current.updateSpaceContext(id, context))
   ipcMain.handle('chat:messages', (_event, scope, scopeId) => current.messages(scope, scopeId))
   ipcMain.handle('chat:sendPrivate', (_event, agentId, content) => current.sendPrivate(agentId, content))

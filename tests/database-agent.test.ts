@@ -60,6 +60,47 @@ describe('updateSpaceContext', () => {
   })
 })
 
+describe('space membership and agent deletion', () => {
+  it('updates space details and members atomically while preserving messages', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-space-edit-'))
+    const path = join(directory, 'mindmesh.sqlite')
+    const db = new MindMeshDatabase(path)
+    try {
+      const space = db.listSpaces()[0]
+      const originalMembers = space.memberIds
+      const message = db.addMessage({ scope: 'space', scopeId: space.id, authorType: 'user', authorName: '你', content: '历史' })
+      const updated = db.updateSpace(space.id, { name: '新空间', description: '新简介', context: '新背景', memberIds: [originalMembers[1]] })
+      expect(updated).toMatchObject({ id: space.id, name: '新空间', description: '新简介', context: '新背景', memberIds: [originalMembers[1]] })
+      expect(db.listMessages('space', space.id)).toMatchObject([message])
+      expect(() => db.updateSpace(space.id, { ...updated, name: '不应保存', memberIds: ['missing-agent'] })).toThrow()
+      expect(db.getSpace(space.id)).toEqual(updated)
+      const restored = db.updateSpace(space.id, { ...updated, memberIds: originalMembers })
+      expect(restored.memberIds).toEqual(originalMembers)
+      db.removeAgent(originalMembers[0])
+      expect(db.getSpace(space.id)?.memberIds).toEqual([originalMembers[1]])
+      expect(db.listMessages('space', space.id)).toMatchObject([message])
+    } finally {
+      db.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('does not recreate default agents after the last one is deleted', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-delete-last-'))
+    const path = join(directory, 'mindmesh.sqlite')
+    const db = new MindMeshDatabase(path)
+    db.listAgents().forEach((item) => db.removeAgent(item.id))
+    db.close()
+    try {
+      const reopened = new MindMeshDatabase(path)
+      try { expect(reopened.listAgents()).toEqual([]) }
+      finally { reopened.close() }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('user profile', () => {
   it('validates and persists a nickname and image', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-profile-'))

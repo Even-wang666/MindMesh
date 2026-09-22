@@ -45,6 +45,7 @@ export function App(): React.JSX.Element {
   const [profile, setProfile] = useState<UserProfile>(defaultProfile)
   const [agentWizard, setAgentWizard] = useState(false)
   const [spaceWizard, setSpaceWizard] = useState(false)
+  const [editingSpaceId, setEditingSpaceId] = useState('')
   const [detailAgentId, setDetailAgentId] = useState<string>('')
   const [editingAgentId, setEditingAgentId] = useState<string>('')
   const [busy, setBusy] = useState(false)
@@ -66,8 +67,8 @@ export function App(): React.JSX.Element {
     setSpaces(nextSpaces)
     setRuntime(status)
     setProfile(nextProfile)
-    setSelectedAgentId((current) => current || nextAgents[0]?.id || '')
-    setSelectedSpaceId((current) => current || nextSpaces[0]?.id || '')
+    setSelectedAgentId((current) => nextAgents.some((agent) => agent.id === current) ? current : nextAgents[0]?.id || '')
+    setSelectedSpaceId((current) => nextSpaces.some((space) => space.id === current) ? current : nextSpaces[0]?.id || '')
   }
 
   useEffect(() => { void refresh() }, [])
@@ -134,7 +135,7 @@ export function App(): React.JSX.Element {
             : <EmptyState onCreate={() => setAgentWizard(true)} />
         )}
         {view === 'spaces' && selectedSpace && (
-          <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} messages={messages} profile={profile} busy={busy} streamingText={streamingText} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onUpdateContext={async (id, context) => {
+          <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} messages={messages} profile={profile} busy={busy} streamingText={streamingText} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onEdit={() => setEditingSpaceId(selectedSpace.id)} onUpdateContext={async (id, context) => {
             const updated = await window.mindmesh.spaces.updateContext(id, context)
             setSpaces((current) => current.map((space) => space.id === id ? updated : space))
           }} />
@@ -146,8 +147,9 @@ export function App(): React.JSX.Element {
       </section>
       {agentWizard && <AgentWizard onClose={() => setAgentWizard(false)} onSaved={async () => { setAgentWizard(false); await refresh() }} />}
       {editingAgentId && <AgentWizard initialAgent={agents.find((item) => item.id === editingAgentId)} onClose={() => setEditingAgentId('')} onSaved={async () => { setEditingAgentId(''); await refresh() }} />}
-      {spaceWizard && <SpaceWizard agents={agents} onClose={() => setSpaceWizard(false)} onCreated={async () => { setSpaceWizard(false); await refresh() }} />}
-      {detailAgentId && <AgentDrawer agent={agents.find((item) => item.id === detailAgentId)} onClose={() => setDetailAgentId('')} onChat={(id) => { setSelectedAgentId(id); setView('chats'); setDetailAgentId('') }} onEdit={(id) => { setDetailAgentId(''); setEditingAgentId(id) }} />}
+      {spaceWizard && <SpaceWizard agents={agents} onClose={() => setSpaceWizard(false)} onSaved={async () => { setSpaceWizard(false); await refresh() }} />}
+      {editingSpaceId && <SpaceWizard agents={agents} initialSpace={spaces.find((item) => item.id === editingSpaceId)} onClose={() => setEditingSpaceId('')} onSaved={async () => { setEditingSpaceId(''); await refresh() }} />}
+      {detailAgentId && <AgentDrawer agent={agents.find((item) => item.id === detailAgentId)} onClose={() => setDetailAgentId('')} onChat={(id) => { setSelectedAgentId(id); setView('chats'); setDetailAgentId('') }} onEdit={(id) => { setDetailAgentId(''); setEditingAgentId(id) }} onRemove={async (id) => { await window.mindmesh.agents.remove(id); setDetailAgentId(''); await refresh() }} />}
     </main>
   )
 }
@@ -217,9 +219,9 @@ function ChatPanel({ title, subtitle, messages, profile, busy, progress, streami
   )
 }
 
-function SpacePanel({ space, agents, messages, profile, busy, progress, streamingText, onSend, onUpdateContext }: {
+function SpacePanel({ space, agents, messages, profile, busy, progress, streamingText, onSend, onEdit, onUpdateContext }: {
   space: Space; agents: Agent[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string
-  onSend: (content: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
+  onSend: (content: string) => Promise<void>; onEdit: () => void; onUpdateContext: (id: string, context: string) => Promise<void>
 }): React.JSX.Element {
   const members = agents.filter((agent) => space.memberIds.includes(agent.id))
   const [editingContext, setEditingContext] = useState(false)
@@ -240,7 +242,7 @@ function SpacePanel({ space, agents, messages, profile, busy, progress, streamin
   }
   return (
     <div className="page space-page">
-      <header className="chat-header"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p></div></header>
+      <header className="chat-header"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p></div><button className="ghost-button" onClick={onEdit}>编辑空间 <ChevronRight size={15} /></button></header>
       <div className="space-layout">
         <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} /><Composer busy={busy} placeholder="@智能体 输入消息…" members={members} onSend={onSend} /></div>
         <aside className="context-drawer"><span className="eyebrow">成员</span>{members.map((agent) => <div className="member" key={agent.id}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span><i /></div>)}<hr /><span className="eyebrow">背景信息</span>{editingContext ? <div className="context-editor"><textarea aria-label="背景信息" autoFocus value={contextDraft} onChange={(event) => setContextDraft(event.target.value)} />{contextError && <p className="form-error" role="alert">{contextError}</p>}<div><button className="secondary-button" disabled={savingContext} onClick={() => setEditingContext(false)}>取消</button><button className="primary-button" disabled={savingContext} onClick={() => void saveContext()}>保存背景</button></div></div> : <><p>{space.context || '暂无背景信息。'}</p><button className="text-button" onClick={() => { setContextDraft(space.context); setContextError(''); setEditingContext(true) }}>编辑背景</button></>}</aside>
@@ -537,20 +539,44 @@ function AgentWizard({ initialAgent, onClose, onSaved }: {
   )
 }
 
-function SpaceWizard({ agents, onClose, onCreated }: { agents: Agent[]; onClose: () => void; onCreated: () => Promise<void> }): React.JSX.Element {
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [context, setContext] = useState('')
-  const [members, setMembers] = useState<string[]>([])
-  async function create(): Promise<void> { await window.mindmesh.spaces.create({ name, description, context, memberIds: members }); await onCreated() }
-  return <div className="modal-backdrop"><div className="wizard compact"><header><div><span className="eyebrow">NEW SPACE</span><h2>创建协作空间</h2><p>让多个智能体共享背景并一起协作。</p></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header><div className="wizard-body"><Field label="空间名称"><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 AI Product Research" /></Field><Field label="简介"><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个空间用来做什么？" /></Field><Field label="背景信息"><textarea value={context} onChange={(event) => setContext(event.target.value)} placeholder="当前目标、项目背景、主要限制和关键规则" /></Field><label className="field"><span>添加智能体</span><div className="member-choices">{agents.map((agent) => <button key={agent.id} className={members.includes(agent.id) ? 'selected' : ''} onClick={() => setMembers((items) => items.includes(agent.id) ? items.filter((id) => id !== agent.id) : [...items, agent.id])}><Avatar name={agent.name} />{agent.name}</button>)}</div></label></div><footer><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={!name} onClick={() => void create()}>创建空间</button></footer></div></div>
+function SpaceWizard({ agents, initialSpace, onClose, onSaved }: { agents: Agent[]; initialSpace?: Space; onClose: () => void; onSaved: () => Promise<void> }): React.JSX.Element {
+  const [name, setName] = useState(initialSpace?.name ?? '')
+  const [description, setDescription] = useState(initialSpace?.description ?? '')
+  const [context, setContext] = useState(initialSpace?.context ?? '')
+  const [members, setMembers] = useState<string[]>(initialSpace?.memberIds ?? [])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  async function save(): Promise<void> {
+    setSaving(true)
+    setError('')
+    try {
+      const input = { name, description, context, memberIds: members }
+      if (initialSpace) await window.mindmesh.spaces.update(initialSpace.id, input)
+      else await window.mindmesh.spaces.create(input)
+      await onSaved()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '保存失败，请重试。')
+    } finally {
+      setSaving(false)
+    }
+  }
+  return <div className="modal-backdrop"><div className="wizard compact"><header><div><span className="eyebrow">{initialSpace ? 'EDIT SPACE' : 'NEW SPACE'}</span><h2>{initialSpace ? '编辑协作空间' : '创建协作空间'}</h2><p>让多个智能体共享背景并一起协作。</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header><div className="wizard-body"><Field label="空间名称"><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 AI Product Research" /></Field><Field label="简介"><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个空间用来做什么？" /></Field><Field label="背景信息"><textarea value={context} onChange={(event) => setContext(event.target.value)} placeholder="当前目标、项目背景、主要限制和关键规则" /></Field><label className="field"><span>添加智能体</span><div className="member-choices">{agents.map((agent) => <button key={agent.id} type="button" aria-label={agent.name} aria-pressed={members.includes(agent.id)} className={members.includes(agent.id) ? 'selected' : ''} onClick={() => setMembers((items) => items.includes(agent.id) ? items.filter((id) => id !== agent.id) : [...items, agent.id])}><Avatar name={agent.name} />{agent.name}</button>)}</div></label></div><footer>{error && <p className="form-error" role="alert">{error}</p>}<button className="secondary-button" disabled={saving} onClick={onClose}>取消</button><button className="primary-button" disabled={saving || !name.trim()} onClick={() => void save()}>{initialSpace ? '保存修改' : '创建空间'}</button></footer></div></div>
 }
 
-function AgentDrawer({ agent, onClose, onChat, onEdit }: {
-  agent?: Agent; onClose: () => void; onChat: (id: string) => void; onEdit: (id: string) => void
+function AgentDrawer({ agent, onClose, onChat, onEdit, onRemove }: {
+  agent?: Agent; onClose: () => void; onChat: (id: string) => void; onEdit: (id: string) => void; onRemove: (id: string) => Promise<void>
 }): React.JSX.Element | null {
+  const [removing, setRemoving] = useState(false)
+  const [error, setError] = useState('')
   if (!agent) return null
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="agent-drawer" onMouseDown={(event) => event.stopPropagation()}><header><Avatar name={agent.name} large /><div><h2>{agent.name}</h2><p>{agent.role}</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header><section><span className="eyebrow">身份设定</span><p>{agent.persona}</p></section><section><span className="eyebrow">模型</span><p><em>{agent.model}</em></p></section><section><span className="eyebrow">技能</span><div className="tags">{agent.skills.map((item) => <i key={item}>{item}</i>)}</div></section><section><span className="eyebrow">工具</span><div className="tags">{agent.tools.map((item) => <i key={item}>{item}</i>)}</div></section><footer><button className="primary-button" onClick={() => onChat(agent.id)}>开始对话</button><button className="secondary-button" onClick={() => onEdit(agent.id)}>编辑智能体</button></footer></aside></div>
+  async function remove(): Promise<void> {
+    if (!agent || !window.confirm(`确定删除智能体「${agent.name}」吗？该操作会将其从协作空间移除。`)) return
+    setRemoving(true)
+    setError('')
+    try { await onRemove(agent.id) }
+    catch { setError('删除失败，请重试。'); setRemoving(false) }
+  }
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="agent-drawer" onMouseDown={(event) => event.stopPropagation()}><header><Avatar name={agent.name} large /><div><h2>{agent.name}</h2><p>{agent.role}</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header><section><span className="eyebrow">身份设定</span><p>{agent.persona}</p></section><section><span className="eyebrow">模型</span><p><em>{agent.model}</em></p></section><section><span className="eyebrow">技能</span><div className="tags">{agent.skills.map((item) => <i key={item}>{item}</i>)}</div></section><section><span className="eyebrow">工具</span><div className="tags">{agent.tools.map((item) => <i key={item}>{item}</i>)}</div></section><footer>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button" disabled={removing} onClick={() => onChat(agent.id)}>开始对话</button><button className="secondary-button" disabled={removing} onClick={() => onEdit(agent.id)}>编辑智能体</button><button className="danger-button" disabled={removing} onClick={() => void remove()}><Trash2 size={15} />删除智能体</button></footer></aside></div>
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element { return <label className="field"><span>{label}</span>{children}</label> }
