@@ -112,7 +112,7 @@ async function runRound(round) {
     await sendFromComposer(`请只回复 ${privateMarker}`)
     try {
       const outcome = await until(() => evaluate(`(() => {
-        if (Array.from(document.querySelectorAll('.message.agent .message-body')).some(x => x.textContent.includes(${JSON.stringify(privateMarker)}))) return 'ok'
+        if (Array.from(document.querySelectorAll('.message.agent > div > .message-body')).some(x => x.textContent.includes(${JSON.stringify(privateMarker)}))) return 'ok'
         if (document.querySelector('.message.system')?.textContent.includes('回复失败')) return 'failed'
         return null
       })()`), 75_000)
@@ -130,7 +130,7 @@ async function runRound(round) {
     const spaceMarker = `MM_SPACE_${Date.now()}`
     await sendFromComposer(`@Researcher @Developer 请分别只回复 ${spaceMarker}`)
     await until(() => evaluate(`document.querySelectorAll(".space-page .message.agent").length === ${existingSpaceReplies + 2} && !document.querySelector(".space-page .chat-progress")`), 180_000)
-    const spaceMessages = await evaluate('Array.from(document.querySelectorAll(".space-page .message.agent .message-body")).map(x => x.textContent)')
+    const spaceMessages = await evaluate('Array.from(document.querySelectorAll(".space-page .message.agent > div > .message-body")).map(x => x.textContent)')
     assert.equal(spaceMessages.length, existingSpaceReplies + 2, 'Space 双 Agent 回复失败')
     console.log(`Electron Space collaboration UI round ${round}: OK`)
 
