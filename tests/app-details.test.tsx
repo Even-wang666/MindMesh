@@ -254,9 +254,27 @@ describe('chat flow', () => {
     expect(screen.getByRole('status').closest('.message')).toHaveTextContent('Researcher')
     act(() => notify({ requestId: 'request', scope: 'private', scopeId: agent.id,
       agentId: agent.id, text: '**正在生成**' }))
-    expect(screen.getByText('正在生成').tagName).toBe('STRONG')
+    await waitFor(() => expect(screen.getByText('正在生成').tagName).toBe('STRONG'))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     await act(async () => resolveSend([]))
+  })
+
+  it('reveals a complete model reply gradually after it arrives', async () => {
+    const api = mockApi()
+    let resolveSend!: (messages: Message[]) => void
+    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { resolveSend = resolve }))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.change(await screen.findByPlaceholderText('给 Researcher 发送消息…'), { target: { value: '问题' } })
+    fireEvent.keyDown(screen.getByPlaceholderText('给 Researcher 发送消息…'), { key: 'Enter' })
+    await act(async () => resolveSend([{
+      id: 'reply', scope: 'private', scopeId: agent.id, authorType: 'agent',
+      authorName: agent.name, content: '这是一段需要逐字展示的完整回答。',
+      sequence: 1, createdAt: new Date().toISOString(),
+    }]))
+    expect(screen.queryByText('这是一段需要逐字展示的完整回答。')).not.toBeInTheDocument()
+    expect(await screen.findByText('这是一段需要逐字展示的完整回答。')).toBeInTheDocument()
   })
 
   it('keeps a new draft when Enter is pressed while a reply is pending', async () => {
@@ -326,7 +344,7 @@ describe('chat flow', () => {
     let spaceReads = 0
     api.chat.messages = vi.fn(async (scope) => {
       if (scope !== 'space' || ++spaceReads === 1) return []
-      return [{ id: 'reply', scope: 'space', scopeId: space.id, authorType: 'agent',
+      return [{ id: 'reply', scope: 'space' as const, scopeId: space.id, authorType: 'agent' as const,
         authorName: agent.name, content: '第一位已完成', sequence: 1,
         createdAt: new Date().toISOString() }]
     })

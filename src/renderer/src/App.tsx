@@ -51,6 +51,7 @@ export function App(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<ChatProgress | null>(null)
   const [streamingText, setStreamingText] = useState('')
+  const liveReplyIds = useRef(new Set<string>())
 
   const conversation = view === 'chats' ? `private:${selectedAgentId}` : view === 'spaces' ? `space:${selectedSpaceId}` : ''
   const conversationRef = useRef(conversation)
@@ -72,13 +73,22 @@ export function App(): React.JSX.Element {
   }
 
   useEffect(() => { void refresh() }, [])
+  function showLiveMessages(next: Message[]): void {
+    setMessages((current) => {
+      const known = new Set(current.map((message) => message.id))
+      for (const message of next) {
+        if (message.authorType === 'agent' && !known.has(message.id)) liveReplyIds.current.add(message.id)
+      }
+      return next
+    })
+  }
   useEffect(() => {
     const offProgress = window.mindmesh.chat.onProgress((event) => {
       setProgress(event)
       setStreamingText('')
       if (event.scope === 'space') {
         void window.mindmesh.chat.messages(event.scope, event.scopeId).then((next) => {
-          if (conversationRef.current === `${event.scope}:${event.scopeId}`) setMessages(next)
+          if (conversationRef.current === `${event.scope}:${event.scopeId}`) showLiveMessages(next)
         })
       }
     })
@@ -96,6 +106,7 @@ export function App(): React.JSX.Element {
     let active = true
     setMessages([])
     setStreamingText('')
+    liveReplyIds.current.clear()
     void window.mindmesh.chat.messages(scope, id).then((next) => { if (active) setMessages(next) })
     return () => { active = false }
   }, [view, selectedAgentId, selectedSpaceId])
@@ -120,7 +131,7 @@ export function App(): React.JSX.Element {
         ? await window.mindmesh.chat.sendPrivate(id, content.trim())
         : await window.mindmesh.chat.sendSpace(id, content.trim())
       if (conversationRef.current === requestConversation) {
-        setMessages(result)
+        showLiveMessages(result)
         setStreamingText('')
       }
       setRuntime(await window.mindmesh.runtime.status())
@@ -146,11 +157,11 @@ export function App(): React.JSX.Element {
       <section className="content">
         {view === 'chats' && (
           selectedAgent
-            ? <ChatPanel title={selectedAgent.name} subtitle={selectedAgent.role} messages={messages} profile={profile} busy={busy} streamingText={streamingText} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
+            ? <ChatPanel title={selectedAgent.name} subtitle={selectedAgent.role} messages={messages} profile={profile} busy={busy} streamingText={streamingText} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
             : <EmptyState onCreate={() => setAgentWizard(true)} />
         )}
         {view === 'spaces' && (selectedSpace ? (
-          <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} messages={messages} profile={profile} busy={busy} streamingText={streamingText} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onEdit={() => setEditingSpaceId(selectedSpace.id)} onRemove={async (id) => { await window.mindmesh.spaces.remove(id); await refresh() }} onUpdateContext={async (id, context) => {
+          <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} messages={messages} profile={profile} busy={busy} streamingText={streamingText} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onEdit={() => setEditingSpaceId(selectedSpace.id)} onRemove={async (id) => { await window.mindmesh.spaces.remove(id); await refresh() }} onUpdateContext={async (id, context) => {
             const updated = await window.mindmesh.spaces.updateContext(id, context)
             setSpaces((current) => current.map((space) => space.id === id ? updated : space))
           }} />
@@ -221,21 +232,21 @@ function ObjectList(props: {
   )
 }
 
-function ChatPanel({ title, subtitle, messages, profile, busy, progress, streamingText, onSend, onDetail }: {
-  title: string; subtitle: string; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string
+function ChatPanel({ title, subtitle, messages, profile, busy, progress, streamingText, liveReplyIds, onSend, onDetail }: {
+  title: string; subtitle: string; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; liveReplyIds: Set<string>
   onSend: (content: string) => Promise<void>; onDetail: () => void
 }): React.JSX.Element {
   return (
     <div className="page chat-page">
       <header className="chat-header"><div><h1>{title}</h1><p>{subtitle}</p></div><button className="ghost-button" onClick={onDetail}>查看详情 <ChevronRight size={15} /></button></header>
-      <MessageList messages={messages} profile={profile} emptyText="开始一段新的对话" progress={progress} streamingText={streamingText} />
+      <MessageList messages={messages} profile={profile} emptyText="开始一段新的对话" progress={progress} streamingText={streamingText} liveReplyIds={liveReplyIds} />
       <Composer busy={busy} placeholder={`给 ${title} 发送消息…`} onSend={onSend} />
     </div>
   )
 }
 
-function SpacePanel({ space, agents, messages, profile, busy, progress, streamingText, onSend, onEdit, onRemove, onUpdateContext }: {
-  space: Space; agents: Agent[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string
+function SpacePanel({ space, agents, messages, profile, busy, progress, streamingText, liveReplyIds, onSend, onEdit, onRemove, onUpdateContext }: {
+  space: Space; agents: Agent[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; liveReplyIds: Set<string>
   onSend: (content: string) => Promise<void>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
 }): React.JSX.Element {
   const members = agents.filter((agent) => space.memberIds.includes(agent.id))
@@ -268,24 +279,37 @@ function SpacePanel({ space, agents, messages, profile, busy, progress, streamin
     <div className="page space-page">
       <header className="chat-header"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p>{removeError && <p className="form-error" role="alert">{removeError}</p>}</div><div className="space-header-actions"><button className="ghost-button" disabled={busy || removing} onClick={onEdit}>编辑空间 <ChevronRight size={15} /></button><button className="danger-button" disabled={busy || removing} onClick={() => void remove()}><Trash2 size={15} />删除空间</button></div></header>
       <div className="space-layout">
-        <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} /><Composer busy={busy} placeholder="@智能体 输入消息…" members={members} onSend={onSend} /></div>
+        <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} liveReplyIds={liveReplyIds} /><Composer busy={busy} placeholder="@智能体 输入消息…" members={members} onSend={onSend} /></div>
         <aside className="context-drawer"><span className="eyebrow">成员</span>{members.map((agent) => <div className="member" key={agent.id}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span><i /></div>)}<hr /><span className="eyebrow">背景信息</span>{editingContext ? <div className="context-editor"><textarea aria-label="背景信息" autoFocus value={contextDraft} onChange={(event) => setContextDraft(event.target.value)} />{contextError && <p className="form-error" role="alert">{contextError}</p>}<div><button className="secondary-button" disabled={savingContext} onClick={() => setEditingContext(false)}>取消</button><button className="primary-button" disabled={savingContext} onClick={() => void saveContext()}>保存背景</button></div></div> : <><p>{space.context || '暂无背景信息。'}</p><button className="text-button" onClick={() => { setContextDraft(space.context); setContextError(''); setEditingContext(true) }}>编辑背景</button></>}</aside>
       </div>
     </div>
   )
 }
 
-function MessageList({ messages, profile, emptyText, progress, streamingText }: { messages: Message[]; profile: UserProfile; emptyText: string; progress?: string; streamingText: string }): React.JSX.Element {
+function MessageList({ messages, profile, emptyText, progress, streamingText, liveReplyIds }: { messages: Message[]; profile: UserProfile; emptyText: string; progress?: string; streamingText: string; liveReplyIds: Set<string> }): React.JSX.Element {
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, progress, streamingText])
   if (!messages.length && !progress && !streamingText) return <div className="conversation-empty"><BrandLogo size={54} /><h3>{emptyText}</h3><p>消息仅保存在这台设备上。</p></div>
-  return <div className="messages">{messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}><Avatar name={message.authorType === 'user' ? profile.name : message.authorName} image={message.authorType === 'user' ? profile.avatar : null} /><div><header><strong>{message.authorType === 'user' ? profile.name : message.authorName}</strong><time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header><MessageBody content={message.content} /></div></article>)}{(progress || streamingText) && <article className="message agent"><Avatar name={progress ?? '智能体'} /><div><header><strong>{progress ?? '智能体'}</strong></header>{streamingText ? <MessageBody content={streamingText} /> : <div className="chat-progress" role="status"><span className="chat-progress-dot" />思考中…</div>}</div></article>}<div ref={end} /></div>
+  return <div className="messages">{messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}><Avatar name={message.authorType === 'user' ? profile.name : message.authorName} image={message.authorType === 'user' ? profile.avatar : null} /><div><header><strong>{message.authorType === 'user' ? profile.name : message.authorName}</strong><time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header><MessageBody content={message.content} animated={liveReplyIds.has(message.id)} /></div></article>)}{(progress || streamingText) && <article className="message agent"><Avatar name={progress ?? '智能体'} /><div><header><strong>{progress ?? '智能体'}</strong></header>{streamingText ? <MessageBody content={streamingText} animated /> : <div className="chat-progress" role="status"><span className="chat-progress-dot" />思考中…</div>}</div></article>}<div ref={end} /></div>
 }
 
-function MessageBody({ content }: { content: string }): React.JSX.Element {
-  return <div className="message-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']} components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{content}</ReactMarkdown></div>
+function MessageBody({ content, animated = false }: { content: string; animated?: boolean }): React.JSX.Element {
+  const [visible, setVisible] = useState(animated ? '' : content)
+  useEffect(() => {
+    if (!animated || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setVisible(content); return }
+    const characters = Array.from(content)
+    const perFrame = Math.max(1, Math.ceil(characters.length / 60))
+    let count = content.startsWith(visible) ? Array.from(visible).length : 0
+    const timer = window.setInterval(() => {
+      count = Math.min(count + perFrame, characters.length)
+      setVisible(characters.slice(0, count).join(''))
+      if (count === characters.length) window.clearInterval(timer)
+    }, 25)
+    return () => window.clearInterval(timer)
+  }, [animated, content])
+  return <div className="message-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']} components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{visible}</ReactMarkdown></div>
 }
 
 function Composer({ busy, placeholder, members = [], onSend }: { busy: boolean; placeholder: string; members?: Agent[]; onSend: (value: string) => Promise<void> }): React.JSX.Element {
