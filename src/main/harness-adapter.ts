@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { DeepSeekHarness, JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Agent, RuntimeStatus } from '../shared/contracts'
@@ -10,7 +10,7 @@ import { prepareAgentCapabilities } from './capabilities'
 
 type RuntimeEntry = {
   harness: DeepSeekHarness
-  lastUsed: number
+  active: number
 }
 
 export class SessionResumeUnsupportedError extends Error {
@@ -31,6 +31,31 @@ export class DeepSeekHarnessAdapter {
   get workspacePath(): string { return this.workspace }
 
   setWorkspace(path: string): void { this.workspace = path }
+
+  cleanupUnusedHomes(capabilityHashes: string[]): void {
+    const root = join(this.dataDirectory, 'harness')
+    if (!existsSync(root)) return
+    const rootPath = realpathSync(root)
+    const protectedNames = new Set([
+      ...capabilityHashes.map((hash) => this.runtimeKey(hash).slice(0, 12)),
+      ...[...this.runtimes.keys()].map((key) => key.slice(0, 12)),
+    ])
+    for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !/^[a-f0-9]{12}$/.test(entry.name) || protectedNames.has(entry.name)) continue
+      const target = resolve(rootPath, entry.name)
+      try {
+        if (dirname(target) !== rootPath || dirname(realpathSync(target)) !== rootPath) continue
+        if (!existsSync(join(target, 'settings.yaml')) || !existsSync(join(target, 'capabilities.cordis.patch.yml'))) continue
+        rmSync(target, { recursive: true, force: true })
+      }
+      catch { /* Failed cleanup must not prevent the app from starting. */ }
+    }
+  }
+
+  private runtimeKey(agentKey: string): string {
+    return this.workspace === process.cwd() ? agentKey
+      : createHash('sha256').update(agentKey).update(this.workspace).digest('hex')
+  }
 
   status(): RuntimeStatus {
     if (this.providerSettings.configuredProviders().length === 0) {
@@ -54,8 +79,7 @@ export class DeepSeekHarnessAdapter {
     }
 
     const agentKey = getAgentCapabilityHash(agent)
-    const key = this.workspace === process.cwd() ? agentKey
-      : createHash('sha256').update(agentKey).update(this.workspace).digest('hex')
+    const key = this.runtimeKey(agentKey)
     let entry = this.runtimes.get(key)
     if (!entry) {
       const dshHome = join(this.dataDirectory, 'harness', key.slice(0, 12))
@@ -82,11 +106,13 @@ export class DeepSeekHarnessAdapter {
           maxTokens: 4096,
           initializeTimeoutMs: 30_000,
         }),
-        lastUsed: Date.now(),
+        active: 0,
       }
       this.runtimes.set(key, entry)
     }
-    entry.lastUsed = Date.now()
+    entry.active += 1
+    this.runtimes.delete(key)
+    this.runtimes.set(key, entry)
     const reasoning: string[] = []
     const assistantTexts: string[] = []
     const trace: string[] = []
@@ -120,11 +146,24 @@ export class DeepSeekHarnessAdapter {
         throw new SessionResumeUnsupportedError()
       }
       throw error
+    } finally {
+      entry.active -= 1
+      await this.evictIdle()
     }
     return {
       text: assistantTexts.at(-1) ?? result.finalResponse,
       reasoning: (assistantTexts.length ? trace.slice(0, -1) : trace).join('\n\n') || undefined,
       sessionId: result.sessionId,
+    }
+  }
+
+  private async evictIdle(): Promise<void> {
+    for (const [key, entry] of this.runtimes) {
+      if (this.runtimes.size <= 3) break
+      if (entry.active) continue
+      this.runtimes.delete(key)
+      try { await entry.harness.close() }
+      catch { /* Cleanup must not replace a completed reply. */ }
     }
   }
 

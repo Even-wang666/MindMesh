@@ -89,6 +89,8 @@ app.whenReady().then(() => {
   const workspace = savedWorkspace && existsSync(savedWorkspace) && statSync(savedWorkspace).isDirectory()
     ? savedWorkspace : defaultWorkspace
   const harness = new DeepSeekHarnessAdapter(workspace, dataDir, providerSettings)
+  try { harness.cleanupUnusedHomes(db.referencedCapabilityHashes()) }
+  catch { /* Cache cleanup must not prevent the app from starting. */ }
   services = new MindMeshServices(db, harness, providerSettings, () => mainWindow?.webContents,
     (scope, agentId, error) => appendRuntimeError(join(dataDir, 'runtime-errors.jsonl'), scope, agentId, error))
   registerIpc(services, dataDir)

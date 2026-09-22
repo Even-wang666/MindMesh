@@ -342,6 +342,11 @@ export class MindMeshDatabase {
     `).run(sessionId, sequence, new Date().toISOString(), contextKey)
   }
 
+  referencedCapabilityHashes(): string[] {
+    return (this.db.prepare('SELECT DISTINCT capabilityHash FROM runtime_sessions').all() as Array<{ capabilityHash: string }>)
+      .map((row) => row.capabilityHash)
+  }
+
   addMessage(input: Omit<Message, 'id' | 'sequence' | 'createdAt'>): Message {
     const next = this.db.prepare(
       'SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM messages WHERE scope = ? AND scopeId = ?',
