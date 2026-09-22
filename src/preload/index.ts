@@ -11,6 +11,7 @@ const api: MindMeshApi = {
   spaces: {
     list: () => ipcRenderer.invoke('spaces:list'),
     create: (input) => ipcRenderer.invoke('spaces:create', input),
+    updateContext: (id, context) => ipcRenderer.invoke('spaces:updateContext', id, context),
   },
   chat: {
     messages: (scope, scopeId) => ipcRenderer.invoke('chat:messages', scope, scopeId),
@@ -36,6 +37,8 @@ const api: MindMeshApi = {
     status: () => ipcRenderer.invoke('runtime:status'),
   },
   settings: {
+    profile: () => ipcRenderer.invoke('settings:profile'),
+    saveProfile: (profile) => ipcRenderer.invoke('settings:saveProfile', profile),
     modelProviders: () => ipcRenderer.invoke('settings:modelProviders'),
     saveModelProvider: (input) => ipcRenderer.invoke('settings:saveModelProvider', input),
     removeModelProvider: (id) => ipcRenderer.invoke('settings:removeModelProvider', id),

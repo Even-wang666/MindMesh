@@ -21,11 +21,14 @@
 - Windows unpacked 构建与启动冒烟测试。
 - 方案 B 的 SVG、PNG、ICO 正式应用图标。
 - 修复 packaged Electron 未包含 Harness SDK peer dependencies 导致的 `ERR_MODULE_NOT_FOUND`；新产物已完成带日志启动验证。
+- 持久化 Harness Session ID、Agent 配置快照和每个 Agent × Space 的 `lastConsumedMessageSequence`；Space 只注入未消费的共享消息。
+- 将 Harness `assistant/message` 通知映射到聊天界面，并修复发送中按 Enter 清空草稿的问题。
+- 使用当前设备配置的 DeepSeek API Key 完成一次真实 SDK 模型请求；未在仓库中保存密钥。
+- 验证 SDK 新进程无法直接恢复已存在的 Session ID；应用遇到该明确错误时创建新 Session，并从 SQLite 最近消息补足上下文。
 
 ## 下一阶段
 
-- 完成真实 DeepSeek API Key 下的 Harness 模型请求与通知到 UI 的增量映射。
-- 持久化 Harness Session ID 与 lastConsumedMessageSequence。
-- 补充 Agent 编辑、删除确认、Space 编辑及成员增删。
+- 完成真实 DeepSeek API Key 下的 Electron 应用端到端请求验证。当前 SDK 只在完整 `assistant/message` 事件中提供文本，token 级流式输出需等待 SDK 协议支持；跨进程继续原 Harness Session 也需 SDK 提供恢复入口。
+- 补充 Agent 删除确认、Space 编辑及成员增删。
 - 增加数据库 Repository 集成测试和 Electron Playwright 端到端测试。
 - 验证 Windows unpacked/NSIS 包中的 Harness 子进程发现与回收。

@@ -37,6 +37,8 @@ export type RuntimeStatus = {
   detail: string
 }
 
+export type UserProfile = { name: string; avatar: string | null }
+
 export type ModelProviderId = 'deepseek-official' | 'moonshotai-cn' | 'openai' | 'anthropic' | 'custom'
 
 export type ModelProviderStatus = {
@@ -80,6 +82,7 @@ export type MindMeshApi = {
   spaces: {
     list(): Promise<Space[]>
     create(input: CreateSpaceInput): Promise<Space>
+    updateContext(id: string, context: string): Promise<Space>
   }
   chat: {
     messages(scope: Message['scope'], scopeId: string): Promise<Message[]>
@@ -97,6 +100,8 @@ export type MindMeshApi = {
     status(): Promise<RuntimeStatus>
   }
   settings: {
+    profile(): Promise<UserProfile>
+    saveProfile(profile: UserProfile): Promise<UserProfile>
     modelProviders(): Promise<ModelProviderStatus[]>
     saveModelProvider(input: SaveModelProviderInput): Promise<ModelProviderStatus[]>
     removeModelProvider(id: ModelProviderId): Promise<ModelProviderStatus[]>

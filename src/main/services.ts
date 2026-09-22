@@ -1,11 +1,11 @@
 import type { WebContents } from 'electron'
 import type {
-  CreateAgentInput, CreateSpaceInput, Message, ModelProviderId, SaveModelProviderInput,
+  CreateAgentInput, CreateSpaceInput, Message, ModelProviderId, SaveModelProviderInput, UserProfile,
 } from '../shared/contracts'
 import { buildPrivatePrompt, buildSpacePrompt, parseMentions } from '../shared/domain'
 import { MODEL_CATALOG } from '../shared/model-providers'
 import { MindMeshDatabase } from './database'
-import { DeepSeekHarnessAdapter } from './harness-adapter'
+import { DeepSeekHarnessAdapter, getAgentCapabilityHash, SessionResumeUnsupportedError } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
 
 export class MindMeshServices {
@@ -22,8 +22,11 @@ export class MindMeshServices {
   removeAgent = (id: string) => this.db.removeAgent(id)
   listSpaces = () => this.db.listSpaces()
   createSpace = (input: CreateSpaceInput) => this.db.createSpace(input)
+  updateSpaceContext = (id: string, context: string) => this.db.updateSpaceContext(id, context)
   messages = (scope: Message['scope'], scopeId: string) => this.db.listMessages(scope, scopeId)
   modelProviders = () => this.providerSettings.statuses()
+  userProfile = () => this.db.getUserProfile()
+  saveUserProfile = (profile: UserProfile) => this.db.saveUserProfile(profile)
 
   async saveModelProvider(input: SaveModelProviderInput) {
     const statuses = this.providerSettings.save(input)
@@ -47,12 +50,19 @@ export class MindMeshServices {
   async sendPrivate(agentId: string, content: string): Promise<Message[]> {
     const agent = this.db.getAgent(agentId)
     if (!agent) throw new Error('智能体不存在')
-    this.db.addMessage({ scope: 'private', scopeId: agentId, authorType: 'user', authorName: '你', content })
+    const contextKey = `private:${agentId}`
+    const session = this.db.getOrCreateRuntimeSession(
+      contextKey, agent, `private-${agentId}`, getAgentCapabilityHash(agent),
+    )
+    this.db.addMessage({ scope: 'private', scopeId: agentId, authorType: 'user', authorName: this.db.getUserProfile().name, content })
     const requestId = crypto.randomUUID()
-    this.emitProgress('private', agentId, agent.name)
+    this.emitProgress('private', agentId, session.agent.name)
     let result
     try {
-      result = await this.harness.run(agent, buildPrivatePrompt(agent, content), `private-${agentId}`)
+      result = await this.runAgent(session.agent, buildPrivatePrompt(session.agent, content),
+        session.harnessSessionId, 'private', agentId, requestId,
+        () => buildPrivatePrompt(session.agent, content,
+          this.db.listMessages('private', agentId).slice(-31, -1)))
     } catch {
       this.db.addMessage({
         scope: 'private', scopeId: agentId, authorType: 'system', authorName: 'MindMesh',
@@ -62,9 +72,9 @@ export class MindMeshServices {
     }
     this.db.addMessage({
       scope: 'private', scopeId: agentId, authorType: 'agent', authorId: agent.id,
-      authorName: agent.name, content: result.text,
+      authorName: session.agent.name, content: result.text,
     })
-    this.emitText(requestId, 'private', agentId, agent.id, result.text)
+    this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, 0)
     return this.db.listMessages('private', agentId)
   }
 
@@ -73,7 +83,7 @@ export class MindMeshServices {
     if (!space) throw new Error('协作空间不存在')
     const members = space.memberIds.map((id) => this.db.getAgent(id)).filter((agent) => agent !== undefined)
     const mentioned = parseMentions(content, members)
-    this.db.addMessage({ scope: 'space', scopeId: spaceId, authorType: 'user', authorName: '你', content })
+    this.db.addMessage({ scope: 'space', scopeId: spaceId, authorType: 'user', authorName: this.db.getUserProfile().name, content })
     if (mentioned.length === 0) {
       this.db.addMessage({
         scope: 'space', scopeId: spaceId, authorType: 'system', authorName: 'MindMesh',
@@ -83,12 +93,20 @@ export class MindMeshServices {
     }
 
     for (const agent of mentioned) {
-      const visibleMessages = this.db.listMessages('space', spaceId).slice(-30)
-      const prompt = buildSpacePrompt(agent, space, visibleMessages)
-      this.emitProgress('space', spaceId, agent.name)
+      const contextKey = `space:${spaceId}:${agent.id}`
+      const session = this.db.getOrCreateRuntimeSession(
+        contextKey, agent, `space-${spaceId}-${agent.id}`, getAgentCapabilityHash(agent),
+        this.db.lastAgentMessageSequence(spaceId, agent.id),
+      )
+      const visibleMessages = this.db.listMessagesSince('space', spaceId,
+        session.lastConsumedMessageSequence, 30)
+      const prompt = buildSpacePrompt(session.agent, space, visibleMessages)
+      this.emitProgress('space', spaceId, session.agent.name)
       let result
       try {
-        result = await this.harness.run(agent, prompt, `space-${spaceId}-${agent.id}`)
+        result = await this.runAgent(session.agent, prompt, session.harnessSessionId,
+          'space', spaceId, crypto.randomUUID(),
+          () => buildSpacePrompt(session.agent, space, this.db.listMessages('space', spaceId).slice(-30)))
       } catch {
         this.db.addMessage({
           scope: 'space', scopeId: spaceId, authorType: 'system', authorName: 'MindMesh',
@@ -96,13 +114,36 @@ export class MindMeshServices {
         })
         continue
       }
-      this.db.addMessage({
+      const reply = this.db.addMessage({
         scope: 'space', scopeId: spaceId, authorType: 'agent', authorId: agent.id,
-        authorName: agent.name, content: result.text,
+        authorName: session.agent.name, content: result.text,
       })
-      this.emitText(crypto.randomUUID(), 'space', spaceId, agent.id, result.text)
+      this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, reply.sequence)
     }
     return this.db.listMessages('space', spaceId)
+  }
+
+  private async runAgent(
+    agent: Parameters<DeepSeekHarnessAdapter['run']>[0], prompt: string, sessionId: string,
+    scope: Message['scope'], scopeId: string, requestId: string, recoveryPrompt: () => string,
+  ): ReturnType<DeepSeekHarnessAdapter['run']> {
+    let streamed = ''
+    const run = (input: string, id: string) => this.harness.run(agent, input, id, (text) => {
+      streamed += text
+      this.emitText(requestId, scope, scopeId, agent.id, text)
+    })
+    let result
+    try {
+      result = await run(prompt, sessionId)
+    } catch (error) {
+      if (!(error instanceof SessionResumeUnsupportedError)) throw error
+      streamed = ''
+      result = await run(recoveryPrompt(), `session-${crypto.randomUUID()}`)
+    }
+    if (result.text.startsWith(streamed) && result.text.length > streamed.length) {
+      this.emitText(requestId, scope, scopeId, agent.id, result.text.slice(streamed.length))
+    }
+    return result
   }
 
   private emitProgress(scope: Message['scope'], scopeId: string, agentName: string): void {

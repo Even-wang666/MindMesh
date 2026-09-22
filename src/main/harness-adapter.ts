@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
+import { DeepSeekHarness, JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Agent, RuntimeStatus } from '../shared/contracts'
 import type { ModelProviderRuntimeConfig } from './model-provider-settings'
 import { ModelProviderSettings } from './model-provider-settings'
@@ -9,6 +10,12 @@ import { ModelProviderSettings } from './model-provider-settings'
 type RuntimeEntry = {
   harness: DeepSeekHarness
   lastUsed: number
+}
+
+export class SessionResumeUnsupportedError extends Error {
+  constructor() {
+    super('当前 Harness SDK 无法在新进程中恢复已有 Session')
+  }
 }
 
 export class DeepSeekHarnessAdapter {
@@ -35,15 +42,13 @@ export class DeepSeekHarnessAdapter {
     }
   }
 
-  async run(agent: Agent, prompt: string, sessionId?: string): Promise<{ text: string; sessionId?: string }> {
+  async run(agent: Agent, prompt: string, sessionId?: string, onText?: (text: string) => void): Promise<{ text: string; sessionId?: string }> {
     const provider = this.providerSettings.getProvider(agent.provider)
     if (!provider) {
       return { text: this.demoResponse(agent, prompt), sessionId }
     }
 
-    const key = createHash('sha256')
-      .update(JSON.stringify([agent.provider, agent.model, agent.persona, agent.skills, agent.tools]))
-      .digest('hex')
+    const key = getAgentCapabilityHash(agent)
     let entry = this.runtimes.get(key)
     if (!entry) {
       const dshHome = join(this.dataDirectory, 'harness', key.slice(0, 12))
@@ -73,7 +78,25 @@ export class DeepSeekHarnessAdapter {
       this.runtimes.set(key, entry)
     }
     entry.lastUsed = Date.now()
-    const result = await entry.harness.run(prompt, sessionId ? { sessionId } : undefined)
+    let result
+    try {
+      result = await entry.harness.run(prompt, {
+        sessionId,
+        onNotification: (notification) => {
+          if (notification.method !== 'session.event') return
+          const event = notification.params.event as SessionEvent
+          if (event.type !== 'assistant/message') return
+          for (const block of event.data.message.content) {
+            if (block.type === 'text' && block.text) onText?.(block.text)
+          }
+        },
+      })
+    } catch (error) {
+      if (error instanceof JsonRpcResponseError && /^session ".+" already exists$/.test(error.message)) {
+        throw new SessionResumeUnsupportedError()
+      }
+      throw error
+    }
     return { text: result.finalResponse, sessionId: result.sessionId }
   }
 
@@ -101,6 +124,12 @@ export class DeepSeekHarnessAdapter {
     this.runtimes.clear()
     await Promise.allSettled(entries.map((entry) => entry.harness.close()))
   }
+}
+
+export function getAgentCapabilityHash(agent: Agent): string {
+  return createHash('sha256')
+    .update(JSON.stringify([agent.provider, agent.model, agent.persona, agent.skills, agent.tools]))
+    .digest('hex')
 }
 
 function providerEnvironment(providers: ModelProviderRuntimeConfig[]): Record<string, string> {

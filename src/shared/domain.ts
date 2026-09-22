@@ -9,7 +9,9 @@ export function parseMentions(content: string, members: Agent[]): Agent[] {
   return positions.map((item) => item.agent)
 }
 
-export function buildPrivatePrompt(agent: Agent, content: string): string {
+export function buildPrivatePrompt(
+  agent: Agent, content: string, history: Array<{ authorName: string; content: string }> = [],
+): string {
   return [
     `你是 ${agent.name}。`,
     `角色定位：${agent.role || '由用户定义的智能体'}`,
@@ -17,6 +19,7 @@ export function buildPrivatePrompt(agent: Agent, content: string): string {
     agent.persona,
     '请始终保持上述身份，并直接回应用户。',
     '',
+    ...(history.length ? ['此前对话：', ...history.map((message) => `${message.authorName}：${message.content}`), ''] : []),
     `用户：${content}`,
   ].join('\n')
 }

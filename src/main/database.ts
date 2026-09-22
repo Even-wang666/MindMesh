@@ -2,10 +2,21 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { Agent, CreateAgentInput, CreateSpaceInput, Message, Space } from '../shared/contracts'
+import type { Agent, CreateAgentInput, CreateSpaceInput, Message, Space, UserProfile } from '../shared/contracts'
 
 type AgentRow = Omit<Agent, 'skills' | 'tools'> & { skills: string; tools: string }
 type SpaceRow = Omit<Space, 'memberIds'>
+type RuntimeSessionRow = {
+  harnessSessionId: string
+  agentSnapshot: string | null
+  lastConsumedMessageSequence: number
+}
+
+export type RuntimeSession = {
+  harnessSessionId: string
+  agent: Agent
+  lastConsumedMessageSequence: number
+}
 
 export class MindMeshDatabase {
   private readonly db: DatabaseSync
@@ -63,9 +74,23 @@ export class MindMeshDatabase {
         provider TEXT NOT NULL,
         model TEXT NOT NULL,
         capabilityHash TEXT NOT NULL,
+        agentSnapshot TEXT,
+        lastConsumedMessageSequence INTEGER NOT NULL DEFAULT 0,
         updatedAt TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS user_profile (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        name TEXT NOT NULL,
+        avatar TEXT
+      );
     `)
+    const columns = this.db.prepare('PRAGMA table_info(runtime_sessions)').all() as Array<{ name: string }>
+    if (!columns.some((column) => column.name === 'agentSnapshot')) {
+      this.db.exec('ALTER TABLE runtime_sessions ADD COLUMN agentSnapshot TEXT')
+    }
+    if (!columns.some((column) => column.name === 'lastConsumedMessageSequence')) {
+      this.db.exec('ALTER TABLE runtime_sessions ADD COLUMN lastConsumedMessageSequence INTEGER NOT NULL DEFAULT 0')
+    }
   }
 
   private seed(): void {
@@ -157,6 +182,30 @@ export class MindMeshDatabase {
     return this.listSpaces().find((space) => space.id === id)
   }
 
+  getUserProfile(): UserProfile {
+    return this.db.prepare('SELECT name, avatar FROM user_profile WHERE id = 1').get() as UserProfile | undefined
+      ?? { name: '你', avatar: null }
+  }
+
+  saveUserProfile(input: UserProfile): UserProfile {
+    const name = typeof input?.name === 'string' ? input.name.trim() : ''
+    if (!name || name.length > 40) throw new Error('昵称需为 1–40 个字符')
+    const avatar = input.avatar
+    if (avatar !== null && (typeof avatar !== 'string' || avatar.length > 1_500_000 ||
+      !/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/.test(avatar))) {
+      throw new Error('请选择不超过 1 MB 的 PNG、JPEG、WebP 或 GIF 图片')
+    }
+    this.db.prepare(`INSERT INTO user_profile (id, name, avatar) VALUES (1, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name, avatar = excluded.avatar`).run(name, avatar)
+    return { name, avatar }
+  }
+
+  updateSpaceContext(id: string, context: string): Space {
+    const result = this.db.prepare('UPDATE spaces SET context = ? WHERE id = ?').run(context, id)
+    if (result.changes === 0) throw new Error('协作空间不存在')
+    return this.getSpace(id)!
+  }
+
   createSpace(input: CreateSpaceInput): Space {
     const space: Space = { ...input, id: randomUUID(), createdAt: new Date().toISOString() }
     this.db.exec('BEGIN')
@@ -176,6 +225,56 @@ export class MindMeshDatabase {
   listMessages(scope: Message['scope'], scopeId: string): Message[] {
     return this.db.prepare('SELECT * FROM messages WHERE scope = ? AND scopeId = ? ORDER BY sequence ASC')
       .all(scope, scopeId) as unknown as Message[]
+  }
+
+  listMessagesSince(scope: Message['scope'], scopeId: string, sequence: number, limit: number): Message[] {
+    return (this.db.prepare(`
+      SELECT * FROM messages WHERE scope = ? AND scopeId = ? AND sequence > ?
+      ORDER BY sequence DESC LIMIT ?
+    `).all(scope, scopeId, sequence, limit) as unknown as Message[]).reverse()
+  }
+
+  lastAgentMessageSequence(spaceId: string, agentId: string): number {
+    const row = this.db.prepare(`
+      SELECT COALESCE(MAX(sequence), 0) AS sequence FROM messages
+      WHERE scope = 'space' AND scopeId = ? AND authorId = ?
+    `).get(spaceId, agentId) as { sequence: number }
+    return row.sequence
+  }
+
+  getOrCreateRuntimeSession(
+    contextKey: string, agent: Agent, sessionId: string, capabilityHash: string, initialSequence = 0,
+  ): RuntimeSession {
+    const row = this.db.prepare(`
+      SELECT harnessSessionId, agentSnapshot, lastConsumedMessageSequence
+      FROM runtime_sessions WHERE contextKey = ?
+    `).get(contextKey) as RuntimeSessionRow | undefined
+    if (row) {
+      if (!row.agentSnapshot) {
+        this.db.prepare('UPDATE runtime_sessions SET agentSnapshot = ? WHERE contextKey = ?')
+          .run(JSON.stringify(agent), contextKey)
+      }
+      return {
+        harnessSessionId: row.harnessSessionId,
+        agent: row.agentSnapshot ? JSON.parse(row.agentSnapshot) as Agent : agent,
+        lastConsumedMessageSequence: row.lastConsumedMessageSequence,
+      }
+    }
+    this.db.prepare(`
+      INSERT INTO runtime_sessions
+        (contextKey, harnessSessionId, provider, model, capabilityHash, agentSnapshot,
+         lastConsumedMessageSequence, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(contextKey, sessionId, agent.provider, agent.model, capabilityHash,
+      JSON.stringify(agent), initialSequence, new Date().toISOString())
+    return { harnessSessionId: sessionId, agent, lastConsumedMessageSequence: initialSequence }
+  }
+
+  saveRuntimeSessionProgress(contextKey: string, sessionId: string, sequence: number): void {
+    this.db.prepare(`
+      UPDATE runtime_sessions SET harnessSessionId = ?, lastConsumedMessageSequence = ?, updatedAt = ?
+      WHERE contextKey = ?
+    `).run(sessionId, sequence, new Date().toISOString(), contextKey)
   }
 
   addMessage(input: Omit<Message, 'id' | 'sequence' | 'createdAt'>): Message {

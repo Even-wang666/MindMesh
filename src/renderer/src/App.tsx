@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   Activity, Bot, Boxes, Check, ChevronRight, CircleHelp, Command, Eye, EyeOff, HardDrive,
   KeyRound, Library, MessageCircle, MoreHorizontal, Plus, Search, Send, Settings,
-  ShieldCheck, Sparkles, Trash2, Users, Wrench, X,
+  ShieldCheck, Sparkles, Trash2, Wrench, X,
 } from 'lucide-react'
 import type {
   Agent, ChatProgress, CreateAgentInput, Message, ModelProviderId, ModelProviderStatus, RuntimeStatus,
-  SaveModelProviderInput, Space,
+  SaveModelProviderInput, Space, UserProfile,
 } from '../../shared/contracts'
 import {
   getModelProviderApiKeyError, getModelProviderDefinition, MODEL_PROVIDER_DEFINITIONS,
@@ -30,6 +32,7 @@ const providerLogos: Partial<Record<ModelProviderId, string>> = {
 const defaultAgent: CreateAgentInput = {
   name: '', role: '', persona: '', provider: 'deepseek-official', model: 'deepseek-v4-flash', skills: [], tools: [],
 }
+const defaultProfile: UserProfile = { name: '你', avatar: null }
 
 export function App(): React.JSX.Element {
   const [view, setView] = useState<View>('chats')
@@ -39,12 +42,14 @@ export function App(): React.JSX.Element {
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>('')
   const [messages, setMessages] = useState<Message[]>([])
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null)
+  const [profile, setProfile] = useState<UserProfile>(defaultProfile)
   const [agentWizard, setAgentWizard] = useState(false)
   const [spaceWizard, setSpaceWizard] = useState(false)
   const [detailAgentId, setDetailAgentId] = useState<string>('')
   const [editingAgentId, setEditingAgentId] = useState<string>('')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<ChatProgress | null>(null)
+  const [streamingText, setStreamingText] = useState('')
 
   const conversation = view === 'chats' ? `private:${selectedAgentId}` : view === 'spaces' ? `space:${selectedSpaceId}` : ''
   const conversationRef = useRef(conversation)
@@ -54,22 +59,26 @@ export function App(): React.JSX.Element {
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId)
 
   async function refresh(): Promise<void> {
-    const [nextAgents, nextSpaces, status] = await Promise.all([
-      window.mindmesh.agents.list(), window.mindmesh.spaces.list(), window.mindmesh.runtime.status(),
+    const [nextAgents, nextSpaces, status, nextProfile] = await Promise.all([
+      window.mindmesh.agents.list(), window.mindmesh.spaces.list(), window.mindmesh.runtime.status(), window.mindmesh.settings.profile(),
     ])
     setAgents(nextAgents)
     setSpaces(nextSpaces)
     setRuntime(status)
+    setProfile(nextProfile)
     setSelectedAgentId((current) => current || nextAgents[0]?.id || '')
     setSelectedSpaceId((current) => current || nextSpaces[0]?.id || '')
   }
 
   useEffect(() => { void refresh() }, [])
   useEffect(() => {
-  const off = window.mindmesh.chat.onProgress?.(setProgress)
-  return () => {
-    if (typeof off === 'function') off()
-  }
+    const offProgress = window.mindmesh.chat.onProgress(setProgress)
+    const offDelta = window.mindmesh.chat.onDelta((event) => {
+      if (conversationRef.current === `${event.scope}:${event.scopeId}`) {
+        setStreamingText((current) => current + event.text)
+      }
+    })
+    return () => { offProgress(); offDelta() }
   }, [])
   useEffect(() => {
     const scope = view === 'spaces' ? 'space' : 'private'
@@ -77,6 +86,7 @@ export function App(): React.JSX.Element {
     if (!id || (view !== 'chats' && view !== 'spaces')) return
     let active = true
     setMessages([])
+    setStreamingText('')
     void window.mindmesh.chat.messages(scope, id).then((next) => { if (active) setMessages(next) })
     return () => { active = false }
   }, [view, selectedAgentId, selectedSpaceId])
@@ -88,11 +98,15 @@ export function App(): React.JSX.Element {
     if (!id || (view !== 'chats' && view !== 'spaces')) return
     const requestConversation = `${scope}:${id}`
     setBusy(true)
+    setStreamingText('')
     try {
       const result = scope === 'private'
         ? await window.mindmesh.chat.sendPrivate(id, content.trim())
         : await window.mindmesh.chat.sendSpace(id, content.trim())
-      if (conversationRef.current === requestConversation) setMessages(result)
+      if (conversationRef.current === requestConversation) {
+        setMessages(result)
+        setStreamingText('')
+      }
       setRuntime(await window.mindmesh.runtime.status())
     } finally {
       setProgress(null)
@@ -116,16 +130,19 @@ export function App(): React.JSX.Element {
       <section className="content">
         {view === 'chats' && (
           selectedAgent
-            ? <ChatPanel title={selectedAgent.name} subtitle={selectedAgent.role} messages={messages} busy={busy} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
+            ? <ChatPanel title={selectedAgent.name} subtitle={selectedAgent.role} messages={messages} profile={profile} busy={busy} streamingText={streamingText} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
             : <EmptyState onCreate={() => setAgentWizard(true)} />
         )}
         {view === 'spaces' && selectedSpace && (
-          <SpacePanel space={selectedSpace} agents={agents} messages={messages} busy={busy} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} />
+          <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} messages={messages} profile={profile} busy={busy} streamingText={streamingText} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onUpdateContext={async (id, context) => {
+            const updated = await window.mindmesh.spaces.updateContext(id, context)
+            setSpaces((current) => current.map((space) => space.id === id ? updated : space))
+          }} />
         )}
         {view === 'agents' && <AgentsPage agents={agents} onCreate={() => setAgentWizard(true)} onDetail={setDetailAgentId} />}
         {view === 'skills' && <CatalogPage kind="skills" />}
         {view === 'tools' && <CatalogPage kind="tools" />}
-        {view === 'settings' && <SettingsPage runtime={runtime} onRuntimeChange={setRuntime} />}
+        {view === 'settings' && <SettingsPage runtime={runtime} profile={profile} onProfileChange={setProfile} onRuntimeChange={setRuntime} />}
       </section>
       {agentWizard && <AgentWizard onClose={() => setAgentWizard(false)} onSaved={async () => { setAgentWizard(false); await refresh() }} />}
       {editingAgentId && <AgentWizard initialAgent={agents.find((item) => item.id === editingAgentId)} onClose={() => setEditingAgentId('')} onSaved={async () => { setEditingAgentId(''); await refresh() }} />}
@@ -187,47 +204,68 @@ function ObjectList(props: {
   )
 }
 
-function ChatPanel({ title, subtitle, messages, busy, progress, onSend, onDetail }: {
-  title: string; subtitle: string; messages: Message[]; busy: boolean; progress?: string
+function ChatPanel({ title, subtitle, messages, profile, busy, progress, streamingText, onSend, onDetail }: {
+  title: string; subtitle: string; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string
   onSend: (content: string) => Promise<void>; onDetail: () => void
 }): React.JSX.Element {
   return (
     <div className="page chat-page">
       <header className="chat-header"><div><h1>{title}</h1><p>{subtitle}</p></div><button className="ghost-button" onClick={onDetail}>查看详情 <ChevronRight size={15} /></button></header>
-      <MessageList messages={messages} emptyText="开始一段新的对话" progress={progress} />
+      <MessageList messages={messages} profile={profile} emptyText="开始一段新的对话" progress={progress} streamingText={streamingText} />
       <Composer busy={busy} placeholder={`给 ${title} 发送消息…`} onSend={onSend} />
     </div>
   )
 }
 
-function SpacePanel({ space, agents, messages, busy, progress, onSend }: {
-  space: Space; agents: Agent[]; messages: Message[]; busy: boolean; progress?: string; onSend: (content: string) => Promise<void>
+function SpacePanel({ space, agents, messages, profile, busy, progress, streamingText, onSend, onUpdateContext }: {
+  space: Space; agents: Agent[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string
+  onSend: (content: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
 }): React.JSX.Element {
   const members = agents.filter((agent) => space.memberIds.includes(agent.id))
+  const [editingContext, setEditingContext] = useState(false)
+  const [contextDraft, setContextDraft] = useState(space.context)
+  const [savingContext, setSavingContext] = useState(false)
+  const [contextError, setContextError] = useState('')
+  async function saveContext(): Promise<void> {
+    setSavingContext(true)
+    setContextError('')
+    try {
+      await onUpdateContext(space.id, contextDraft.trim())
+      setEditingContext(false)
+    } catch {
+      setContextError('保存失败，请重试。')
+    } finally {
+      setSavingContext(false)
+    }
+  }
   return (
     <div className="page space-page">
-      <header className="chat-header"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p></div><button className="ghost-button"><Users size={16} /> 成员与背景</button></header>
+      <header className="chat-header"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p></div></header>
       <div className="space-layout">
-        <div className="space-chat"><MessageList messages={messages} emptyText="使用 @智能体 开始协作" progress={progress} /><Composer busy={busy} placeholder="@智能体 输入消息…" members={members} onSend={onSend} /></div>
-        <aside className="context-drawer"><span className="eyebrow">成员</span>{members.map((agent) => <div className="member" key={agent.id}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span><i /></div>)}<hr /><span className="eyebrow">背景信息</span><p>{space.context}</p><button className="text-button">编辑背景</button></aside>
+        <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} /><Composer busy={busy} placeholder="@智能体 输入消息…" members={members} onSend={onSend} /></div>
+        <aside className="context-drawer"><span className="eyebrow">成员</span>{members.map((agent) => <div className="member" key={agent.id}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span><i /></div>)}<hr /><span className="eyebrow">背景信息</span>{editingContext ? <div className="context-editor"><textarea aria-label="背景信息" autoFocus value={contextDraft} onChange={(event) => setContextDraft(event.target.value)} />{contextError && <p className="form-error" role="alert">{contextError}</p>}<div><button className="secondary-button" disabled={savingContext} onClick={() => setEditingContext(false)}>取消</button><button className="primary-button" disabled={savingContext} onClick={() => void saveContext()}>保存背景</button></div></div> : <><p>{space.context || '暂无背景信息。'}</p><button className="text-button" onClick={() => { setContextDraft(space.context); setContextError(''); setEditingContext(true) }}>编辑背景</button></>}</aside>
       </div>
     </div>
   )
 }
 
-function MessageList({ messages, emptyText, progress }: { messages: Message[]; emptyText: string; progress?: string }): React.JSX.Element {
+function MessageList({ messages, profile, emptyText, progress, streamingText }: { messages: Message[]; profile: UserProfile; emptyText: string; progress?: string; streamingText: string }): React.JSX.Element {
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, progress])
-  if (!messages.length && !progress) return <div className="conversation-empty"><BrandLogo size={54} /><h3>{emptyText}</h3><p>消息仅保存在这台设备上。</p></div>
-  return <div className="messages">{messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}><Avatar name={message.authorName} /><div><header><strong>{message.authorName}</strong><time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header><p>{message.content}</p></div></article>)}{progress && <div className="chat-progress" role="status"><span className="chat-progress-dot" />{progress} 正在回复…</div>}<div ref={end} /></div>
+  }, [messages, progress, streamingText])
+  if (!messages.length && !progress && !streamingText) return <div className="conversation-empty"><BrandLogo size={54} /><h3>{emptyText}</h3><p>消息仅保存在这台设备上。</p></div>
+  return <div className="messages">{messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}><Avatar name={message.authorType === 'user' ? profile.name : message.authorName} image={message.authorType === 'user' ? profile.avatar : null} /><div><header><strong>{message.authorType === 'user' ? profile.name : message.authorName}</strong><time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header><MessageBody content={message.content} /></div></article>)}{streamingText && <article className="message agent"><Avatar name={progress ?? '智能体'} /><div><header><strong>{progress ?? '智能体'}</strong></header><MessageBody content={streamingText} /></div></article>}{progress && <div className="chat-progress" role="status"><span className="chat-progress-dot" />{progress} 正在回复…</div>}<div ref={end} /></div>
+}
+
+function MessageBody({ content }: { content: string }): React.JSX.Element {
+  return <div className="message-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']} components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{content}</ReactMarkdown></div>
 }
 
 function Composer({ busy, placeholder, members = [], onSend }: { busy: boolean; placeholder: string; members?: Agent[]; onSend: (value: string) => Promise<void> }): React.JSX.Element {
   const [value, setValue] = useState('')
   const showMentions = members.length > 0 && /(^|\s)@[\w-]*$/.test(value)
-  async function submit(): Promise<void> { const current = value; if (!current.trim()) return; setValue(''); await onSend(current) }
+  async function submit(): Promise<void> { const current = value; if (busy || !current.trim()) return; setValue(''); await onSend(current) }
   return (
     <div className="composer-wrap">
       {showMentions && <div className="mention-menu"><span className="eyebrow">选择智能体</span>{members.map((agent) => <button key={agent.id} onClick={() => setValue(value.replace(/@[\w-]*$/, `@${agent.name} `))}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></button>)}</div>}
@@ -250,8 +288,53 @@ function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element 
   return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div></header><div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p><span className="status-tag">{item.status}</span></article>)}</div></div>
 }
 
-function SettingsPage({ runtime, onRuntimeChange }: {
+function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: (profile: UserProfile) => void }): React.JSX.Element {
+  const [draft, setDraft] = useState(profile)
+  const [saving, setSaving] = useState(false)
+  const [reading, setReading] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => setDraft(profile), [profile])
+
+  function chooseAvatar(file?: File): void {
+    if (!file) return
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 1_000_000) {
+      setError('请选择不超过 1 MB 的 PNG、JPEG、WebP 或 GIF 图片')
+      return
+    }
+    setReading(true)
+    const reader = new FileReader()
+    reader.onload = () => {
+      const image = reader.result
+      if (typeof image === 'string') { setDraft((current) => ({ ...current, avatar: image })); setError('') }
+      else setError('无法读取图片，请重试')
+      setReading(false)
+    }
+    reader.onerror = () => { setError('无法读取图片，请重试'); setReading(false) }
+    reader.readAsDataURL(file)
+  }
+
+  async function saveProfile(): Promise<void> {
+    if (!draft.name.trim()) { setError('请输入昵称'); return }
+    setSaving(true)
+    setError('')
+    try {
+      const saved = await window.mindmesh.settings.saveProfile(draft)
+      setDraft(saved)
+      onSaved(saved)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '保存失败，请重试')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <section className="settings-section profile-section"><h2>个人资料</h2><div className="profile-form"><div className="profile-avatar"><Avatar name={draft.name} image={draft.avatar} large /><div><label className="secondary-button compact" htmlFor="profile-avatar-input">选择头像</label><input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => chooseAvatar(event.target.files?.[0])} />{draft.avatar && <button className="text-button" onClick={() => setDraft({ ...draft, avatar: null })}>移除头像</button>}<small>PNG、JPEG、WebP 或 GIF，最大 1 MB</small></div></div><label className="field"><span>展示昵称</span><input value={draft.name} maxLength={40} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button compact" disabled={saving || reading} onClick={() => void saveProfile()}>保存个人资料</button></div></section>
+}
+
+function SettingsPage({ runtime, profile, onProfileChange, onRuntimeChange }: {
   runtime: RuntimeStatus | null
+  profile: UserProfile
+  onProfileChange: (profile: UserProfile) => void
   onRuntimeChange: (runtime: RuntimeStatus) => void
 }): React.JSX.Element {
   const [providers, setProviders] = useState<ModelProviderStatus[]>([])
@@ -330,6 +413,7 @@ function SettingsPage({ runtime, onRuntimeChange }: {
   return (
     <div className="page management-page narrow settings-page">
       <header className="page-header"><div><span className="eyebrow">SETTINGS</span><h1>设置</h1><p>连接模型服务，管理应用状态与本地数据。</p></div></header>
+      <ProfileSettings profile={profile} onSaved={onProfileChange} />
       <section className="settings-section">
         <h2>模型服务</h2>
         {providers.map((provider) => (
@@ -470,4 +554,4 @@ function AgentDrawer({ agent, onClose, onChat, onEdit }: {
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element { return <label className="field"><span>{label}</span>{children}</label> }
-function Avatar({ name, large = false }: { name: string; large?: boolean }): React.JSX.Element { const initials = name.trim().slice(0, 2).toUpperCase() || 'M'; return <span className={large ? 'avatar large' : 'avatar'}>{initials}</span> }
+function Avatar({ name, image, large = false }: { name: string; image?: string | null; large?: boolean }): React.JSX.Element { const initials = name.trim().slice(0, 2).toUpperCase() || 'M'; return <span className={large ? 'avatar large' : 'avatar'}>{image ? <img src={image} alt="" /> : initials}</span> }

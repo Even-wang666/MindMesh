@@ -49,6 +49,7 @@ button { color: inherit; }
 .object-row small, .member small, .agent-cell small { color: var(--muted); font-size: 11px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .avatar { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 10px; display: inline-grid; place-items: center; background: linear-gradient(145deg, rgb(79 86 217 / 15%), rgb(30 158 143 / 16%)); color: var(--iris); font-size: 11px; font-weight: 800; letter-spacing: -.02em; }
 .avatar.large { width: 58px; height: 58px; flex-basis: 58px; border-radius: 16px; font-size: 16px; }
+.avatar img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 .list-create { margin-top: auto; height: 39px; border: 1px dashed rgb(79 86 217 / 35%); border-radius: 10px; color: var(--iris); background: transparent; display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; }
 .list-create:hover { background: var(--soft-iris); }
 
@@ -70,16 +71,36 @@ button { color: inherit; }
 .messages { flex: 1; padding: 28px max(28px, calc((100% - 820px) / 2)); overflow: auto; }
 .message { display: flex; gap: 12px; margin: 0 0 26px; }
 .message.user { flex-direction: row-reverse; }
-.message > div { max-width: 72%; }
+.message > div { max-width: 72%; min-width: 0; }
+.message.agent > div { max-width: min(100%, 780px); }
 .message header { margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
 .message.user header { justify-content: flex-end; }
 .message header strong { font-size: 12px; }
 .message header time { color: var(--muted); font-size: 10px; }
-.message p { margin: 0; padding: 12px 14px; white-space: pre-wrap; font-size: 13px; line-height: 1.7; background: #fff; border: 1px solid var(--line); border-radius: 4px 13px 13px 13px; box-shadow: 0 4px 16px rgb(23 32 51 / 3%); }
-.message.user p { border: 0; color: #fff; background: var(--iris); border-radius: 13px 4px 13px 13px; }
+.message-body { padding: 12px 14px; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; background: #fff; border: 1px solid var(--line); border-radius: 4px 13px 13px 13px; box-shadow: 0 4px 16px rgb(23 32 51 / 3%); }
+.message-body > :first-child { margin-top: 0; }
+.message-body > :last-child { margin-bottom: 0; }
+.message-body p { margin: 0 0 10px; white-space: pre-wrap; }
+.message-body h1, .message-body h2, .message-body h3, .message-body h4 { margin: 16px 0 8px; line-height: 1.35; }
+.message-body h1 { font-size: 17px; }
+.message-body h2 { font-size: 15px; }
+.message-body h3, .message-body h4 { font-size: 13px; }
+.message-body ul, .message-body ol { margin: 8px 0 12px; padding-left: 22px; }
+.message-body li + li { margin-top: 4px; }
+.message-body blockquote { margin: 10px 0; padding-left: 12px; border-left: 3px solid var(--jade); color: var(--muted); }
+.message-body a { color: var(--iris); text-decoration: underline; }
+.message-body code { padding: 1px 4px; border-radius: 4px; background: rgb(23 32 51 / 7%); font-size: .92em; }
+.message-body pre { max-width: 100%; margin: 10px 0; padding: 12px; overflow-x: auto; border-radius: 8px; background: var(--porcelain); }
+.message-body pre code { padding: 0; background: none; white-space: pre; }
+.message-body table { display: block; max-width: 100%; margin: 10px 0; overflow-x: auto; border-collapse: collapse; white-space: nowrap; }
+.message-body th, .message-body td { padding: 5px 9px; border: 1px solid var(--line); }
+.message-body hr { margin: 14px 0; border: 0; border-top: 1px solid var(--line); }
+.message.user .message-body { border: 0; color: #fff; background: var(--iris); border-radius: 13px 4px 13px 13px; }
+.message.user .message-body a { color: inherit; }
+.message.user .message-body code, .message.user .message-body pre { background: rgb(255 255 255 / 16%); }
 .message.system { justify-content: center; opacity: .72; }
 .message.system .avatar, .message.system header { display: none; }
-.message.system p { border-style: dashed; background: transparent; }
+.message.system .message-body { border-style: dashed; background: transparent; }
 .chat-progress { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
 .chat-progress-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--iris); }
 .conversation-empty { flex: 1; display: grid; place-content: center; justify-items: center; color: var(--muted); }
@@ -109,7 +130,12 @@ button { color: inherit; }
 .member > span { flex: 1; }
 .member > i { width: 6px; height: 6px; }
 .context-drawer hr { margin: 22px 0; border: 0; border-top: 1px solid var(--line); }
-.context-drawer > p { font-size: 12px; line-height: 1.7; color: var(--muted); }
+.context-drawer > p { font-size: 14px; line-height: 1.65; color: var(--midnight); white-space: pre-wrap; overflow-wrap: anywhere; }
+.context-drawer > .text-button { padding: 3px 0; font-size: 12px; }
+.context-editor { margin-top: 12px; }
+.context-editor textarea { width: 100%; min-height: 96px; padding: 9px; resize: vertical; border: 1px solid var(--line); border-radius: 9px; background: var(--porcelain); font-size: 13px; line-height: 1.6; }
+.context-editor > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.context-editor .secondary-button, .context-editor .primary-button { min-height: 32px; padding: 0 10px; font-size: 11px; }
 
 .empty-state { height: 100%; display: grid; place-content: center; justify-items: center; text-align: center; }
 .empty-state h1 { margin: 22px 0 8px; font-size: 26px; letter-spacing: -.04em; }
@@ -137,6 +163,13 @@ em, .tags i, .status-tag { width: fit-content; font-style: normal; padding: 4px 
 .status-tag { color: var(--jade); background: rgb(30 158 143 / 9%); }
 .settings-section { margin-bottom: 18px; }
 .settings-section > h2 { margin: 0; padding: 16px 20px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.profile-form { padding: 20px; }
+.profile-avatar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+.profile-avatar > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.profile-avatar input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.profile-avatar:focus-within .secondary-button { outline: 2px solid var(--iris); outline-offset: 2px; }
+.profile-avatar small { width: 100%; color: var(--muted); font-size: 11px; }
+.profile-form .field { max-width: 360px; }
 .setting-row { min-height: 92px; padding: 18px 20px; display: flex; align-items: center; gap: 14px; }
 .setting-row > div:nth-child(2) { flex: 1; }
 .setting-row strong { font-size: 13px; }
