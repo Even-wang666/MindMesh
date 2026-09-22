@@ -10,7 +10,7 @@ const builtInSkills = [
 
 export const toolCatalog = [
   { id: 'web', name: '网页搜索', description: '检索公开网页资料。' },
-  { id: 'files', name: '文件', description: '读取和管理工作区文件。' },
+  { id: 'files', name: '文件', description: '读取文件，并在设置中选择的工作目录内写入。' },
   { id: 'shell', name: 'Shell', description: '在本机执行受控命令。' },
 ]
 

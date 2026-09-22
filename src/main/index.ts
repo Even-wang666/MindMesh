@@ -1,5 +1,6 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { existsSync, realpathSync, statSync } from 'node:fs'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
@@ -53,6 +54,18 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('chat:sendSpace', (_event, spaceId, content) => current.sendSpace(spaceId, content))
   ipcMain.handle('runtime:status', () => current.harness.status())
   ipcMain.handle('settings:modelProviders', () => current.modelProviders())
+  ipcMain.handle('settings:workspace', () => current.harness.workspacePath)
+  ipcMain.handle('settings:chooseWorkspace', async () => {
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+    if (result.canceled || !result.filePaths[0]) return current.harness.workspacePath
+    const path = realpathSync(result.filePaths[0])
+    if (!statSync(path).isDirectory()) throw new Error('请选择文件夹')
+    if (path === current.harness.workspacePath) return path
+    await current.harness.shutdownAll()
+    current.db.changeWorkspace(path)
+    current.harness.setWorkspace(path)
+    return path
+  })
   ipcMain.handle('settings:profile', () => current.userProfile())
   ipcMain.handle('settings:saveProfile', (_event, profile) => current.saveUserProfile(profile))
   ipcMain.handle('settings:saveModelProvider', (_event, input) => current.saveModelProvider(input))
@@ -71,7 +84,10 @@ app.whenReady().then(() => {
   const dataDir = join(app.getPath('userData'), 'mindmesh-data')
   const db = new MindMeshDatabase(join(dataDir, 'mindmesh.sqlite'))
   const providerSettings = new ModelProviderSettings(join(dataDir, 'model-services.json'))
-  const harness = new DeepSeekHarnessAdapter(process.cwd(), dataDir, providerSettings)
+  const savedWorkspace = db.getWorkspacePath()
+  const workspace = savedWorkspace && existsSync(savedWorkspace) && statSync(savedWorkspace).isDirectory()
+    ? savedWorkspace : process.cwd()
+  const harness = new DeepSeekHarnessAdapter(workspace, dataDir, providerSettings)
   services = new MindMeshServices(db, harness, providerSettings, () => mainWindow?.webContents,
     (scope, agentId, error) => appendRuntimeError(join(dataDir, 'runtime-errors.jsonl'), scope, agentId, error))
   registerIpc(services, dataDir)

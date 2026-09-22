@@ -142,6 +142,27 @@ describe('space membership and agent deletion', () => {
   })
 })
 
+describe('workspace selection', () => {
+  it('persists the selected path and starts fresh runtime sessions while keeping messages', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-workspace-'))
+    const path = join(directory, 'mindmesh.sqlite')
+    const db = new MindMeshDatabase(path)
+    const agent = db.listAgents()[0]
+    db.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'old-session', 'hash')
+    db.addMessage({ scope: 'private', scopeId: agent.id, authorType: 'user', authorName: '你', content: '历史' })
+    db.changeWorkspace(directory)
+    db.close()
+    try {
+      const reopened = new MindMeshDatabase(path)
+      try {
+        expect(reopened.getWorkspacePath()).toBe(directory)
+        expect(reopened.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'new-session', 'hash').harnessSessionId).toBe('new-session')
+        expect(reopened.listMessages('private', agent.id)[0].content).toBe('历史')
+      } finally { reopened.close() }
+    } finally { rmSync(directory, { recursive: true, force: true }) }
+  })
+})
+
 describe('user profile', () => {
   it('validates and persists a nickname and image', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-profile-'))

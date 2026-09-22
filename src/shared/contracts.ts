@@ -102,6 +102,8 @@ export type MindMeshApi = {
     status(): Promise<RuntimeStatus>
   }
   settings: {
+    workspace(): Promise<string>
+    chooseWorkspace(): Promise<string>
     profile(): Promise<UserProfile>
     saveProfile(profile: UserProfile): Promise<UserProfile>
     modelProviders(): Promise<ModelProviderStatus[]>

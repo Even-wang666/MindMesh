@@ -143,7 +143,7 @@ export function App(): React.JSX.Element {
         {view === 'agents' && <AgentsPage agents={agents} onCreate={() => setAgentWizard(true)} onDetail={setDetailAgentId} />}
         {view === 'skills' && <CatalogPage kind="skills" />}
         {view === 'tools' && <CatalogPage kind="tools" />}
-        {view === 'settings' && <SettingsPage runtime={runtime} profile={profile} onProfileChange={setProfile} onRuntimeChange={setRuntime} />}
+        {view === 'settings' && <SettingsPage runtime={runtime} profile={profile} busy={busy} onProfileChange={setProfile} onRuntimeChange={setRuntime} />}
       </section>
       {agentWizard && <AgentWizard onClose={() => setAgentWizard(false)} onSaved={async () => { setAgentWizard(false); await refresh() }} />}
       {editingAgentId && <AgentWizard initialAgent={agents.find((item) => item.id === editingAgentId)} onClose={() => setEditingAgentId('')} onSaved={async () => { setEditingAgentId(''); await refresh() }} />}
@@ -342,9 +342,10 @@ function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: 
   return <section className="settings-section profile-section"><h2>个人资料</h2><div className="profile-form"><div className="profile-avatar"><Avatar name={draft.name} image={draft.avatar} large /><div><label className="secondary-button compact" htmlFor="profile-avatar-input">选择头像</label><input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => chooseAvatar(event.target.files?.[0])} />{draft.avatar && <button className="text-button" onClick={() => setDraft({ ...draft, avatar: null })}>移除头像</button>}<small>PNG、JPEG、WebP 或 GIF，最大 1 MB</small></div></div><label className="field"><span>展示昵称</span><input value={draft.name} maxLength={40} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button compact" disabled={saving || reading} onClick={() => void saveProfile()}>保存个人资料</button></div></section>
 }
 
-function SettingsPage({ runtime, profile, onProfileChange, onRuntimeChange }: {
+function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange }: {
   runtime: RuntimeStatus | null
   profile: UserProfile
+  busy: boolean
   onProfileChange: (profile: UserProfile) => void
   onRuntimeChange: (runtime: RuntimeStatus) => void
 }): React.JSX.Element {
@@ -354,8 +355,25 @@ function SettingsPage({ runtime, profile, onProfileChange, onRuntimeChange }: {
   const [showKey, setShowKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [workspace, setWorkspace] = useState('')
+  const [workspaceError, setWorkspaceError] = useState('')
+  const [choosingWorkspace, setChoosingWorkspace] = useState(false)
 
   useEffect(() => { void window.mindmesh.settings.modelProviders().then(setProviders) }, [])
+  useEffect(() => { void window.mindmesh.settings.workspace().then(setWorkspace) }, [])
+
+  async function chooseWorkspace(): Promise<void> {
+    setChoosingWorkspace(true)
+    setWorkspaceError('')
+    try {
+      setWorkspace(await window.mindmesh.settings.chooseWorkspace())
+      onRuntimeChange(await window.mindmesh.runtime.status())
+    } catch {
+      setWorkspaceError('无法切换工作目录，请重试。')
+    } finally {
+      setChoosingWorkspace(false)
+    }
+  }
 
   async function refreshStatus(nextProviders: ModelProviderStatus[]): Promise<void> {
     setProviders(nextProviders)
@@ -449,6 +467,7 @@ function SettingsPage({ runtime, profile, onProfileChange, onRuntimeChange }: {
         )}
         {editing === 'custom' && !customConfigured && renderProviderForm()}
       </section>
+      <section className="settings-section"><h2>本地文件</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>Agent 工作目录</strong><p className="workspace-path">{workspace || '读取中…'}</p><small>在 Agent 编辑页启用“文件”工具后即可使用。文件写入限制在此目录；切换后模型会话重新开始，聊天消息仍保留。</small>{workspaceError && <p className="form-error" role="alert">{workspaceError}</p>}</div><button className="secondary-button compact" disabled={busy || choosingWorkspace} onClick={() => void chooseWorkspace()}>选择文件夹</button></div></section>
       <section className="settings-section"><h2>运行状态</h2><div className="setting-row"><div className="runtime-icon"><Activity size={19} /></div><div><strong>{runtime?.label ?? '检查中'}</strong><p>{runtime?.detail}</p></div><span className={`state-badge ${runtime?.state === 'demo' ? 'inactive' : ''}`}>{runtime?.state === 'demo' ? '等待连接' : '正常'}</span></div></section>
       <section className="settings-section"><h2>本地数据</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>保存在这台设备上</strong><p>智能体、协作空间和消息不会自动上传到云端。</p></div></div></section>
     </div>

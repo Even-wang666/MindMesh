@@ -197,6 +197,22 @@ export class MindMeshDatabase {
       ?? { name: '你', avatar: null }
   }
 
+  getWorkspacePath(): string | undefined {
+    return (this.db.prepare("SELECT value FROM app_meta WHERE key = 'workspacePath'").get() as { value: string } | undefined)?.value
+  }
+
+  changeWorkspace(path: string): void {
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('workspacePath', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(path)
+      this.db.prepare('DELETE FROM runtime_sessions').run()
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   saveUserProfile(input: UserProfile): UserProfile {
     const name = typeof input?.name === 'string' ? input.name.trim() : ''
     if (!name || name.length > 40) throw new Error('昵称需为 1–40 个字符')

@@ -37,6 +37,8 @@ function mockApi(): MindMeshApi {
       status: vi.fn(async () => ({ state: 'ready' as const, label: '准备就绪', detail: '模型服务已连接。' })),
     },
     settings: {
+      workspace: vi.fn(async () => 'C:\\MindMesh'),
+      chooseWorkspace: vi.fn(async () => 'C:\\My Files'),
       profile: vi.fn(async () => ({ name: '你', avatar: null })),
       saveProfile: vi.fn(async (profile) => profile),
       modelProviders: vi.fn(async () => []),
@@ -84,6 +86,19 @@ describe('chat details', () => {
     expect((await screen.findAllByText('高级研究员')).length).toBeGreaterThanOrEqual(2)
     expect(api.agents.update).toHaveBeenCalledOnce()
     expect(currentAgent.id).toBe(agent.id)
+  })
+})
+
+describe('local file workspace', () => {
+  it('shows the current folder and updates it after the native picker returns', async () => {
+    const api = mockApi()
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    expect(await screen.findByText('C:\\MindMesh')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '选择文件夹' }))
+    expect(await screen.findByText('C:\\My Files')).toBeInTheDocument()
+    expect(api.settings.chooseWorkspace).toHaveBeenCalledOnce()
   })
 })
 

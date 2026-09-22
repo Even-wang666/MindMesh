@@ -23,10 +23,14 @@ export class DeepSeekHarnessAdapter {
   private readonly runtimes = new Map<string, RuntimeEntry>()
 
   constructor(
-    private readonly workspace: string,
+    private workspace: string,
     private readonly dataDirectory: string,
     private readonly providerSettings: ModelProviderSettings,
   ) {}
+
+  get workspacePath(): string { return this.workspace }
+
+  setWorkspace(path: string): void { this.workspace = path }
 
   status(): RuntimeStatus {
     if (this.providerSettings.configuredProviders().length === 0) {
@@ -49,7 +53,9 @@ export class DeepSeekHarnessAdapter {
       return { text: this.demoResponse(agent, prompt), sessionId }
     }
 
-    const key = getAgentCapabilityHash(agent)
+    const agentKey = getAgentCapabilityHash(agent)
+    const key = this.workspace === process.cwd() ? agentKey
+      : createHash('sha256').update(agentKey).update(this.workspace).digest('hex')
     let entry = this.runtimes.get(key)
     if (!entry) {
       const dshHome = join(this.dataDirectory, 'harness', key.slice(0, 12))

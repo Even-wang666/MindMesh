@@ -40,6 +40,12 @@ describe('provider routing', () => {
       ])
       expect(launches[0].dshHome).not.toBe(launches[1].dshHome)
       expect(launches.every((launch) => Array.isArray(launch.patches) && launch.patches.length === 1)).toBe(true)
+      const selected = join(directory, 'selected')
+      await adapter.shutdownAll()
+      adapter.setWorkspace(selected)
+      await adapter.run(base, '新目录')
+      expect(launches[2]).toMatchObject({ cwd: selected, processCwd: selected })
+      expect(launches[2].dshHome).not.toBe(launches[0].dshHome)
     } finally {
       await adapter.shutdownAll()
       rmSync(directory, { recursive: true, force: true })

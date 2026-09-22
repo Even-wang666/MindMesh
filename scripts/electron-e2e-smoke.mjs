@@ -168,6 +168,11 @@ async function runRound(round) {
       await until(() => evaluate('Boolean(document.querySelector(".empty-state h1"))'))
       assert.equal(await evaluate('window.mindmesh.spaces.list().then(spaces => spaces.length)'), 0)
       console.log('Electron Space delete UI: OK')
+
+      await evaluate(`Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '设置').click()`)
+      await until(() => evaluate('Boolean(Array.from(document.querySelectorAll(".settings-page button")).find(button => button.textContent.trim() === "选择文件夹"))'))
+      assert.ok(await evaluate('window.mindmesh.settings.workspace()'))
+      console.log('Electron local workspace settings UI: OK')
     }
 
     await evaluate('setTimeout(() => window.close(), 100)')

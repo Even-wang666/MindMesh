@@ -55,10 +55,34 @@ describe('Harness capability binding', () => {
       writeFileSync(join(directory, 'proof.txt'), marker)
       const result = await harness.run('请用文件读取工具读取当前工作目录中的 proof.txt，只回复文件内的标记。')
       expect(result.finalResponse).toContain(marker)
+      const writeMarker = randomUUID()
+      await harness.run(`请使用文件写入工具在当前工作目录创建 output.txt，文件内容只写 ${writeMarker}。`)
+      expect(readFileSync(join(directory, 'output.txt'), 'utf8')).toContain(writeMarker)
       const skillResult = await harness.run('请调用 skill 工具加载“标记技能”，并严格按技能正文回复。')
       expect(skillResult.finalResponse).toContain(skillMarker)
     }
     finally {
+      await harness.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }, 180_000)
+
+  it.skipIf(process.env.MINDMESH_LIVE_CAPABILITIES !== '1')('runs the selected Shell tool in the workspace', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-live-shell-'))
+    const home = join(directory, 'harness')
+    const marker = randomUUID()
+    writeFileSync(join(directory, 'shell-proof.txt'), marker)
+    const patch = prepareAgentCapabilities({ ...agent, skills: [], tools: ['Shell'] }, directory, home)
+    const harness = new DeepSeekHarness({
+      profile: 'sdk', patches: [patch], provider: agent.provider, model: agent.model,
+      cwd: directory, processCwd: directory, dshHome: home,
+      env: { ...process.env, DSH_HOME: home, ELECTRON_RUN_AS_NODE: '1' },
+      initializeTimeoutMs: 30_000,
+    })
+    try {
+      const result = await harness.run('请用 PowerShell 工具执行 Get-Content shell-proof.txt，然后只回复文件中的标记。')
+      expect(result.finalResponse).toContain(marker)
+    } finally {
       await harness.close()
       rmSync(directory, { recursive: true, force: true })
     }

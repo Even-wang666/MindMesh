@@ -39,6 +39,8 @@ const api: MindMeshApi = {
     status: () => ipcRenderer.invoke('runtime:status'),
   },
   settings: {
+    workspace: () => ipcRenderer.invoke('settings:workspace'),
+    chooseWorkspace: () => ipcRenderer.invoke('settings:chooseWorkspace'),
     profile: () => ipcRenderer.invoke('settings:profile'),
     saveProfile: (profile) => ipcRenderer.invoke('settings:saveProfile', profile),
     modelProviders: () => ipcRenderer.invoke('settings:modelProviders'),
