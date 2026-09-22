@@ -2,7 +2,14 @@ import type { Agent } from './contracts'
 
 export function parseMentions(content: string, members: Agent[]): Agent[] {
   const positions = members
-    .map((agent) => ({ agent, index: content.indexOf(`@${agent.name}`) }))
+    .map((agent) => {
+      const mention = `@${agent.name}`
+      let index = content.indexOf(mention)
+      while (index >= 0 && /[\p{L}\p{N}_-]/u.test(content[index + mention.length] ?? '')) {
+        index = content.indexOf(mention, index + mention.length)
+      }
+      return { agent, index }
+    })
     .filter((item) => item.index >= 0)
     .sort((a, b) => a.index - b.index)
 

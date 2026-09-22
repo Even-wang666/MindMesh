@@ -287,11 +287,11 @@ export class MindMeshDatabase {
       .all(scope, scopeId) as unknown as Message[]
   }
 
-  listMessagesSince(scope: Message['scope'], scopeId: string, sequence: number, limit: number): Message[] {
-    return (this.db.prepare(`
+  listMessagesSince(scope: Message['scope'], scopeId: string, sequence: number): Message[] {
+    return this.db.prepare(`
       SELECT * FROM messages WHERE scope = ? AND scopeId = ? AND sequence > ?
-      ORDER BY sequence DESC LIMIT ?
-    `).all(scope, scopeId, sequence, limit) as unknown as Message[]).reverse()
+      ORDER BY sequence ASC
+    `).all(scope, scopeId, sequence) as unknown as Message[]
   }
 
   lastAgentMessageSequence(spaceId: string, agentId: string): number {

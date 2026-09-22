@@ -22,6 +22,11 @@ describe('parseMentions', () => {
   it('ignores agents outside the content', () => {
     expect(parseMentions('普通共享消息', agents)).toEqual([])
   })
+
+  it('does not match a name inside a longer mention', () => {
+    const dev = { ...agents[1], id: 'dev', name: 'Dev' }
+    expect(parseMentions('@Developer 请处理', [dev, agents[1]])).toEqual([agents[1]])
+  })
 })
 
 describe('context builders', () => {
@@ -43,4 +48,3 @@ describe('context builders', () => {
     expect(prompt).toContain('Researcher：已有调研结论')
   })
 })
-

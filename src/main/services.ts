@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import type {
-  CreateAgentInput, CreateSpaceInput, Message, ModelProviderId, SaveModelProviderInput, UserProfile,
+  CreateAgentInput, CreateSpaceInput, Message, ModelProviderId, RuntimeStatus, SaveModelProviderInput, UserProfile,
 } from '../shared/contracts'
 import { buildPrivatePrompt, buildSpacePrompt, parseMentions } from '../shared/domain'
 import { MODEL_CATALOG } from '../shared/model-providers'
@@ -9,6 +9,8 @@ import { DeepSeekHarnessAdapter, getAgentCapabilityHash, SessionResumeUnsupporte
 import { ModelProviderSettings } from './model-provider-settings'
 
 export class MindMeshServices {
+  private runtimeFailed = false
+
   constructor(
     readonly db: MindMeshDatabase,
     readonly harness: DeepSeekHarnessAdapter,
@@ -28,18 +30,27 @@ export class MindMeshServices {
   updateSpaceContext = (id: string, context: string) => this.db.updateSpaceContext(id, context)
   messages = (scope: Message['scope'], scopeId: string) => this.db.listMessages(scope, scopeId)
   modelProviders = () => this.providerSettings.statuses()
+  runtimeStatus = (): RuntimeStatus => {
+    const status = this.harness.status()
+    return this.runtimeFailed && status.state !== 'demo'
+      ? { state: 'error', label: '运行异常', detail: '上次模型回复失败，请检查模型服务配置或网络。' }
+      : status
+  }
+  resetRuntimeFailure = (): void => { this.runtimeFailed = false }
   userProfile = () => this.db.getUserProfile()
   saveUserProfile = (profile: UserProfile) => this.db.saveUserProfile(profile)
 
   async saveModelProvider(input: SaveModelProviderInput) {
     const statuses = this.providerSettings.save(input)
     await this.harness.shutdownAll()
+    this.resetRuntimeFailure()
     return statuses
   }
 
   async removeModelProvider(id: ModelProviderId) {
     const statuses = this.providerSettings.remove(id)
     await this.harness.shutdownAll()
+    this.resetRuntimeFailure()
     return statuses
   }
 
@@ -103,14 +114,14 @@ export class MindMeshServices {
         this.db.lastAgentMessageSequence(spaceId, agent.id),
       )
       const visibleMessages = this.db.listMessagesSince('space', spaceId,
-        session.lastConsumedMessageSequence, 30)
+        session.lastConsumedMessageSequence)
       const prompt = buildSpacePrompt(session.agent, space, visibleMessages)
       this.emitProgress('space', spaceId, session.agent.name)
       let result
       try {
         result = await this.runAgent(session.agent, prompt, session.harnessSessionId,
           'space', spaceId, crypto.randomUUID(),
-          () => buildSpacePrompt(session.agent, space, this.db.listMessages('space', spaceId).slice(-30)))
+          () => buildSpacePrompt(session.agent, space, this.db.listMessages('space', spaceId)))
       } catch (error) {
         this.recordRuntimeError('space', agent.id, error)
         this.db.addMessage({
@@ -129,6 +140,7 @@ export class MindMeshServices {
   }
 
   private recordRuntimeError(scope: 'private' | 'space', agentId: string, error: unknown): void {
+    this.runtimeFailed = true
     try { this.onRuntimeError(scope, agentId, error) }
     catch { /* Logging must not replace the visible failure message. */ }
   }
@@ -153,6 +165,7 @@ export class MindMeshServices {
     if (result.text.startsWith(streamed) && result.text.length > streamed.length) {
       this.emitText(requestId, scope, scopeId, agent.id, result.text.slice(streamed.length))
     }
+    this.runtimeFailed = false
     return result
   }
 

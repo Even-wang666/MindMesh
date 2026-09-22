@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { existsSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
@@ -52,7 +52,7 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('chat:messages', (_event, scope, scopeId) => current.messages(scope, scopeId))
   ipcMain.handle('chat:sendPrivate', (_event, agentId, content) => current.sendPrivate(agentId, content))
   ipcMain.handle('chat:sendSpace', (_event, spaceId, content) => current.sendSpace(spaceId, content))
-  ipcMain.handle('runtime:status', () => current.harness.status())
+  ipcMain.handle('runtime:status', () => current.runtimeStatus())
   ipcMain.handle('settings:modelProviders', () => current.modelProviders())
   ipcMain.handle('settings:workspace', () => current.harness.workspacePath)
   ipcMain.handle('settings:chooseWorkspace', async () => {
@@ -64,6 +64,7 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
     await current.harness.shutdownAll()
     current.db.changeWorkspace(path)
     current.harness.setWorkspace(path)
+    current.resetRuntimeFailure()
     return path
   })
   ipcMain.handle('settings:profile', () => current.userProfile())
@@ -85,8 +86,10 @@ app.whenReady().then(() => {
   const db = new MindMeshDatabase(join(dataDir, 'mindmesh.sqlite'))
   const providerSettings = new ModelProviderSettings(join(dataDir, 'model-services.json'))
   const savedWorkspace = db.getWorkspacePath()
+  const defaultWorkspace = app.isPackaged ? join(dataDir, 'workspace') : process.cwd()
+  if (app.isPackaged) mkdirSync(defaultWorkspace, { recursive: true })
   const workspace = savedWorkspace && existsSync(savedWorkspace) && statSync(savedWorkspace).isDirectory()
-    ? savedWorkspace : process.cwd()
+    ? savedWorkspace : defaultWorkspace
   const harness = new DeepSeekHarnessAdapter(workspace, dataDir, providerSettings)
   services = new MindMeshServices(db, harness, providerSettings, () => mainWindow?.webContents,
     (scope, agentId, error) => appendRuntimeError(join(dataDir, 'runtime-errors.jsonl'), scope, agentId, error))
