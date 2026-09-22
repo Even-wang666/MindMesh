@@ -74,6 +74,7 @@ button { color: inherit; }
 .message.user { flex-direction: row-reverse; }
 .message > div { max-width: 72%; min-width: 0; }
 .message.agent > div { max-width: min(100%, 780px); }
+.message.user > div { max-width: min(100%, 780px); }
 .message header { margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
 .message.user header { justify-content: flex-end; }
 .message header strong { font-size: 12px; }
@@ -96,9 +97,7 @@ button { color: inherit; }
 .message-body table { display: block; max-width: 100%; margin: 10px 0; overflow-x: auto; border-collapse: collapse; white-space: nowrap; }
 .message-body th, .message-body td { padding: 5px 9px; border: 1px solid var(--line); }
 .message-body hr { margin: 14px 0; border: 0; border-top: 1px solid var(--line); }
-.message.user .message-body { border: 0; color: #fff; background: var(--iris); border-radius: 13px 4px 13px 13px; }
-.message.user .message-body a { color: inherit; }
-.message.user .message-body code, .message.user .message-body pre { background: rgb(255 255 255 / 16%); }
+.message.user .message-body { background: #f5f2ff; border-radius: 13px 4px 13px 13px; }
 .message.system { justify-content: center; opacity: .72; }
 .message.system .avatar, .message.system header { display: none; }
 .message.system .message-body { border-style: dashed; background: transparent; }

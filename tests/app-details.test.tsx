@@ -218,6 +218,25 @@ describe('space background', () => {
 })
 
 describe('chat flow', () => {
+  it('renders a sent user Markdown message as structured content', async () => {
+    const api = mockApi()
+    let resolveSend!: (messages: Message[]) => void
+    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { resolveSend = resolve }))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    fireEvent.change(input, { target: { value: '## 问题\n\n**重点**\n\n- 第一项\n- 第二项\n\n```ts\nconst ok = true\n```' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    const message = screen.getByRole('heading', { name: '问题' }).closest('.message.user')!
+    expect(message.querySelector('.message-body strong')).toHaveTextContent('重点')
+    expect(message.querySelector('ul')).toHaveTextContent('第一项')
+    expect(message.querySelector('pre')).toHaveTextContent('const ok = true')
+    expect(message).not.toHaveTextContent('## 问题')
+    await act(async () => resolveSend([]))
+  })
+
   it('keeps separate reasoning paragraphs in a collapsed reply', async () => {
     const api = mockApi()
     api.chat.messages = vi.fn(async () => [{
