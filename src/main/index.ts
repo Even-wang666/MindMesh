@@ -5,7 +5,7 @@ import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
 import { MindMeshServices } from './services'
-import { listSkillCatalog, toolCatalog } from './capabilities'
+import { listSkillCatalog, playwrightBrowserAvailable, toolCatalog } from './capabilities'
 import { appendRuntimeError } from './runtime-errors'
 import { installNavigationGuards } from './navigation'
 
@@ -79,10 +79,14 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('catalog:models', () => current.models())
   ipcMain.handle('catalog:skills', () => listSkillCatalog(dataDir).map(({ id, name, description }) =>
     ({ id, name, description, status: '已安装' })))
-  ipcMain.handle('catalog:tools', () => toolCatalog.map((tool) => ({
-    ...tool, status: tool.id === 'web' && !current.modelProviders().some((provider) => provider.id === 'deepseek-official' && provider.configured)
-      ? '需要配置' : '可用',
-  })))
+  ipcMain.handle('catalog:tools', () => toolCatalog.map((tool) => {
+    if (tool.id === 'web') {
+      return { ...tool, status: current.modelProviders().some((provider) => provider.id === 'deepseek-official' && provider.configured)
+        ? '可用' : '需要配置' }
+    }
+    if (tool.id === 'browser') return { ...tool, status: playwrightBrowserAvailable() ? '可用' : '未安装' }
+    return { ...tool, status: '可用' }
+  }))
 }
 
 app.whenReady().then(() => {

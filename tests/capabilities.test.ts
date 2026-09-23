@@ -38,6 +38,10 @@ describe('Harness capability binding', () => {
       expect(patch).toMatch(/id: tool-fs\n  disabled: false/)
       expect(patch).toMatch(/id: tool-web\n  disabled: true/)
       expect(patch).toMatch(/id: tool-pwsh\n  disabled: true/)
+      expect(patch).toMatch(/id: tool-todo\n  disabled: true/)
+      expect(patch).toMatch(/id: tool-goal\n  disabled: true/)
+      expect(patch).toMatch(/id: tool-jobs\n  disabled: true/)
+      expect(patch).not.toContain('mindmesh-browser')
       expect(readFileSync(join(home, 'selected-skills', 'research.md'), 'utf8')).toContain('研究分析')
       prepareAgentCapabilities({ ...agent, skills: [
         createSkillReference('mindmesh-builtin-workout-planner-v1', '训练计划'),
@@ -50,6 +54,49 @@ describe('Harness capability binding', () => {
       rmSync(directory, { recursive: true, force: true })
     }
   })
+
+  it('inserts Playwright MCP and enables the selected session tools', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-capabilities-browser-'))
+    try {
+      const home = join(directory, 'harness', 'browser')
+      const path = prepareAgentCapabilities({
+        ...agent, skills: [], tools: ['浏览器', '待办清单', '目标管理', '后台任务'],
+      }, directory, home)
+      const patch = readFileSync(path, 'utf8')
+      expect(patch).toMatch(/id: tool-todo\n  disabled: false/)
+      expect(patch).toMatch(/id: tool-goal\n  disabled: false/)
+      expect(patch).toMatch(/id: tool-jobs\n  disabled: false/)
+      expect(patch).toContain('- insert:')
+      expect(patch).toContain('id: mindmesh-browser')
+      expect(patch).toContain("name: '@deepseek-ai/dsh-mcp-client'")
+      expect(patch).toContain('serverName: browser')
+      expect(patch).toContain('transport: stdio')
+      expect(patch).toContain('command: !!js process.execPath')
+      expect(patch).toContain('failOnStartupError: true')
+      expect(patch).toContain('@playwright')
+      if (process.platform === 'win32') expect(patch).toContain('"msedge"')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.env.MINDMESH_LIVE_BROWSER !== '1')('starts the real SDK with Playwright MCP', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-live-browser-'))
+    const home = join(directory, 'harness')
+    const patch = prepareAgentCapabilities({ ...agent, skills: [], tools: ['浏览器'] }, directory, home)
+    const harness = new DeepSeekHarness({
+      profile: 'sdk', patches: [patch], provider: agent.provider, model: agent.model,
+      cwd: directory, processCwd: directory, dshHome: home,
+      env: { ...process.env, DSH_HOME: home, ELECTRON_RUN_AS_NODE: '1' },
+      initializeTimeoutMs: 30_000,
+    })
+    try {
+      await harness.start()
+    } finally {
+      await harness.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }, 60_000)
 
   it.skipIf(process.env.MINDMESH_LIVE_CAPABILITIES !== '1')('starts the real SDK with the selected capability patch', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-live-capabilities-'))
