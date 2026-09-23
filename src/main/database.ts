@@ -3,11 +3,13 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { Agent, CreateAgentInput, CreateSpaceInput, Message, Space, UserProfile } from '../shared/contracts'
+import { getAgentCapabilityHash } from './agent-capability'
 
 type AgentRow = Omit<Agent, 'skills' | 'tools'> & { skills: string; tools: string }
 type SpaceRow = Omit<Space, 'memberIds'>
 type RuntimeSessionRow = {
   harnessSessionId: string
+  capabilityHash: string
   agentSnapshot: string | null
   lastConsumedMessageSequence: number
 }
@@ -311,17 +313,24 @@ export class MindMeshDatabase {
     contextKey: string, agent: Agent, sessionId: string, capabilityHash: string, initialSequence = 0,
   ): RuntimeSession {
     const row = this.db.prepare(`
-      SELECT harnessSessionId, agentSnapshot, lastConsumedMessageSequence
+      SELECT harnessSessionId, capabilityHash, agentSnapshot, lastConsumedMessageSequence
       FROM runtime_sessions WHERE contextKey = ?
     `).get(contextKey) as RuntimeSessionRow | undefined
     if (row) {
-      if (!row.agentSnapshot) {
-        this.db.prepare('UPDATE runtime_sessions SET agentSnapshot = ? WHERE contextKey = ?')
-          .run(JSON.stringify(agent), contextKey)
+      const snapshot = row.agentSnapshot ? JSON.parse(row.agentSnapshot) as Agent : agent
+      const snapshotHash = row.agentSnapshot ? getAgentCapabilityHash(snapshot) : capabilityHash
+      if (!row.agentSnapshot || row.capabilityHash !== snapshotHash) {
+        this.db.prepare(`UPDATE runtime_sessions
+          SET harnessSessionId = ?, provider = ?, model = ?, capabilityHash = ?, agentSnapshot = ?, updatedAt = ?
+          WHERE contextKey = ?`)
+          .run(sessionId, snapshot.provider, snapshot.model, snapshotHash, JSON.stringify(snapshot),
+            new Date().toISOString(), contextKey)
+        return { harnessSessionId: sessionId, agent: snapshot,
+          lastConsumedMessageSequence: row.lastConsumedMessageSequence }
       }
       return {
         harnessSessionId: row.harnessSessionId,
-        agent: row.agentSnapshot ? JSON.parse(row.agentSnapshot) as Agent : agent,
+        agent: snapshot,
         lastConsumedMessageSequence: row.lastConsumedMessageSequence,
       }
     }

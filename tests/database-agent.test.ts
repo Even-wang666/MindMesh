@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { MindMeshDatabase } from '../src/main/database'
+import { getAgentCapabilityHash } from '../src/main/agent-capability'
 
 describe('updateAgent', () => {
   it('updates editable fields without changing the agent ID or space membership', () => {
@@ -71,15 +72,16 @@ describe('space membership and agent deletion', () => {
       db.addMessage({ scope: 'space', scopeId: first.id, authorType: 'user', authorName: '你', content: '删除我' })
       db.addMessage({ scope: 'space', scopeId: second.id, authorType: 'user', authorName: '你', content: '保留我' })
       db.addMessage({ scope: 'private', scopeId: agent.id, authorType: 'user', authorName: '你', content: '私聊' })
-      db.getOrCreateRuntimeSession(`space:${first.id}:${agent.id}`, agent, 'first-session', 'hash')
-      db.getOrCreateRuntimeSession(`space:${second.id}:${agent.id}`, agent, 'second-session', 'hash')
+      const capabilityHash = getAgentCapabilityHash(agent)
+      db.getOrCreateRuntimeSession(`space:${first.id}:${agent.id}`, agent, 'first-session', capabilityHash)
+      db.getOrCreateRuntimeSession(`space:${second.id}:${agent.id}`, agent, 'second-session', capabilityHash)
       db.removeSpace(first.id)
       expect(db.getSpace(first.id)).toBeUndefined()
       expect(db.listMessages('space', first.id)).toEqual([])
       expect(db.listMessages('space', second.id)).toHaveLength(1)
       expect(db.listMessages('private', agent.id)).toHaveLength(1)
-      expect(db.getOrCreateRuntimeSession(`space:${second.id}:${agent.id}`, agent, 'new', 'hash').harnessSessionId).toBe('second-session')
-      expect(db.getOrCreateRuntimeSession(`space:${first.id}:${agent.id}`, agent, 'new', 'hash').harnessSessionId).toBe('new')
+      expect(db.getOrCreateRuntimeSession(`space:${second.id}:${agent.id}`, agent, 'new', capabilityHash).harnessSessionId).toBe('second-session')
+      expect(db.getOrCreateRuntimeSession(`space:${first.id}:${agent.id}`, agent, 'new', capabilityHash).harnessSessionId).toBe('new')
     } finally {
       db.close()
       rmSync(directory, { recursive: true, force: true })
@@ -148,7 +150,8 @@ describe('workspace selection', () => {
     const path = join(directory, 'mindmesh.sqlite')
     const db = new MindMeshDatabase(path)
     const agent = db.listAgents()[0]
-    db.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'old-session', 'hash')
+    const capabilityHash = getAgentCapabilityHash(agent)
+    db.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'old-session', capabilityHash)
     db.addMessage({ scope: 'private', scopeId: agent.id, authorType: 'user', authorName: '你', content: '历史' })
     db.changeWorkspace(directory)
     db.close()
@@ -156,7 +159,7 @@ describe('workspace selection', () => {
       const reopened = new MindMeshDatabase(path)
       try {
         expect(reopened.getWorkspacePath()).toBe(directory)
-        expect(reopened.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'new-session', 'hash').harnessSessionId).toBe('new-session')
+        expect(reopened.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'new-session', capabilityHash).harnessSessionId).toBe('new-session')
         expect(reopened.listMessages('private', agent.id)[0].content).toBe('历史')
       } finally { reopened.close() }
     } finally { rmSync(directory, { recursive: true, force: true }) }
@@ -197,13 +200,17 @@ describe('runtime sessions', () => {
       provider TEXT NOT NULL, model TEXT NOT NULL, capabilityHash TEXT NOT NULL,
       updatedAt TEXT NOT NULL
     )`)
+    old.prepare(`INSERT INTO runtime_sessions
+      (contextKey, harnessSessionId, provider, model, capabilityHash, updatedAt)
+      VALUES ('private:old', 'stale-session', 'deepseek-official', 'old-model', 'stale-hash', '2026-01-01')`).run()
     old.close()
     try {
       const db = new MindMeshDatabase(path)
       try {
         const agent = db.listAgents()[0]
-        expect(db.getOrCreateRuntimeSession('private:old', agent, 'old-session', 'hash'))
-          .toMatchObject({ harnessSessionId: 'old-session', lastConsumedMessageSequence: 0 })
+        expect(db.getOrCreateRuntimeSession('private:old', agent, 'new-session', 'current-hash'))
+          .toMatchObject({ harnessSessionId: 'new-session', agent, lastConsumedMessageSequence: 0 })
+        expect(db.referencedCapabilityHashes()).toEqual(['current-hash'])
       } finally {
         db.close()
       }
@@ -218,7 +225,7 @@ describe('runtime sessions', () => {
     const db = new MindMeshDatabase(path)
     const agent = db.listAgents()[0]
     const key = `space:example:${agent.id}`
-    db.getOrCreateRuntimeSession(key, agent, 'original-session', 'hash')
+    db.getOrCreateRuntimeSession(key, agent, 'original-session', getAgentCapabilityHash(agent))
     db.saveRuntimeSessionProgress(key, 'saved-session', 7)
     db.close()
     try {
@@ -237,6 +244,39 @@ describe('runtime sessions', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
+  })
+
+  it('resets a session whose stored hash does not match its snapshot', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-session-mismatch-'))
+    const path = join(directory, 'mindmesh.sqlite')
+    const snapshot = {
+      id: 'legacy', name: 'Legacy', role: '', persona: '冻结身份', provider: 'deepseek-official',
+      model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '',
+    }
+    const old = new DatabaseSync(path)
+    old.exec(`CREATE TABLE runtime_sessions (
+      contextKey TEXT PRIMARY KEY, harnessSessionId TEXT NOT NULL,
+      provider TEXT NOT NULL, model TEXT NOT NULL, capabilityHash TEXT NOT NULL,
+      agentSnapshot TEXT, lastConsumedMessageSequence INTEGER NOT NULL DEFAULT 0,
+      updatedAt TEXT NOT NULL
+    )`)
+    old.prepare(`INSERT INTO runtime_sessions
+      (contextKey, harnessSessionId, provider, model, capabilityHash, agentSnapshot,
+       lastConsumedMessageSequence, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run('space:legacy', 'stale-session', snapshot.provider, snapshot.model, 'stale-hash',
+        JSON.stringify(snapshot), 9, '2026-01-01')
+    old.close()
+    try {
+      const db = new MindMeshDatabase(path)
+      try {
+        const current = db.listAgents()[0]
+        const restored = db.getOrCreateRuntimeSession('space:legacy', current, 'new-session', 'current-hash')
+        expect(restored).toMatchObject({ harnessSessionId: 'new-session', agent: snapshot,
+          lastConsumedMessageSequence: 9 })
+        expect(db.referencedCapabilityHashes()).toEqual([getAgentCapabilityHash(snapshot)])
+      } finally { db.close() }
+    } finally { rmSync(directory, { recursive: true, force: true }) }
   })
 })
 

@@ -41,17 +41,35 @@ beforeEach(() => { state.launched.length = 0; state.closed.length = 0; state.rel
 afterEach(() => { state.release?.() })
 
 describe('Harness runtime pool', () => {
-  it('keeps three recent idle runtimes and closes the least recently used', async () => {
+  it('keeps eight recent idle runtimes and closes the least recently used', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-pool-'))
     const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
     try {
-      for (const name of ['a', 'b', 'c', 'd']) await adapter.run(agent(name), name)
+      for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) await adapter.run(agent(name), name)
+      expect(state.closed).toEqual([])
+      await adapter.run(agent('i'), 'new')
       expect(state.closed).toEqual([state.launched[0]])
       expect(existsSync(state.launched[0])).toBe(true)
       await adapter.run(agent('b'), 'again')
-      await adapter.run(agent('e'), 'new')
+      await adapter.run(agent('j'), 'newer')
       expect(state.closed).toEqual([state.launched[0], state.launched[2]])
     } finally {
+      await adapter.shutdownAll()
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('closes idle runtimes after ten minutes when the pool is used again', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-pool-'))
+    const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    try {
+      await adapter.run(agent('old'), 'first')
+      now.mockReturnValue(10 * 60_000 + 1_001)
+      await adapter.run(agent('current'), 'second')
+      expect(state.closed).toEqual([state.launched[0]])
+    } finally {
+      now.mockRestore()
       await adapter.shutdownAll()
       if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
     }
@@ -62,13 +80,13 @@ describe('Harness runtime pool', () => {
     const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
     try {
       const held = adapter.run(agent('a'), 'hold')
-      for (const name of ['b', 'c', 'd']) await adapter.run(agent(name), name)
+      for (const name of ['b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']) await adapter.run(agent(name), name)
       expect(state.closed).toContain(state.launched[1])
       expect(state.closed).not.toContain(state.launched[0])
       state.release?.()
       await held
       await expect(adapter.run(agent('a'), 'fail')).rejects.toThrow('run failed')
-      await adapter.run(agent('e'), 'new')
+      await adapter.run(agent('j'), 'new')
       expect(state.closed).toContain(state.launched[2])
     } finally {
       state.release?.()

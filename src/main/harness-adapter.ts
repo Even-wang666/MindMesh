@@ -7,10 +7,17 @@ import type { Agent, RuntimeStatus } from '../shared/contracts'
 import type { ModelProviderRuntimeConfig } from './model-provider-settings'
 import { ModelProviderSettings } from './model-provider-settings'
 import { prepareAgentCapabilities } from './capabilities'
+import { getAgentCapabilityHash } from './agent-capability'
+
+export { getAgentCapabilityHash } from './agent-capability'
+
+const MAX_IDLE_RUNTIMES = 8
+const IDLE_RUNTIME_TTL_MS = 10 * 60_000
 
 type RuntimeEntry = {
   harness: DeepSeekHarness
   active: number
+  lastUsed: number
 }
 
 export class SessionResumeUnsupportedError extends Error {
@@ -107,10 +114,12 @@ export class DeepSeekHarnessAdapter {
           initializeTimeoutMs: 30_000,
         }),
         active: 0,
+        lastUsed: Date.now(),
       }
       this.runtimes.set(key, entry)
     }
     entry.active += 1
+    entry.lastUsed = Date.now()
     this.runtimes.delete(key)
     this.runtimes.set(key, entry)
     const reasoning: string[] = []
@@ -148,6 +157,7 @@ export class DeepSeekHarnessAdapter {
       throw error
     } finally {
       entry.active -= 1
+      entry.lastUsed = Date.now()
       await this.evictIdle()
     }
     return {
@@ -158,9 +168,10 @@ export class DeepSeekHarnessAdapter {
   }
 
   private async evictIdle(): Promise<void> {
+    const now = Date.now()
     for (const [key, entry] of this.runtimes) {
-      if (this.runtimes.size <= 3) break
       if (entry.active) continue
+      if (this.runtimes.size <= MAX_IDLE_RUNTIMES && now - entry.lastUsed < IDLE_RUNTIME_TTL_MS) continue
       this.runtimes.delete(key)
       try { await entry.harness.close() }
       catch { /* Cleanup must not replace a completed reply. */ }
@@ -191,12 +202,6 @@ export class DeepSeekHarnessAdapter {
     this.runtimes.clear()
     await Promise.allSettled(entries.map((entry) => entry.harness.close()))
   }
-}
-
-export function getAgentCapabilityHash(agent: Agent): string {
-  return createHash('sha256')
-    .update(JSON.stringify([agent.provider, agent.model, agent.persona, agent.skills, agent.tools]))
-    .digest('hex')
 }
 
 function providerEnvironment(providers: ModelProviderRuntimeConfig[]): Record<string, string> {

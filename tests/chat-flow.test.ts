@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { WebContents } from 'electron'
 import { MindMeshDatabase } from '../src/main/database'
 import { MindMeshServices } from '../src/main/services'
-import { SessionResumeUnsupportedError, type DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
+import { getAgentCapabilityHash, SessionResumeUnsupportedError, type DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
 import type { ModelProviderSettings } from '../src/main/model-provider-settings'
 
 describe('chat failures', () => {
@@ -141,7 +141,7 @@ describe('session context', () => {
       expect(run.mock.calls[2][1]).toContain('旧回复')
       expect(run.mock.calls[2][1]).toContain('新问题')
       expect(run.mock.calls[2][2]).not.toBe('old-session')
-      expect(db.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'unused', 'hash').harnessSessionId)
+      expect(db.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'unused', getAgentCapabilityHash(agent)).harnessSessionId)
         .toBe('new-session')
     } finally {
       db.close()
