@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -7,12 +7,13 @@ import {
   Plus, Search, Send, Settings, ShieldCheck, Sparkles, Trash2, Wrench, X,
 } from 'lucide-react'
 import type {
-  Agent, ChatProgress, CreateAgentInput, Message, ModelProviderId, ModelProviderStatus, RuntimeStatus,
+  Agent, ChatImageAttachment, ChatImageMediaType, ChatProgress, CreateAgentInput, Message, ModelProviderId, ModelProviderStatus, RuntimeStatus,
   SaveModelProviderInput, Space, UserProfile,
 } from '../../shared/contracts'
 import {
-  getModelProviderApiKeyError, getModelProviderDefinition, MODEL_PROVIDER_DEFINITIONS,
+  getModelProviderApiKeyError, getModelProviderDefinition, MODEL_PROVIDER_DEFINITIONS, supportsImageInput,
 } from '../../shared/model-providers'
+import { parseMentions } from '../../shared/domain'
 import { createSkillReference, skillDisplayName } from '../../shared/skill-reference'
 import { BrandLogo } from './BrandLogo'
 import anthropicLogo from './assets/providers/anthropic.svg'
@@ -118,8 +119,8 @@ export function App(): React.JSX.Element {
     return () => { active = false }
   }, [view, selectedAgentId, selectedSpaceId])
 
-  async function send(content: string): Promise<boolean> {
-    if (!content.trim() || busy) return true
+  async function send(content: string, attachments: ChatImageAttachment[] = []): Promise<boolean> {
+    if ((!content.trim() && attachments.length === 0) || busy) return true
     const scope = view === 'chats' ? 'private' : 'space'
     const id = view === 'chats' ? selectedAgentId : selectedSpaceId
     if (!id || (view !== 'chats' && view !== 'spaces')) return false
@@ -130,15 +131,19 @@ export function App(): React.JSX.Element {
     setStreamingReasoning('')
     setMessages((current) => [...current, {
       id: crypto.randomUUID(), scope, scopeId: id, authorType: 'user', authorName: profile.name,
-      content: content.trim(), sequence: 0, createdAt: new Date().toISOString(),
+      content: content.trim(), attachments, sequence: 0, createdAt: new Date().toISOString(),
     }])
     if (scope === 'private' && selectedAgent) {
       setProgress({ scope, scopeId: id, agentName: selectedAgent.name })
     }
     try {
       const result = scope === 'private'
-        ? await window.mindmesh.chat.sendPrivate(id, content.trim())
-        : await window.mindmesh.chat.sendSpace(id, content.trim())
+        ? attachments.length > 0
+          ? await window.mindmesh.chat.sendPrivate(id, content.trim(), attachments)
+          : await window.mindmesh.chat.sendPrivate(id, content.trim())
+        : attachments.length > 0
+          ? await window.mindmesh.chat.sendSpace(id, content.trim(), attachments)
+          : await window.mindmesh.chat.sendSpace(id, content.trim())
       if (conversationRef.current === requestConversation) {
         showLiveMessages(result)
         setStreamingText('')
@@ -152,7 +157,7 @@ export function App(): React.JSX.Element {
       let next: Message[] | null = null
       try {
         next = await window.mindmesh.chat.messages(scope, id)
-        saved = next.some((message) => message.authorType === 'user' && message.content === content.trim() && !knownIds.has(message.id))
+        saved = next.some((message) => message.authorType === 'user' && !knownIds.has(message.id))
       } catch { /* Keep the pending message when persistence cannot be checked. */ }
       if (conversationRef.current === requestConversation) {
         const error = next
@@ -203,7 +208,7 @@ export function App(): React.JSX.Element {
       <section className={hasList ? 'content has-list' : 'content'}>
         {view === 'chats' && (
           selectedAgent
-            ? <ChatPanel title={selectedAgent.name} subtitle={selectedAgent.role} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
+            ? <ChatPanel key={selectedAgent.id} title={selectedAgent.name} subtitle={selectedAgent.role} canAttach={supportsImageInput(selectedAgent.provider, selectedAgent.model)} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
             : <EmptyState onCreate={() => setAgentWizard(true)} />
         )}
         {view === 'spaces' && (selectedSpace ? (
@@ -538,9 +543,9 @@ function ObjectList(props: {
   )
 }
 
-function ChatPanel({ title, subtitle, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onDetail }: {
-  title: string; subtitle: string; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
-  onSend: (content: string) => Promise<boolean>; onDetail: () => void
+function ChatPanel({ title, subtitle, canAttach, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onDetail }: {
+  title: string; subtitle: string; canAttach: boolean; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
+  onSend: (content: string, attachments?: ChatImageAttachment[]) => Promise<boolean>; onDetail: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState('')
   return (
@@ -563,23 +568,28 @@ function ChatPanel({ title, subtitle, messages, profile, busy, progress, streami
         starters={['介绍一下你自己', '帮我梳理一个思路', '你能做些什么？']}
         onStarter={setDraft}
       />
-      <Composer busy={busy} placeholder={`给 ${title} 发送消息…`} value={draft} onChange={setDraft} onSend={onSend} />
+      <Composer busy={busy} canAttach={canAttach} placeholder={`给 ${title} 发送消息…`} value={draft} onChange={setDraft} onSend={onSend} />
     </div>
   )
 }
 
 function SpacePanel({ space, agents, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onEdit, onRemove, onUpdateContext }: {
   space: Space; agents: Agent[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
-  onSend: (content: string) => Promise<boolean>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
+  onSend: (content: string, attachments?: ChatImageAttachment[]) => Promise<boolean>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
 }): React.JSX.Element {
   const members = agents.filter((agent) => space.memberIds.includes(agent.id))
   const [draft, setDraft] = useState('')
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const [editingContext, setEditingContext] = useState(false)
   const [contextDraft, setContextDraft] = useState(space.context)
   const [savingContext, setSavingContext] = useState(false)
   const [contextError, setContextError] = useState('')
   const [removeError, setRemoveError] = useState('')
   const [removing, setRemoving] = useState(false)
+  const attachmentTargets = parseMentions(draft, members)
+  const canAttach = attachmentTargets.length > 0
+    ? attachmentTargets.every((agent) => supportsImageInput(agent.provider, agent.model))
+    : members.some((agent) => supportsImageInput(agent.provider, agent.model))
   async function remove(): Promise<void> {
     if (!window.confirm(`确定删除协作空间「${space.name}」吗？空间及其聊天消息会从应用中删除。`)) return
     setRemoving(true)
@@ -601,10 +611,11 @@ function SpacePanel({ space, agents, messages, profile, busy, progress, streamin
   }
   return (
     <div className="page space-page">
-      <header className="chat-header"><div className="chat-header-main"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p>{removeError && <p className="form-error" role="alert">{removeError}</p>}</div></div><div className="space-header-actions"><button className="ghost-button" disabled={busy || removing} onClick={onEdit}>编辑空间 <ChevronRight size={15} /></button><button className="danger-button" disabled={busy || removing} onClick={() => void remove()}><Trash2 size={15} />删除空间</button></div></header>
+      <header className="chat-header"><div className="chat-header-main"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p></div></div><div className="space-header-actions"><button className="ghost-button drawer-toggle" disabled={removing} aria-expanded={drawerOpen} onClick={() => setDrawerOpen((open) => !open)}>编辑空间 <ChevronRight size={15} /></button></div></header>
       <div className="space-layout">
-        <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} starters={['先让每位成员给出一版方案', '统一背景信息后再开始讨论']} onStarter={setDraft} /><Composer busy={busy} placeholder="@智能体 输入消息…" members={members} value={draft} onChange={setDraft} onSend={onSend} /></div>
-        <aside className="context-drawer">
+        <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} starters={['先让每位成员给出一版方案', '统一背景信息后再开始讨论']} onStarter={setDraft} /><Composer busy={busy} canAttach={canAttach} placeholder="@智能体 输入消息…" members={members} value={draft} onChange={setDraft} onSend={onSend} /></div>
+        {drawerOpen && <aside className="context-drawer">
+          <button className="secondary-button drawer-edit" disabled={busy || removing} onClick={onEdit}>编辑空间信息</button>
           <div className="drawer-section">
             <span className="eyebrow">成员 · {members.length}</span>
             {members.length === 0 && <p className="form-error">这个空间还没有成员。</p>}
@@ -614,7 +625,8 @@ function SpacePanel({ space, agents, messages, profile, busy, progress, streamin
             <span className="eyebrow">背景信息</span>
             {editingContext ? <div className="context-editor"><textarea aria-label="背景信息" autoFocus value={contextDraft} onChange={(event) => setContextDraft(event.target.value)} />{contextError && <p className="form-error" role="alert">{contextError}</p>}<div><button className="secondary-button compact" disabled={savingContext} onClick={() => setEditingContext(false)}>取消</button><button className="primary-button compact" disabled={savingContext} onClick={() => void saveContext()}>保存背景</button></div></div> : <div className={space.context ? 'panel-card' : 'panel-card muted'}><p>{space.context || '暂无背景信息。'}</p><button className="text-button" onClick={() => { setContextDraft(space.context); setContextError(''); setEditingContext(true) }}>编辑背景</button></div>}
           </div>
-        </aside>
+          <div className="drawer-danger">{removeError && <p className="form-error" role="alert">{removeError}</p>}<button className="list-create drawer-delete" disabled={busy || removing} onClick={() => void remove()}><Trash2 size={15} />删除空间</button></div>
+        </aside>}
       </div>
     </div>
   )
@@ -639,7 +651,8 @@ function MessageList({ messages, profile, emptyText, progress, streamingText, st
       <div>
         <header><strong>{message.authorType === 'user' ? profile.name : message.authorName}</strong><time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header>
         {message.reasoning && <ReasoningDetails content={message.reasoning} initiallyOpen={liveReplyIds.has(message.id)} />}
-        <MessageBody content={message.content} animated={liveReplyIds.has(message.id)} />
+        {!!message.attachments?.length && <div className="message-attachments">{message.attachments.map((attachment, index) => <img key={`${attachment.name}-${index}`} src={`data:${attachment.mediaType};base64,${attachment.data}`} alt={attachment.name} />)}</div>}
+        {message.content && <MessageBody content={message.content} animated={liveReplyIds.has(message.id)} />}
       </div>
     </article>)}
     {(progress || streamingText || streamingReasoning) && <article className="message agent">
@@ -676,30 +689,139 @@ function MessageBody({ content, animated = false }: { content: string; animated?
   return <div className="message-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']} components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{visible}</ReactMarkdown></div>
 }
 
-function Composer({ busy, placeholder, members = [], value, onChange, onSend }: {
-  busy: boolean; placeholder: string; members?: Agent[]; value: string
-  onChange: React.Dispatch<React.SetStateAction<string>>; onSend: (value: string) => Promise<boolean>
+const MAX_IMAGE_BYTES = 32 * 1024 * 1024
+
+function Composer({ busy, canAttach, placeholder, members = [], value, onChange, onSend }: {
+  busy: boolean; canAttach: boolean; placeholder: string; members?: Agent[]; value: string
+  onChange: React.Dispatch<React.SetStateAction<string>>
+  onSend: (value: string, attachments?: ChatImageAttachment[]) => Promise<boolean>
 }): React.JSX.Element {
+  const [attachments, setAttachments] = useState<ChatImageAttachment[]>([])
+  const [attachmentError, setAttachmentError] = useState('')
+  const [dragging, setDragging] = useState(false)
+  const input = useRef<HTMLInputElement>(null)
   const mention = /@([\p{L}\p{N}_-]*)$/u.exec(value)
   const matchingMembers = mention ? members.filter((agent) => agent.name.toLowerCase().startsWith(mention[1].toLowerCase())) : []
+  const addFiles = useCallback(async (files: FileList | File[]): Promise<void> => {
+    if (!canAttach) { setAttachmentError('目前仅 DeepSeek Flash 支持图片输入'); return }
+    setAttachmentError('')
+    const next: ChatImageAttachment[] = []
+    let totalBytes = attachments.reduce((sum, attachment) => sum + attachment.bytes, 0)
+    for (const file of Array.from(files)) {
+      const mediaType = await detectImageMediaType(file)
+      if (!mediaType) {
+        setAttachmentError('仅支持 PNG、JPEG、WebP 或 GIF 图片')
+        continue
+      }
+      if (file.size > MAX_IMAGE_BYTES) { setAttachmentError('单张图片不能超过 32 MiB'); continue }
+      totalBytes += file.size
+      if (totalBytes > MAX_IMAGE_BYTES) { setAttachmentError('图片总大小不能超过 32 MiB'); break }
+      try {
+        const dataUrl = await readFileAsDataUrl(file)
+        next.push({ type: 'image', name: file.name, mediaType, data: dataUrl.split(',')[1] ?? '', bytes: file.size })
+      } catch {
+        setAttachmentError(`无法读取 ${file.name}`)
+      }
+    }
+    if (next.length > 0) setAttachments((current) => [...current, ...next])
+  }, [attachments, canAttach])
+  useEffect(() => {
+    let dragDepth = 0
+    const hasFiles = (event: DragEvent): boolean => Array.from(event.dataTransfer?.types ?? []).includes('Files')
+    const enter = (event: DragEvent): void => {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      if (!canAttach) return
+      dragDepth += 1
+      setDragging(true)
+    }
+    const over = (event: DragEvent): void => {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+    }
+    const leave = (event: DragEvent): void => {
+      if (!hasFiles(event)) return
+      dragDepth = Math.max(0, dragDepth - 1)
+      if (dragDepth === 0) setDragging(false)
+    }
+    const drop = (event: DragEvent): void => {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      dragDepth = 0
+      setDragging(false)
+      if (event.dataTransfer?.files.length) void addFiles(event.dataTransfer.files)
+    }
+    window.addEventListener('dragenter', enter)
+    window.addEventListener('dragover', over)
+    window.addEventListener('dragleave', leave)
+    window.addEventListener('drop', drop)
+    return () => {
+      window.removeEventListener('dragenter', enter)
+      window.removeEventListener('dragover', over)
+      window.removeEventListener('dragleave', leave)
+      window.removeEventListener('drop', drop)
+    }
+  }, [addFiles])
+  useEffect(() => {
+    if (!canAttach && attachments.length > 0) setAttachmentError('当前选择的智能体不支持图片输入')
+  }, [attachments.length, canAttach])
   async function submit(): Promise<void> {
     const current = value
-    if (busy || !current.trim()) return
+    const currentAttachments = attachments
+    if (busy || (!current.trim() && currentAttachments.length === 0) || (currentAttachments.length > 0 && !canAttach)) return
     onChange('')
-    if (!await onSend(current)) onChange((draft) => draft || current)
+    setAttachments([])
+    if (!await onSend(current, currentAttachments)) {
+      onChange((draft) => draft || current)
+      setAttachments((draft) => draft.length > 0 ? draft : currentAttachments)
+    }
   }
   return (
     <div className="composer-wrap">
+      {dragging && <div className="drop-overlay" role="status">松开即可添加图片</div>}
       {matchingMembers.length > 0 && <div className="mention-menu"><span className="eyebrow">选择智能体</span>{matchingMembers.map((agent) => <button key={agent.id} onClick={() => onChange((draft) => draft.replace(/@[\p{L}\p{N}_-]*$/u, `@${agent.name} `))}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></button>)}</div>}
       <div className="composer">
+        {attachments.length > 0 && <div className="composer-attachments">{attachments.map((attachment, index) => <figure key={`${attachment.name}-${index}`}><img src={`data:${attachment.mediaType};base64,${attachment.data}`} alt={attachment.name} /><figcaption>{attachment.name}</figcaption><button type="button" aria-label={`移除 ${attachment.name}`} onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}><X size={13} /></button></figure>)}</div>}
         <textarea value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit() } }} placeholder={placeholder} />
+        {attachmentError && <p className="composer-error" role="alert">{attachmentError}</p>}
         <div className="composer-actions">
-          <span className="composer-hint"><Command size={13} /><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd> + <kbd>Enter</kbd> 换行</span>
-          <button className="send-button" aria-label="发送" disabled={busy || !value.trim()} onClick={() => void submit()}>{busy ? <span className="spinner" /> : <Send size={17} />}</button>
+          <div className="composer-tools"><input ref={input} className="visually-hidden" aria-label="选择图片" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => { if (event.target.files) void addFiles(event.target.files); event.target.value = '' }} /><button type="button" className="composer-add" aria-label="添加图片" title={canAttach ? '添加图片' : '目前仅 DeepSeek Flash 支持图片输入'} disabled={busy || !canAttach} onClick={() => input.current?.click()}><Plus size={19} /></button><span className="composer-hint"><Command size={13} /><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd> + <kbd>Enter</kbd> 换行</span></div>
+          <button className="send-button" aria-label="发送" disabled={busy || (!value.trim() && attachments.length === 0) || (attachments.length > 0 && !canAttach)} onClick={() => void submit()}>{busy ? <span className="spinner" /> : <Send size={17} />}</button>
         </div>
       </div>
     </div>
   )
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+async function detectImageMediaType(file: File): Promise<ChatImageMediaType | null> {
+  const signature = await readFileAsArrayBuffer(file.slice(0, 12)).catch(() => null)
+  if (!signature) return null
+  const bytes = new Uint8Array(signature)
+  if (bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value)) return 'image/png'
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  const ascii = String.fromCharCode(...bytes)
+  if (ascii.startsWith('GIF87a') || ascii.startsWith('GIF89a')) return 'image/gif'
+  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WEBP') return 'image/webp'
+  return null
+}
+
+function readFileAsArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as ArrayBuffer)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsArrayBuffer(blob)
+  })
 }
 
 function EmptyState({ onCreate }: { onCreate: () => void }): React.JSX.Element {

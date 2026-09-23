@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { Agent, CreateAgentInput, CreateSpaceInput, Message, Space, UserProfile } from '../shared/contracts'
+import type { Agent, ChatImageAttachment, CreateAgentInput, CreateSpaceInput, Message, Space, UserProfile } from '../shared/contracts'
 import { createSkillReference } from '../shared/skill-reference'
 import { getAgentCapabilityHash } from './agent-capability'
 
@@ -102,6 +102,7 @@ export class MindMeshDatabase {
         authorName TEXT NOT NULL,
         content TEXT NOT NULL,
         reasoning TEXT,
+        attachments TEXT NOT NULL DEFAULT '[]',
         sequence INTEGER NOT NULL,
         createdAt TEXT NOT NULL
       );
@@ -137,6 +138,9 @@ export class MindMeshDatabase {
     const messageColumns = this.db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>
     if (!messageColumns.some((column) => column.name === 'reasoning')) {
       this.db.exec('ALTER TABLE messages ADD COLUMN reasoning TEXT')
+    }
+    if (!messageColumns.some((column) => column.name === 'attachments')) {
+      this.db.exec("ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'")
     }
   }
 
@@ -414,14 +418,14 @@ export class MindMeshDatabase {
 
   listMessages(scope: Message['scope'], scopeId: string): Message[] {
     return this.db.prepare('SELECT * FROM messages WHERE scope = ? AND scopeId = ? ORDER BY sequence ASC')
-      .all(scope, scopeId) as unknown as Message[]
+      .all(scope, scopeId).map((row) => this.hydrateMessage(row))
   }
 
   listMessagesSince(scope: Message['scope'], scopeId: string, sequence: number): Message[] {
     return this.db.prepare(`
       SELECT * FROM messages WHERE scope = ? AND scopeId = ? AND sequence > ?
       ORDER BY sequence ASC
-    `).all(scope, scopeId, sequence) as unknown as Message[]
+    `).all(scope, scopeId, sequence).map((row) => this.hydrateMessage(row))
   }
 
   lastAgentMessageSequence(spaceId: string, agentId: string): number {
@@ -467,6 +471,13 @@ export class MindMeshDatabase {
     return { harnessSessionId: sessionId, agent, lastConsumedMessageSequence: initialSequence }
   }
 
+  restartRuntimeSession(
+    contextKey: string, agent: Agent, sessionId: string, capabilityHash: string, initialSequence = 0,
+  ): RuntimeSession {
+    this.db.prepare('DELETE FROM runtime_sessions WHERE contextKey = ?').run(contextKey)
+    return this.getOrCreateRuntimeSession(contextKey, agent, sessionId, capabilityHash, initialSequence)
+  }
+
   saveRuntimeSessionProgress(contextKey: string, sessionId: string, sequence: number): void {
     this.db.prepare(`
       UPDATE runtime_sessions SET harnessSessionId = ?, lastConsumedMessageSequence = ?, updatedAt = ?
@@ -486,19 +497,41 @@ export class MindMeshDatabase {
     const message: Message = {
       ...input,
       reasoning: input.reasoning ?? null,
+      attachments: input.attachments ?? [],
       id: randomUUID(),
       sequence: next.sequence,
       createdAt: new Date().toISOString(),
     }
     this.db.prepare(`
-      INSERT INTO messages (id, scope, scopeId, authorType, authorId, authorName, content, reasoning, sequence, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, scope, scopeId, authorType, authorId, authorName, content, reasoning, attachments, sequence, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(message.id, message.scope, message.scopeId, message.authorType, message.authorId ?? null,
-      message.authorName, message.content, message.reasoning ?? null, message.sequence, message.createdAt)
+      message.authorName, message.content, message.reasoning ?? null, JSON.stringify(message.attachments), message.sequence, message.createdAt)
     return message
+  }
+
+  private hydrateMessage(row: unknown): Message {
+    const stored = row as Omit<Message, 'attachments'> & { attachments?: string }
+    let attachments: ChatImageAttachment[] = []
+    try {
+      const parsed: unknown = stored.attachments ? JSON.parse(stored.attachments) : []
+      if (Array.isArray(parsed)) attachments = parsed.filter(isStoredImageAttachment)
+    }
+    catch { /* Preserve readable messages even if an attachment payload is corrupt. */ }
+    return { ...stored, attachments }
   }
 
   close(): void {
     this.db.close()
   }
+}
+
+function isStoredImageAttachment(value: unknown): value is ChatImageAttachment {
+  if (!value || typeof value !== 'object') return false
+  const attachment = value as Record<string, unknown>
+  return attachment.type === 'image'
+    && typeof attachment.name === 'string'
+    && ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(String(attachment.mediaType))
+    && typeof attachment.data === 'string'
+    && typeof attachment.bytes === 'number'
 }

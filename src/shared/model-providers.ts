@@ -46,6 +46,11 @@ export const MODEL_CATALOG = [
   { provider: 'anthropic', id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
 ]
 
+export function supportsImageInput(provider: string, model: string): boolean {
+  return provider === 'deepseek-official'
+    && ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp', 'deepseek-flash'].includes(model)
+}
+
 export function getModelProviderDefinition(id: string): ModelProviderDefinition | undefined {
   return MODEL_PROVIDER_DEFINITIONS.find((provider) => provider.id === id)
 }

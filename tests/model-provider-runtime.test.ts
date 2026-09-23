@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DeepSeekHarness, JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
-import type { Agent } from '../src/shared/contracts'
+import type { Agent, ChatImageAttachment } from '../src/shared/contracts'
 import type { ModelProviderSettings } from '../src/main/model-provider-settings'
 
 vi.mock('electron', () => ({
@@ -86,6 +86,39 @@ describe('model provider runtime settings', () => {
       ])
       expect(result.text).toBe('最终回答')
       expect(result.reasoning).toBe('先检查条件\n\n再计算结果\n\n分析第一段\n\n分析第二段')
+    } finally {
+      await adapter.shutdownAll()
+      run.mockRestore()
+      close.mockRestore()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('passes image attachments to the SDK as prompt content blocks', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-runtime-image-'))
+    const run = vi.spyOn(DeepSeekHarness.prototype, 'run').mockResolvedValue({
+      finalResponse: '图片内容', sessionId: 'session', events: [], notifications: [],
+    })
+    const close = vi.spyOn(DeepSeekHarness.prototype, 'close').mockResolvedValue()
+    const providerSettings = {
+      getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }),
+      configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }],
+    } as unknown as ModelProviderSettings
+    const agent: Agent = {
+      id: 'agent', name: 'Agent', role: '', persona: '助手', provider: 'deepseek-official',
+      model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '',
+    }
+    const image: ChatImageAttachment = {
+      type: 'image', name: 'chart.png', mediaType: 'image/png', bytes: 68,
+      data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=',
+    }
+    const adapter = new DeepSeekHarnessAdapter(directory, directory, providerSettings)
+    try {
+      await adapter.run(agent, '分析图表', 'session', undefined, [image])
+      expect(run).toHaveBeenCalledWith([
+        { type: 'text', text: '分析图表' },
+        { type: 'image', data: image.data, mimeType: 'image/png' },
+      ], expect.objectContaining({ sessionId: 'session' }))
     } finally {
       await adapter.shutdownAll()
       run.mockRestore()

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync
 import { dirname, join, resolve } from 'node:path'
 import { DeepSeekHarness, JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type { Agent, RuntimeStatus } from '../shared/contracts'
+import type { Agent, ChatImageAttachment, RuntimeStatus } from '../shared/contracts'
 import type { ModelProviderRuntimeConfig } from './model-provider-settings'
 import { ModelProviderSettings } from './model-provider-settings'
 import { prepareAgentCapabilities } from './capabilities'
@@ -79,7 +79,7 @@ export class DeepSeekHarnessAdapter {
     }
   }
 
-  async run(agent: Agent, prompt: string, sessionId?: string, onText?: (text: string, kind: 'text' | 'reasoning') => void): Promise<{ text: string; reasoning?: string; sessionId?: string }> {
+  async run(agent: Agent, prompt: string, sessionId?: string, onText?: (text: string, kind: 'text' | 'reasoning') => void, attachments: ChatImageAttachment[] = []): Promise<{ text: string; reasoning?: string; sessionId?: string }> {
     const provider = this.providerSettings.getProvider(agent.provider)
     if (!provider) {
       return { text: this.demoResponse(agent, prompt), sessionId }
@@ -127,7 +127,14 @@ export class DeepSeekHarnessAdapter {
     const trace: string[] = []
     let result
     try {
-      result = await entry.harness.run(prompt, {
+      const input = attachments.length > 0
+        ? [{ type: 'text' as const, text: prompt }, ...attachments.map((attachment) => ({
+            type: 'image' as const,
+            data: attachment.data,
+            mimeType: attachment.mediaType,
+          }))]
+        : prompt
+      result = await entry.harness.run(input, {
         sessionId,
         onNotification: (notification) => {
           if (notification.method !== 'session.event') return
@@ -160,6 +167,9 @@ export class DeepSeekHarnessAdapter {
       entry.lastUsed = Date.now()
       await this.evictIdle()
     }
+    // DSH may emit intermediate assistant text before the final reply. Persist the last text
+    // segment as the answer and keep every earlier segment in the reasoning trace. This pairs
+    // with services.ts, which streams callbacks first and only appends an unstreamed final suffix.
     return {
       text: assistantTexts.at(-1) ?? result.finalResponse,
       reasoning: (assistantTexts.length ? trace.slice(0, -1) : trace).join('\n\n') || undefined,

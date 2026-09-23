@@ -435,14 +435,17 @@ describe('message reasoning', () => {
     old.close()
     try {
       const db = new MindMeshDatabase(path)
-      expect(db.listMessages('private', 'agent')[0]).toMatchObject({ content: '旧消息', reasoning: null })
+      expect(db.listMessages('private', 'agent')[0]).toMatchObject({ content: '旧消息', reasoning: null, attachments: [] })
       db.addMessage({ scope: 'private', scopeId: 'agent', authorType: 'agent',
-        authorName: 'Agent', content: '回答', reasoning: '先分析\n\n再回答' })
+        authorName: 'Agent', content: '回答', reasoning: '先分析\n\n再回答', attachments: [{
+          type: 'image', name: 'chart.png', mediaType: 'image/png', bytes: 68,
+          data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=',
+        }] })
       db.close()
       const reopened = new MindMeshDatabase(path)
       try {
         expect(reopened.listMessages('private', 'agent')[1]).toMatchObject({
-          content: '回答', reasoning: '先分析\n\n再回答',
+          content: '回答', reasoning: '先分析\n\n再回答', attachments: [{ name: 'chart.png', mediaType: 'image/png' }],
         })
       } finally { reopened.close() }
     } finally { rmSync(directory, { recursive: true, force: true }) }

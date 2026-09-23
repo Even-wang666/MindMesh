@@ -4,6 +4,12 @@ import { MindMeshDatabase } from '../src/main/database'
 import { MindMeshServices } from '../src/main/services'
 import { getAgentCapabilityHash, SessionResumeUnsupportedError, type DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
 import type { ModelProviderSettings } from '../src/main/model-provider-settings'
+import type { ChatImageAttachment } from '../src/shared/contracts'
+
+const image: ChatImageAttachment = {
+  type: 'image', name: 'chart.png', mediaType: 'image/png', bytes: 68,
+  data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=',
+}
 
 describe('chat failures', () => {
   it('shows a runtime error after failure and clears it after a successful reply', async () => {
@@ -62,6 +68,42 @@ describe('chat failures', () => {
 })
 
 describe('session context', () => {
+  it('sends image attachments only through a DeepSeek Flash route', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockResolvedValue({ text: '看到了图片', sessionId: 'session' })
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const agent = db.listAgents()[0]
+      await service.sendPrivate(agent.id, '分析图片', [image])
+      expect(run.mock.calls[0][4]).toEqual([image])
+      expect(db.listMessages('private', agent.id)[0].attachments).toEqual([image])
+
+      db.updateAgent(agent.id, { ...agent, model: 'deepseek-v3.2' })
+      await expect(service.sendPrivate(agent.id, '再看一张', [image]))
+        .rejects.toThrow('仅 DeepSeek Flash 支持图片输入')
+    } finally { db.close() }
+  })
+
+  it('starts a Flash-capable session when an older conversation used a text-only model', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'saved-session' })
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const initial = db.listAgents()[0]
+      const textOnly = db.updateAgent(initial.id, { ...initial, model: 'deepseek-v3.2' })
+      await service.sendPrivate(initial.id, '先建立文字会话')
+      db.updateAgent(initial.id, { ...textOnly, model: 'deepseek-v4-flash' })
+
+      await service.sendPrivate(initial.id, '分析图片', [image])
+
+      expect(run.mock.calls[1][0].model).toBe('deepseek-v4-flash')
+      expect(run.mock.calls[1][2]).not.toBe('saved-session')
+      expect(run.mock.calls[1][4]).toEqual([image])
+    } finally { db.close() }
+  })
+
   it('keeps an agent reasoning trace with its reply', async () => {
     const db = new MindMeshDatabase(':memory:')
     const send = vi.fn()

@@ -19,6 +19,16 @@ export type Space = {
   createdAt: string
 }
 
+export type ChatImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+
+export type ChatImageAttachment = {
+  type: 'image'
+  name: string
+  mediaType: ChatImageMediaType
+  data: string
+  bytes: number
+}
+
 export type Message = {
   id: string
   scope: 'private' | 'space'
@@ -28,6 +38,7 @@ export type Message = {
   authorName: string
   content: string
   reasoning?: string | null
+  attachments?: ChatImageAttachment[]
   sequence: number
   createdAt: string
 }
@@ -90,8 +101,8 @@ export type MindMeshApi = {
   }
   chat: {
     messages(scope: Message['scope'], scopeId: string): Promise<Message[]>
-    sendPrivate(agentId: string, content: string): Promise<Message[]>
-    sendSpace(spaceId: string, content: string): Promise<Message[]>
+    sendPrivate(agentId: string, content: string, attachments?: ChatImageAttachment[]): Promise<Message[]>
+    sendSpace(spaceId: string, content: string, attachments?: ChatImageAttachment[]): Promise<Message[]>
     onDelta(listener: (event: ChatDelta) => void): () => void
     onProgress(listener: (event: ChatProgress) => void): () => void
   }

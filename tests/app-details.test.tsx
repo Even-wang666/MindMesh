@@ -202,6 +202,8 @@ describe('space background', () => {
     try {
       render(<App />)
       fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
+      expect(screen.queryByRole('button', { name: '删除空间' })).not.toBeInTheDocument()
+      fireEvent.click(await screen.findByRole('button', { name: '编辑空间' }))
       fireEvent.click(await screen.findByRole('button', { name: '删除空间' }))
       expect(api.spaces.remove).not.toHaveBeenCalled()
       confirm.mockReturnValue(true)
@@ -227,7 +229,12 @@ describe('space background', () => {
     render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
+    expect(screen.queryByText('旧背景')).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: '编辑空间' }))
     expect(await screen.findByText('旧背景')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '编辑空间' }))
+    expect(screen.queryByText('旧背景')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '编辑空间' }))
     expect(screen.getAllByRole('button', { name: '编辑背景' })).toHaveLength(1)
     expect(screen.queryByRole('button', { name: '成员与背景' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '编辑背景' }))
@@ -251,6 +258,7 @@ describe('space background', () => {
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
     fireEvent.click(await screen.findByRole('button', { name: '编辑空间' }))
+    fireEvent.click(screen.getByRole('button', { name: '编辑空间信息' }))
     fireEvent.change(screen.getByRole('textbox', { name: '空间名称' }), { target: { value: '新空间' } })
     fireEvent.click(screen.getByRole('button', { name: 'Researcher' }))
     fireEvent.click(screen.getByRole('button', { name: 'Developer' }))
@@ -261,6 +269,41 @@ describe('space background', () => {
 })
 
 describe('chat flow', () => {
+  it('previews and sends a DeepSeek image without requiring text', async () => {
+    const api = mockApi()
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const file = new File([
+      Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    ], 'chart.png', { type: 'image/png' })
+    fireEvent.change(await screen.findByLabelText('选择图片'), { target: { files: [file] } })
+    expect(await screen.findByAltText('chart.png')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(api.chat.sendPrivate).toHaveBeenCalledWith(
+      agent.id,
+      '',
+      [expect.objectContaining({ type: 'image', name: 'chart.png', mediaType: 'image/png' })],
+    ))
+  })
+
+  it('adds an image dropped anywhere in the active chat to the composer', async () => {
+    const api = mockApi()
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+    await screen.findByLabelText('选择图片')
+    const file = new File([Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])], 'dropped.png')
+    const dataTransfer = { types: ['Files'], files: [file], dropEffect: 'none' }
+
+    fireEvent.dragEnter(window, { dataTransfer })
+    expect(screen.getByText('松开即可添加图片')).toBeInTheDocument()
+    fireEvent.drop(window, { dataTransfer })
+
+    expect(await screen.findByAltText('dropped.png')).toBeInTheDocument()
+    expect(screen.queryByText('松开即可添加图片')).not.toBeInTheDocument()
+  })
+
   it('reconciles a failed send before persistence and tells the user', async () => {
     const api = mockApi()
     api.chat.sendPrivate = vi.fn(async () => { throw new Error('智能体不存在') })

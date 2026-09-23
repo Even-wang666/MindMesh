@@ -832,6 +832,8 @@ h1 { letter-spacing: -.032em; }
 .chat-header p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12.5px; }
 .chat-header .avatar { width: 40px; height: 40px; flex-basis: 40px; }
 .space-header-actions { display: flex; align-items: center; gap: var(--sp-2); }
+.drawer-toggle svg { transition: transform var(--dur-1) var(--ease); }
+.drawer-toggle[aria-expanded='true'] svg { transform: rotate(90deg); }
 
 /* ── 按钮体系：高度严格对齐规范 40 / 32 / 48 ───────────────────────────── */
 
@@ -1158,6 +1160,78 @@ h1 { letter-spacing: -.032em; }
   box-shadow: 0 0 0 3px var(--mm-color-focus-ring), var(--sh-2);
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.drop-overlay {
+  position: fixed;
+  inset: var(--sp-4);
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent-line-strong);
+  border-radius: var(--r-surface);
+  color: var(--mm-color-iris);
+  background: var(--surface-raised);
+  font-size: var(--fs-title);
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.composer-attachments {
+  display: flex;
+  gap: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  overflow-x: auto;
+}
+.composer-attachments figure {
+  position: relative;
+  width: 92px;
+  flex: 0 0 92px;
+  margin: 0;
+}
+.composer-attachments img {
+  width: 92px;
+  height: 68px;
+  display: block;
+  object-fit: cover;
+  border: 1px solid var(--mm-color-border);
+  border-radius: var(--r-control);
+  background: var(--surface-sunken);
+}
+.composer-attachments figcaption {
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-attachments button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-pill);
+  display: grid;
+  place-items: center;
+  color: var(--surface-raised);
+  background: rgb(var(--p-ink-rgb) / 70%);
+}
+.composer-error { margin: 0 0 var(--sp-2); color: var(--mm-color-danger); font-size: 12px; }
+
 .composer textarea {
   width: 100%;
   min-height: 56px;
@@ -1172,6 +1246,21 @@ h1 { letter-spacing: -.032em; }
 }
 
 .composer-actions { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.composer-tools { min-width: 0; display: flex; align-items: center; gap: var(--sp-3); }
+.composer-add {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-control);
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  background: transparent;
+}
+.composer-add:hover:not(:disabled) { color: var(--mm-color-iris); background: var(--mm-color-hover); }
+.composer-add:disabled { opacity: .4; }
 
 .composer-hint {
   display: flex;
@@ -1209,6 +1298,21 @@ kbd {
 .send-button:hover:not(:disabled) { background: var(--iris-press); }
 .send-button:active:not(:disabled) { transform: scale(.94); }
 .send-button:disabled { color: var(--text-tertiary); background: rgb(var(--p-ink-rgb) / 8%); box-shadow: none; }
+
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0;
+}
+.message-attachments img {
+  max-width: min(360px, 100%);
+  max-height: 320px;
+  border: 1px solid var(--mm-color-border);
+  border-radius: var(--r-surface);
+  object-fit: contain;
+  background: var(--surface-sunken);
+}
 
 .mention-menu {
   position: absolute;
@@ -1250,15 +1354,25 @@ kbd {
   width: var(--drawer-w);
   flex: 0 0 var(--drawer-w);
   padding: var(--sp-6);
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: var(--sp-7);
   overflow-y: auto;
   border-left: 1px solid var(--mm-color-border);
   background: var(--surface-canvas);
 }
 
+.drawer-edit { width: 100%; flex: 0 0 auto; }
 .drawer-section { display: grid; gap: var(--sp-3); }
+.drawer-danger { margin-top: auto; display: grid; gap: var(--sp-2); }
+.drawer-delete {
+  width: 100%;
+  margin-top: 0;
+  color: var(--mm-color-danger);
+  background: var(--mm-color-danger-bg);
+}
+.drawer-delete:hover:not(:disabled) { background: rgb(var(--p-danger-rgb) / 12%); }
+.drawer-delete:disabled { opacity: .45; }
 
 .member {
   margin: 0 calc(var(--sp-3) * -1);

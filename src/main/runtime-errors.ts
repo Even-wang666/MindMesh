@@ -3,6 +3,8 @@ import { appendFileSync } from 'node:fs'
 export function appendRuntimeError(path: string, scope: 'private' | 'space', agentId: string, error: unknown): void {
   const details = error && typeof error === 'object' ? error as Record<string, unknown> : {}
   const name = error instanceof Error ? error.name : 'UnknownError'
+  // Deliberate allowlists: unknown SDK identifiers stay redacted. Review their safety before
+  // adding new error names or codes when SDK error types change.
   const safeNames = ['Error', 'TypeError', 'AbortError', 'AggregateError', 'JsonRpcResponseError', 'TransportClosedError']
   const code = details.code
   const status = details.status
