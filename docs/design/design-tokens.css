@@ -1,17 +1,113 @@
+/* ==========================================================================
+   MindMesh 设计令牌
+
+   方向：**全站白底**。界面本体只用中性色（纯白导航 / 近白画布 / 墨色文字），
+   强调色承担主按钮 / 选中 / 链接 / 焦点环；导航图标未选中是黑色线稿，选中才
+   亮出该项的专属色。
+
+   基准色：
+     品牌蓝   #1D4ED8   hsl(224 76% 48%)  → 强调色：主按钮 / 选中 / 链接
+     中性墨   #171717   hsl(0 0% 9%)      → 墨色基：文字 / 描边 / 线稿 / 投影
+     近白画布 #F7F7F9   hsl(240 14% 97%)  → 画布（导航与内容卡之间的层）
+     薄荷绿   #8ED9B8   hsl(154 50% 70%)  → 在线状态 / 成功 / 引用线 / 品牌笔画
+
+   一处必要拆分：薄荷绿 L=70%，在白底上对比度仅 1.6:1，**不能做文字色**。
+   因此它保留原值用于「点 / 线 / 实心装饰」（--p-positive-bright-rgb），
+   另派生同色相压暗版 #2B825D（L 34%，白底 4.7:1 达 AA）承担文字与实心色块
+   （--p-positive / --mm-color-jade）。
+
+   ── 导航图标色（--p-nav-tone-*）────────────────────────────────────────
+   六个导航项各一个专属色，取**彩虹六色**（红橙黄绿蓝紫），饱满鲜艳、一眼区分。
+   图标是图形不是文字，可读性由「加粗笔画 + 同色水洗底 + 指示条」共同承担，
+   不追求文字级 4.5:1；明度按色相微调：黄/绿天然亮压到 35~38%，红蓝紫系
+   48~50%，白底上每个色都够实。
+
+   本文件与 src/renderer/src/styles.css 的 ① 调色板块内容一致；
+   预览生成器 build-preview.py 会在构建时断言两者未分叉。
+   ========================================================================== */
+
 :root {
-  --mm-color-porcelain: #f7f8f6;
-  --mm-color-midnight: #172033;
-  --mm-color-iris: #4f56d9;
-  --mm-color-jade: #1e9e8f;
+  /* ── ① 调色板原始值：唯一允许出现颜色字面量的地方 ── */
+  --p-canvas: #f7f7f9;
+  --p-raised: #ffffff;
+  --p-ink-rgb: 23 23 23;
+  --p-nav-bg: #ffffff;
+  --p-nav-ink-rgb: 23 23 23;
+  --p-accent-rgb: 29 78 216;
+  --p-accent: #1d4ed8;
+  --p-accent-press: #1e40af;
+  --p-positive: #2b825d;
+  --p-positive-bright-rgb: 142 217 184;
+  --p-warn: #8f5a12;
+  --p-warn-rgb: 143 90 18;
+  --p-warn-dot-rgb: 143 90 18;
+  --p-warn-bg: #fdf6e7;
+  --p-danger: #a83a3a;
+  --p-danger-rgb: 168 58 58;
+  --p-danger-dot-rgb: 168 58 58;
+  --p-danger-bg: #fbf1f1;
+  --p-on-accent-rgb: 255 255 255;
 
-  --mm-color-border: rgb(23 32 51 / 12%);
-  --mm-color-muted: rgb(23 32 51 / 58%);
-  --mm-color-selected: rgb(79 86 217 / 10%);
-  --mm-color-hover: rgb(79 86 217 / 7%);
-  --mm-color-focus-ring: rgb(79 86 217 / 28%);
+  /* 导航图标专属色：彩虹六色（红橙黄绿蓝紫）；明度按色相微调保可读 */
+  --p-nav-tone-chats-rgb: 225 20 20;       /* #e11414 红 · 对话 */
+  --p-nav-tone-spaces-rgb: 215 105 9;      /* #d76909 橙 · 协作空间 */
+  --p-nav-tone-agents-rgb: 189 146 5;      /* #bd9205 黄 · 智能体 */
+  --p-nav-tone-skills-rgb: 18 161 61;      /* #12a13d 绿 · 技能 */
+  --p-nav-tone-tools-rgb: 18 122 226;      /* #127ae2 蓝 · 工具 */
+  --p-nav-tone-settings-rgb: 134 32 223;   /* #8620df 紫 · 设置 */
+  --p-nav-tone-default-rgb: 29 78 216;    /* 兜底 = 品牌蓝（随强调色走），未标 data-nav 时不至于断色 */
 
+  --p-avatar-h0: 158;
+  --p-avatar-dh: 92;
+  --p-avatar-s: 36%;
+
+  /* ── ② 语义令牌：全部由 ① 派生 ── */
+  --mm-color-porcelain: var(--p-canvas);
+  --mm-color-midnight: rgb(var(--p-ink-rgb));
+  --mm-color-iris: var(--p-accent);
+  --mm-color-jade: var(--p-positive);
+
+  --mm-color-border: rgb(var(--p-ink-rgb) / 11%);
+  --mm-color-border-strong: rgb(var(--p-ink-rgb) / 18%);
+  --mm-color-muted: rgb(var(--p-ink-rgb) / 56%);
+  --mm-color-faint: rgb(var(--p-ink-rgb) / 40%);
+  --mm-color-selected: rgb(var(--p-accent-rgb) / 10%);
+  --mm-color-hover: rgb(var(--p-ink-rgb) / 5%);
+  --mm-color-focus-ring: rgb(var(--p-accent-rgb) / 30%);
+
+  --mm-color-success: var(--p-positive);
+  --mm-color-success-bg: rgb(var(--p-positive-bright-rgb) / 15%);
+  --mm-color-warning: var(--p-warn);
+  --mm-color-warning-bg: var(--p-warn-bg);
+  --mm-color-danger: var(--p-danger);
+  --mm-color-danger-bg: var(--p-danger-bg);
+  --mm-color-danger-border: rgb(var(--p-danger-rgb) / 26%);
+
+  --surface-canvas: var(--p-canvas);
+  --surface-raised: var(--p-raised);
+  --surface-sunken: rgb(var(--p-ink-rgb) / 3%);
+  --surface-nav: var(--p-nav-bg);
+
+  /* 导航面（白底）的边界、分层与文字；选中图标的专属色由此处覆盖 */
+  --nav-edge: rgb(var(--p-ink-rgb) / 8.5%);
+  --nav-wash-0: rgb(var(--p-nav-ink-rgb) / 3%);
+  --nav-wash-1: rgb(var(--p-nav-ink-rgb) / 5%);
+  --nav-wash-2: rgb(var(--p-nav-ink-rgb) / 8%);
+  --nav-wash-3: rgb(var(--p-nav-ink-rgb) / 11%);
+  --nav-tone-rgb: var(--p-nav-tone-default-rgb);
+
+  --text-primary: var(--mm-color-midnight);
+  --text-secondary: var(--mm-color-muted);
+  --text-tertiary: var(--mm-color-faint);
+  --nav-text: rgb(var(--p-nav-ink-rgb) / 92%);
+  --nav-text-2: rgb(var(--p-nav-ink-rgb) / 60%);
+  --nav-text-3: rgb(var(--p-nav-ink-rgb) / 42%);
+  --nav-ink-line: rgb(var(--p-nav-ink-rgb) / 78%);
+
+  /* ── 字体 ── */
   --mm-font-sans: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
 
+  /* ── 间距（4/8 栅格） ── */
   --mm-space-1: 4px;
   --mm-space-2: 8px;
   --mm-space-3: 12px;
@@ -19,8 +115,22 @@
   --mm-space-5: 24px;
   --mm-space-6: 32px;
 
+  /* ── 圆角（仅三档） ── */
   --mm-radius-control: 10px;
   --mm-radius-surface: 14px;
-  --mm-shadow-surface: 0 10px 30px rgb(23 32 51 / 8%);
-}
+  --mm-radius-pill: 999px;
 
+  /* ── 控件高度 ── */
+  --mm-height-control: 40px;
+  --mm-height-compact: 32px;
+  --mm-height-emphasis: 48px;
+
+  /* ── 阴影 ── */
+  --mm-shadow-surface: 0 12px 36px rgb(var(--p-ink-rgb) / 10%);
+
+  /* ── 动效 ── */
+  --mm-duration-1: 120ms;
+  --mm-duration-2: 180ms;
+  --mm-ease: cubic-bezier(.2, .8, .2, 1);
+  --mm-ease-pop: cubic-bezier(.34, 1.56, .64, 1); /* 回弹，仅用于「被选中」这类一次性反馈 */
+}

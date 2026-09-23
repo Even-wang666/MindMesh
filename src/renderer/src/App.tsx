@@ -3,8 +3,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Activity, Bot, Boxes, Check, ChevronRight, CircleHelp, Command, Eye, EyeOff, HardDrive,
-  KeyRound, Library, MessageCircle, MoreHorizontal, Plus, Search, Send, Settings,
-  ShieldCheck, Sparkles, Trash2, Wrench, X,
+  KeyRound, Library, MessageCircle, MoreHorizontal, PanelLeftClose, PanelLeftOpen,
+  Plus, Search, Send, Settings, ShieldCheck, Sparkles, Trash2, Wrench, X,
 } from 'lucide-react'
 import type {
   Agent, ChatProgress, CreateAgentInput, Message, ModelProviderId, ModelProviderStatus, RuntimeStatus,
@@ -54,6 +54,8 @@ export function App(): React.JSX.Element {
   const [streamingText, setStreamingText] = useState('')
   const [streamingReasoning, setStreamingReasoning] = useState('')
   const liveReplyIds = useRef(new Set<string>())
+  const appRef = useRef<HTMLElement | null>(null)
+  const [shares, setShares] = usePaneShares(appRef)
 
   const conversation = view === 'chats' ? `private:${selectedAgentId}` : view === 'spaces' ? `space:${selectedSpaceId}` : ''
   const conversationRef = useRef(conversation)
@@ -169,10 +171,25 @@ export function App(): React.JSX.Element {
     }
   }
 
+  /* 是否处于「导航 + 列表 + 内容」这个三栏形态。两栏形态（智能体/技能/工具/
+     设置）下没有列表，分隔条也就少一条 —— 但导航那一条始终保留，
+     所以两栏时拖的是「导航 ↔ 内容」，导航宽度在三栏/两栏之间仍然一致。 */
+  const hasList = view === 'chats' || view === 'spaces'
+  const resetShares = (): void => setShares(null)
   return (
-    <main className="app-shell">
+    <main
+      className="app-shell"
+      ref={appRef}
+      /* 只在**用户拖过之后**才写行内变量；没拖过就让 styles.css 里的默认值生效，
+         这样「默认比例」始终只有一份定义（在样式表里），两处不会分叉。 */
+      style={shares ? ({
+        '--nav-share': `${shares.nav}%`,
+        '--list-share': `${shares.list}%`,
+      } as React.CSSProperties) : undefined}
+    >
       <PrimaryNav view={view} onView={setView} runtime={runtime} />
-      {(view === 'chats' || view === 'spaces') && (
+      <PaneResizer index={0} appRef={appRef} onShares={setShares} onReset={resetShares} />
+      {hasList && (
         <ObjectList
           view={view}
           agents={agents}
@@ -182,7 +199,8 @@ export function App(): React.JSX.Element {
           onCreate={() => view === 'chats' ? setAgentWizard(true) : setSpaceWizard(true)}
         />
       )}
-      <section className="content">
+      {hasList && <PaneResizer index={1} appRef={appRef} onShares={setShares} onReset={resetShares} />}
+      <section className={hasList ? 'content has-list' : 'content'}>
         {view === 'chats' && (
           selectedAgent
             ? <ChatPanel title={selectedAgent.name} subtitle={selectedAgent.role} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
@@ -193,7 +211,7 @@ export function App(): React.JSX.Element {
             const updated = await window.mindmesh.spaces.updateContext(id, context)
             setSpaces((current) => current.map((space) => space.id === id ? updated : space))
           }} />
-        ) : <div className="empty-state"><BrandLogo size={76} /><h1>还没有协作空间</h1><p>创建空间，邀请智能体一起讨论。</p><button className="primary-button" onClick={() => setSpaceWizard(true)}><Plus size={17} />创建空间</button></div>)}
+        ) : <div className="page center-page"><div className="empty-state"><span className="empty-mark"><BrandLogo size={38} /></span><h1>还没有协作空间</h1><p>创建空间，邀请智能体一起讨论。</p><button className="primary-button" onClick={() => setSpaceWizard(true)}><Plus size={17} />创建空间</button></div></div>)}
         {view === 'agents' && <AgentsPage agents={agents} onCreate={() => setAgentWizard(true)} onDetail={setDetailAgentId} />}
         {view === 'skills' && <CatalogPage kind="skills" />}
         {view === 'tools' && <CatalogPage kind="tools" />}
@@ -208,28 +226,270 @@ export function App(): React.JSX.Element {
   )
 }
 
-function PrimaryNav({ view, onView, runtime }: { view: View; onView: (view: View) => void; runtime: RuntimeStatus | null }): React.JSX.Element {
-  const items: Array<{ id: View; label: string; icon: React.ElementType }> = [
-    { id: 'chats', label: '对话', icon: MessageCircle },
-    { id: 'spaces', label: '协作空间', icon: Boxes },
-    { id: 'agents', label: '智能体', icon: Bot },
-    { id: 'skills', label: '技能', icon: Library },
-    { id: 'tools', label: '工具', icon: Wrench },
-  ]
+/**
+ * 导航折叠状态：只由用户手动决定。
+ *
+ * 这里原先还有一条「窗口窄于 1080px 时自动折叠」的规则。窗口最小尺寸是
+ * 1200×720（src/main/index.ts），1080 那条断点**永远不会命中** —— 是纯粹
+ * 不可达的死逻辑，所以连同 matchMedia 监听一起删掉了。现在折叠的唯一触发者
+ * 是导航底部那个开关，任何窗口尺寸下三栏都保持默认比例。
+ *
+ * 折叠后的样子全部定义在 styles.css 的 `.primary-nav.is-collapsed` 里，是
+ * **唯一**一处定义（含折叠态列表/内容改按剩余空间比例分的那两条兄弟选择器）；
+ * 不要在媒体查询里重复这组声明，否则两处一旦分叉就会出现
+ * 「某个宽度下控件静默消失」那类事故。
+ */
+function useNavCollapsed(): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(false)
+  return [collapsed, () => setCollapsed((current) => !current)]
+}
+
+/* ── 分区拖拽 ────────────────────────────────────────────────────────────── */
+
+/** 分区份额，单位是「占窗口宽的百分比」。null = 用样式表里的默认比例。 */
+export type PaneShares = { nav: number; list: number }
+
+/**
+ * 三栏各自的可用下限（px）。低于这个宽度，最长的内容就开始贴边：
+ *   导航 200 —— 「MindMesh」字标那一行（36px 标志 + 字标 + 两侧内距）；
+ *              与 styles.css 里 .primary-nav 的 min-width 保持同值
+ *   列表 220 —— 40px 头像 + 两行标题
+ *   内容 380 —— 一条消息气泡仍然读得舒服的宽度
+ * ⚠️ 下限是 px，而份额是百分比，所以要按**当前窗宽**换算 —— 这意味着同一个
+ *    百分比在大窗口合法、到小窗口可能就不合法了。resize 时必须在再夹一次
+ *    （见 usePaneShares 里的 resize 监听），否则在大窗口拖出的窄栏，
+ *    到最小窗口会挤成一条。
+ */
+const PANE_LIMITS = { nav: 200, list: 220, content: 380 }
+const PANE_STORE_KEY = 'mindmesh.pane-shares'
+
+/** 把份额夹进「三栏都还能用」的区间。先夹导航，再让列表在剩下的空间里夹。 */
+export function clampShares(shares: PaneShares, width: number): PaneShares {
+  if (!(width > 0)) return shares
+  const asPct = (px: number): number => (px / width) * 100
+  const minNav = asPct(PANE_LIMITS.nav)
+  const minList = asPct(PANE_LIMITS.list)
+  const minContent = asPct(PANE_LIMITS.content)
+  const nav = Math.min(Math.max(shares.nav, minNav), 100 - minList - minContent)
+  const list = Math.min(Math.max(shares.list, minList), 100 - nav - minContent)
+  return { nav, list }
+}
+
+/**
+ * 拖动一条分隔条之后的原始份额（尚未做下限夹取）。
+ *
+ * 「拖动只影响相邻两栏」这条约定就落在这里：index=0 是导航与列表此消彼长，
+ * 两者之和不变 —— 所以**内容栏纹丝不动**；index=1 只动列表，导航不动。
+ * 抽成纯函数是为了能被单元测试直接覆盖：这条语义里有「什么都没发生」的断言
+ * （内容栏不该动 / 导航不该动），光靠手动拖是验不出来的。
+ */
+export function resizeShares(index: number, start: PaneShares, deltaPct: number): PaneShares {
+  return index === 0
+    ? { nav: start.nav + deltaPct, list: start.list - deltaPct }
+    : { nav: start.nav, list: start.list + deltaPct }
+}
+
+/** 从 DOM 实测三栏宽度，换算成份额 —— 拖拽起点优先信布局，不在 JS 里另存一份。 */
+function measureShares(shell: HTMLElement): PaneShares & { width: number } {
+  const width = shell.getBoundingClientRect().width
+  const shareOf = (selector: string): number => {
+    const el = shell.querySelector(selector)
+    return width > 0 && el ? (el.getBoundingClientRect().width / width) * 100 : 0
+  }
+  return { width, nav: shareOf('.primary-nav'), list: shareOf('.object-list') }
+}
+
+/**
+ * 分区份额状态。
+ *
+ * 存储的是**百分比**而不是像素，与默认比例是同一套模型 ——
+ * 所以用户拖过的比例同样跟着窗口缩放走，不会出现「窗口一放大，用户设的那栏
+ * 又变回固定宽度」这种与默认行为不一致的割裂感。
+ *
+ * null 表示「没有覆盖，用样式表里的默认值」，双击分隔条即可清回 null；
+ * 这也让「默认值」保持在 styles.css 一处定义，JS 不再抄一遍数字。
+ */
+function usePaneShares(appRef: React.RefObject<HTMLElement | null>): [PaneShares | null, (next: PaneShares | null) => void] {
+  const [shares, setShares] = useState<PaneShares | null>(() => {
+    try {
+      const raw = window.localStorage.getItem(PANE_STORE_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as Partial<PaneShares>
+      return typeof parsed.nav === 'number' && typeof parsed.list === 'number'
+        ? { nav: parsed.nav, list: parsed.list } : null
+    } catch {
+      /* 隐私模式、或本地存了坏数据：静默回落到默认比例，不影响启动 */
+      return null
+    }
+  })
+
+  useEffect(() => {
+    try {
+      if (shares) window.localStorage.setItem(PANE_STORE_KEY, JSON.stringify(shares))
+      else window.localStorage.removeItem(PANE_STORE_KEY)
+    } catch { /* 写不进去只影响下次启动的记忆，不影响本次调整 */ }
+  }, [shares])
+
+  /* 窗口变小后，原来合法的百分比可能已经低于某一栏的下限了（下限是 px）。
+     这里在每次 resize 后重新夹一遍 —— 不这么做，用户在大窗口拖窄的栏
+     到小窗口就会挤成一条。只在确有覆盖时监听，默认态交给 CSS 比例。 */
+  useEffect(() => {
+    if (!shares) return
+    const onResize = (): void => {
+      const shell = appRef.current
+      if (!shell) return
+      const width = shell.getBoundingClientRect().width
+      setShares((current) => {
+        if (!current) return current
+        const next = clampShares(current, width)
+        return next.nav === current.nav && next.list === current.list ? current : next
+      })
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [shares, appRef])
+
+  return [shares, setShares]
+}
+
+/**
+ * 分区拖拽条。
+ *
+ * index=0 在导航与列表之间（没有列表时即导航与内容之间），index=1 在列表与内容之间。
+ * 拖动只影响**相邻两栏**，这是垂直分隔条的通用约定（编辑器、文件管理器都这样）：
+ * 所以 index=0 是「导航 ↔ 列表」此消彼长、内容不动；index=1 是「列表 ↔ 内容」。
+ *
+ * 用 pointer 事件 + setPointerCapture：鼠标移出这条 6px 的细条（甚至移出窗口）
+ * 也不会丢拖动，不需要在 window 上挂一堆监听再拆。
+ */
+function PaneResizer({ index, appRef, onShares, onReset }: {
+  index: number; appRef: React.RefObject<HTMLElement | null>
+  onShares: (next: PaneShares | null) => void; onReset: () => void
+}): React.JSX.Element {
+  const drag = useRef<{ x: number; start: PaneShares & { width: number } } | null>(null)
+  const [active, setActive] = useState(false)
+
+  function applyFrom(start: PaneShares & { width: number }, deltaPct: number): void {
+    onShares(clampShares(resizeShares(index, start, deltaPct), start.width))
+  }
+
+  function onPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
+    const shell = appRef.current
+    if (!shell) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    drag.current = { x: event.clientX, start: measureShares(shell) }
+    /* 直接改 class 而不是走 state：拖动是每帧触发的高频路径，没必要让整棵树重渲染 */
+    shell.classList.add('is-resizing')
+    setActive(true)
+  }
+
+  function onPointerMove(event: React.PointerEvent<HTMLDivElement>): void {
+    const current = drag.current
+    if (!current) return
+    applyFrom(current.start, ((event.clientX - current.x) / current.start.width) * 100)
+  }
+
+  function endDrag(event: React.PointerEvent<HTMLDivElement>): void {
+    if (!drag.current) return
+    drag.current = null
+    appRef.current?.classList.remove('is-resizing')
+    setActive(false)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    const shell = appRef.current
+    if (!shell) return
+    event.preventDefault()
+    const step = event.shiftKey ? 2 : 0.5
+    applyFrom(measureShares(shell), event.key === 'ArrowRight' ? step : -step)
+  }
+
+  const label = index === 0 ? '导航' : '列表'
   return (
-    <aside className="primary-nav">
-      <BrandLogo wordmark inverse size={36} />
-      <nav>
-        {items.map(({ id, label, icon: Icon }) => (
-          <button key={id} className={view === id ? 'nav-item active' : 'nav-item'} onClick={() => onView(id)}>
-            <Icon size={18} /><span>{label}</span>
-          </button>
-        ))}
-      </nav>
+    <div
+      className={active ? 'pane-resizer is-active' : 'pane-resizer'}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`拖动调整${label}栏宽度，双击恢复默认比例`}
+      tabIndex={0}
+      title={`拖动调整${label}栏宽度 · 双击恢复默认比例`}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onDoubleClick={onReset}
+      onKeyDown={onKeyDown}
+    />
+  )
+}
+
+/**
+ * 一级导航。
+ *
+ * 白底方案下，颜色只落在图标上：未选中是黑色线稿，选中才亮出该项的专属色
+ * （见 styles.css 的 --p-nav-tone-*）。所以每个按钮必须带 `data-nav`，
+ * 它既是 CSS 取色相的依据，也是预览生成器里深链/交互的锚点。
+ * ⚠️ 新增导航项时，`data-nav` 的取值要同时在 styles.css 的
+ *    `.nav-item[data-nav='…']` 里补一行，否则会静默落回品牌灰紫兜底色。
+ */
+function PrimaryNav({ view, onView, runtime }: { view: View; onView: (view: View) => void; runtime: RuntimeStatus | null }): React.JSX.Element {
+  const [collapsed, toggleCollapsed] = useNavCollapsed()
+  const groups: Array<{ label: string; items: Array<{ id: View; label: string; icon: React.ElementType }> }> = [
+    { label: '工作区', items: [
+      { id: 'chats', label: '对话', icon: MessageCircle },
+      { id: 'spaces', label: '协作空间', icon: Boxes },
+    ] },
+    { label: '资源', items: [
+      { id: 'agents', label: '智能体', icon: Bot },
+      { id: 'skills', label: '技能', icon: Library },
+      { id: 'tools', label: '工具', icon: Wrench },
+    ] },
+  ]
+  const runtimeTone = runtime?.state === 'error' ? 'dot danger' : runtime?.state === 'demo' ? 'dot warn' : 'dot'
+  return (
+    <aside className={collapsed ? 'primary-nav is-collapsed' : 'primary-nav'}>
+      <BrandLogo wordmark size={36} />
+      {groups.map((group) => (
+        <div className="nav-group" key={group.label}>
+          <span className="nav-group-label">{group.label}</span>
+          {group.items.map(({ id, label, icon: Icon }) => (
+            <button key={id} data-nav={id} className={view === id ? 'nav-item active' : 'nav-item'} onClick={() => onView(id)}>
+              <span className="nav-icon"><Icon size={18} /></span><span className="nav-label">{label}</span>
+            </button>
+          ))}
+        </div>
+      ))}
       <div className="nav-bottom">
-        <div className="runtime-pill"><i className={runtime?.state === 'error' ? 'danger' : ''} />{runtime?.label ?? '检查中'}</div>
-        <button className={view === 'settings' ? 'nav-item active' : 'nav-item'} onClick={() => onView('settings')}>
-          <Settings size={18} /><span>设置</span>
+        <div className="runtime-card">
+          <div className="runtime-card-head"><i className={runtimeTone} /><span>{runtime?.label ?? '检查中'}</span></div>
+          {runtime?.detail && <small>{runtime.detail}</small>}
+        </div>
+        {/* 折叠开关：底部区域内、**在「设置」之上** —— 设置是列表的最后一项，
+            开关属于面板控制，压在它下面会把列表尾巴截断。
+            图标走 .nav-icon 槽位与其它项同列对齐，但**不挂 data-nav** ——
+            它是面板控制而非视图，所以永远只有墨色线稿，不取专属色。
+            ⚠️ aria-label 不能与任何导航项的可访问名重名：现有测试用
+               getByRole('button', { name: '设置' }) 定位导航项。 */}
+        <button
+          type="button"
+          className="nav-collapse-btn"
+          onClick={toggleCollapsed}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? '展开导航栏' : '折叠导航栏'}
+          title={collapsed ? '展开导航栏' : '折叠导航栏'}
+        >
+          <span className="nav-icon">
+            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </span>
+          <span className="nav-label">收起侧栏</span>
+        </button>
+        <button data-nav="settings" className={view === 'settings' ? 'nav-item active' : 'nav-item'} onClick={() => onView('settings')}>
+          <span className="nav-icon"><Settings size={18} /></span><span className="nav-label">设置</span>
         </button>
       </div>
     </aside>
@@ -240,22 +500,40 @@ function ObjectList(props: {
   view: 'chats' | 'spaces'; agents: Agent[]; spaces: Space[]; selectedId: string;
   onSelect: (id: string) => void; onCreate: () => void
 }): React.JSX.Element {
+  const [query, setQuery] = useState('')
   const rows = props.view === 'chats' ? props.agents : props.spaces
+  const keyword = query.trim().toLowerCase()
+  const visible = keyword
+    ? rows.filter((row) => `${row.name} ${'role' in row ? row.role : row.description}`.toLowerCase().includes(keyword))
+    : rows
+  const isChats = props.view === 'chats'
   return (
     <aside className="object-list">
       <div className="list-heading">
-        <div><span className="eyebrow">{props.view === 'chats' ? 'CHATS' : 'SPACES'}</span><h2>{props.view === 'chats' ? '对话' : '协作空间'}</h2></div>
+        <div><span className="eyebrow">{isChats ? 'CHATS' : 'SPACES'}</span><h2>{isChats ? '对话' : '协作空间'}</h2></div>
         <button className="icon-button" onClick={props.onCreate} aria-label="新建"><Plus size={18} /></button>
       </div>
-      <label className="search"><Search size={16} /><input placeholder="搜索" /></label>
+      <div className="search">
+        <Search size={16} />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索"
+          aria-label={isChats ? '搜索智能体' : '搜索协作空间'}
+        />
+        {query && <button type="button" aria-label="清除搜索" onClick={() => setQuery('')}><X size={14} /></button>}
+      </div>
       <div className="list-rows">
-        {rows.map((row) => (
+        {visible.map((row) => (
           <button key={row.id} className={props.selectedId === row.id ? 'object-row selected' : 'object-row'} onClick={() => props.onSelect(row.id)}>
             <Avatar name={row.name} /><span><strong>{row.name}</strong><small>{'role' in row ? row.role : row.description}</small></span>
           </button>
         ))}
       </div>
-      <button className="list-create" onClick={props.onCreate}><Plus size={16} />{props.view === 'chats' ? '创建智能体' : '新建空间'}</button>
+      {!visible.length && (
+        <p className="list-empty">没有匹配「{query.trim()}」的{isChats ? '智能体' : '空间'}。<button type="button" onClick={() => setQuery('')}>清除搜索</button></p>
+      )}
+      <button className="list-create" onClick={props.onCreate}><Plus size={16} />{isChats ? '创建智能体' : '新建空间'}</button>
     </aside>
   )
 }
@@ -264,11 +542,28 @@ function ChatPanel({ title, subtitle, messages, profile, busy, progress, streami
   title: string; subtitle: string; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
   onSend: (content: string) => Promise<boolean>; onDetail: () => void
 }): React.JSX.Element {
+  const [draft, setDraft] = useState('')
   return (
     <div className="page chat-page">
-      <header className="chat-header"><div><h1>{title}</h1><p>{subtitle}</p></div><button className="ghost-button" onClick={onDetail}>查看详情 <ChevronRight size={15} /></button></header>
-      <MessageList messages={messages} profile={profile} emptyText="开始一段新的对话" progress={progress} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} />
-      <Composer busy={busy} placeholder={`给 ${title} 发送消息…`} onSend={onSend} />
+      <header className="chat-header">
+        <div className="chat-header-main">
+          <Avatar name={title} />
+          <div><h1>{title}</h1><p>{subtitle}</p></div>
+        </div>
+        <button className="ghost-button" onClick={onDetail}>查看详情 <ChevronRight size={15} /></button>
+      </header>
+      <MessageList
+        messages={messages}
+        profile={profile}
+        emptyText="开始一段新的对话"
+        progress={progress}
+        streamingText={streamingText}
+        streamingReasoning={streamingReasoning}
+        liveReplyIds={liveReplyIds}
+        starters={['介绍一下你自己', '帮我梳理一个思路', '你能做些什么？']}
+        onStarter={setDraft}
+      />
+      <Composer busy={busy} placeholder={`给 ${title} 发送消息…`} value={draft} onChange={setDraft} onSend={onSend} />
     </div>
   )
 }
@@ -278,6 +573,7 @@ function SpacePanel({ space, agents, messages, profile, busy, progress, streamin
   onSend: (content: string) => Promise<boolean>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
 }): React.JSX.Element {
   const members = agents.filter((agent) => space.memberIds.includes(agent.id))
+  const [draft, setDraft] = useState('')
   const [editingContext, setEditingContext] = useState(false)
   const [contextDraft, setContextDraft] = useState(space.context)
   const [savingContext, setSavingContext] = useState(false)
@@ -305,21 +601,38 @@ function SpacePanel({ space, agents, messages, profile, busy, progress, streamin
   }
   return (
     <div className="page space-page">
-      <header className="chat-header"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p>{removeError && <p className="form-error" role="alert">{removeError}</p>}</div><div className="space-header-actions"><button className="ghost-button" disabled={busy || removing} onClick={onEdit}>编辑空间 <ChevronRight size={15} /></button><button className="danger-button" disabled={busy || removing} onClick={() => void remove()}><Trash2 size={15} />删除空间</button></div></header>
+      <header className="chat-header"><div className="chat-header-main"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p>{removeError && <p className="form-error" role="alert">{removeError}</p>}</div></div><div className="space-header-actions"><button className="ghost-button" disabled={busy || removing} onClick={onEdit}>编辑空间 <ChevronRight size={15} /></button><button className="danger-button" disabled={busy || removing} onClick={() => void remove()}><Trash2 size={15} />删除空间</button></div></header>
       <div className="space-layout">
-        <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} /><Composer busy={busy} placeholder="@智能体 输入消息…" members={members} onSend={onSend} /></div>
-        <aside className="context-drawer"><span className="eyebrow">成员</span>{members.map((agent) => <div className="member" key={agent.id}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span><i /></div>)}<hr /><span className="eyebrow">背景信息</span>{editingContext ? <div className="context-editor"><textarea aria-label="背景信息" autoFocus value={contextDraft} onChange={(event) => setContextDraft(event.target.value)} />{contextError && <p className="form-error" role="alert">{contextError}</p>}<div><button className="secondary-button" disabled={savingContext} onClick={() => setEditingContext(false)}>取消</button><button className="primary-button" disabled={savingContext} onClick={() => void saveContext()}>保存背景</button></div></div> : <><p>{space.context || '暂无背景信息。'}</p><button className="text-button" onClick={() => { setContextDraft(space.context); setContextError(''); setEditingContext(true) }}>编辑背景</button></>}</aside>
+        <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} starters={['先让每位成员给出一版方案', '统一背景信息后再开始讨论']} onStarter={setDraft} /><Composer busy={busy} placeholder="@智能体 输入消息…" members={members} value={draft} onChange={setDraft} onSend={onSend} /></div>
+        <aside className="context-drawer">
+          <div className="drawer-section">
+            <span className="eyebrow">成员 · {members.length}</span>
+            {members.length === 0 && <p className="form-error">这个空间还没有成员。</p>}
+            {members.map((agent) => <div className="member" key={agent.id}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span><i className="dot" /></div>)}
+          </div>
+          <div className="drawer-section">
+            <span className="eyebrow">背景信息</span>
+            {editingContext ? <div className="context-editor"><textarea aria-label="背景信息" autoFocus value={contextDraft} onChange={(event) => setContextDraft(event.target.value)} />{contextError && <p className="form-error" role="alert">{contextError}</p>}<div><button className="secondary-button compact" disabled={savingContext} onClick={() => setEditingContext(false)}>取消</button><button className="primary-button compact" disabled={savingContext} onClick={() => void saveContext()}>保存背景</button></div></div> : <div className={space.context ? 'panel-card' : 'panel-card muted'}><p>{space.context || '暂无背景信息。'}</p><button className="text-button" onClick={() => { setContextDraft(space.context); setContextError(''); setEditingContext(true) }}>编辑背景</button></div>}
+          </div>
+        </aside>
       </div>
     </div>
   )
 }
 
-function MessageList({ messages, profile, emptyText, progress, streamingText, streamingReasoning, liveReplyIds }: { messages: Message[]; profile: UserProfile; emptyText: string; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string> }): React.JSX.Element {
+function MessageList({ messages, profile, emptyText, progress, streamingText, streamingReasoning, liveReplyIds, starters = [], onStarter }: { messages: Message[]; profile: UserProfile; emptyText: string; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>; starters?: string[]; onStarter?: (starter: string) => void }): React.JSX.Element {
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, progress, streamingText, streamingReasoning])
-  if (!messages.length && !progress && !streamingText && !streamingReasoning) return <div className="conversation-empty"><BrandLogo size={54} /><h3>{emptyText}</h3><p>消息仅保存在这台设备上。</p></div>
+  if (!messages.length && !progress && !streamingText && !streamingReasoning) return (
+    <div className="conversation-empty">
+      <span className="empty-mark"><BrandLogo size={34} /></span>
+      <h3>{emptyText}</h3>
+      <p>消息仅保存在这台设备上，不会自动上传。</p>
+      {starters.length > 0 && <div className="suggestion-row">{starters.map((starter) => <button key={starter} className="suggestion" onClick={() => onStarter?.(starter)}>{starter}</button>)}</div>}
+    </div>
+  )
   return <div className="messages">
     {messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}>
       <Avatar name={message.authorType === 'user' ? profile.name : message.authorName} image={message.authorType === 'user' ? profile.avatar : null} />
@@ -363,15 +676,28 @@ function MessageBody({ content, animated = false }: { content: string; animated?
   return <div className="message-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']} components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{visible}</ReactMarkdown></div>
 }
 
-function Composer({ busy, placeholder, members = [], onSend }: { busy: boolean; placeholder: string; members?: Agent[]; onSend: (value: string) => Promise<boolean> }): React.JSX.Element {
-  const [value, setValue] = useState('')
+function Composer({ busy, placeholder, members = [], value, onChange, onSend }: {
+  busy: boolean; placeholder: string; members?: Agent[]; value: string
+  onChange: React.Dispatch<React.SetStateAction<string>>; onSend: (value: string) => Promise<boolean>
+}): React.JSX.Element {
   const mention = /@([\p{L}\p{N}_-]*)$/u.exec(value)
   const matchingMembers = mention ? members.filter((agent) => agent.name.toLowerCase().startsWith(mention[1].toLowerCase())) : []
-  async function submit(): Promise<void> { const current = value; if (busy || !current.trim()) return; setValue(''); if (!await onSend(current)) setValue((draft) => draft || current) }
+  async function submit(): Promise<void> {
+    const current = value
+    if (busy || !current.trim()) return
+    onChange('')
+    if (!await onSend(current)) onChange((draft) => draft || current)
+  }
   return (
     <div className="composer-wrap">
-      {matchingMembers.length > 0 && <div className="mention-menu"><span className="eyebrow">选择智能体</span>{matchingMembers.map((agent) => <button key={agent.id} onClick={() => setValue(value.replace(/@[\p{L}\p{N}_-]*$/u, `@${agent.name} `))}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></button>)}</div>}
-      <div className="composer"><textarea value={value} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit() } }} placeholder={placeholder} /><div className="composer-actions"><span><Command size={14} /> Enter 发送</span><button disabled={busy || !value.trim()} onClick={() => void submit()}>{busy ? <span className="spinner" /> : <Send size={17} />}</button></div></div>
+      {matchingMembers.length > 0 && <div className="mention-menu"><span className="eyebrow">选择智能体</span>{matchingMembers.map((agent) => <button key={agent.id} onClick={() => onChange((draft) => draft.replace(/@[\p{L}\p{N}_-]*$/u, `@${agent.name} `))}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></button>)}</div>}
+      <div className="composer">
+        <textarea value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit() } }} placeholder={placeholder} />
+        <div className="composer-actions">
+          <span className="composer-hint"><Command size={13} /><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd> + <kbd>Enter</kbd> 换行</span>
+          <button className="send-button" aria-label="发送" disabled={busy || !value.trim()} onClick={() => void submit()}>{busy ? <span className="spinner" /> : <Send size={17} />}</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -381,13 +707,13 @@ function EmptyState({ onCreate }: { onCreate: () => void }): React.JSX.Element {
 }
 
 function AgentsPage({ agents, onCreate, onDetail }: { agents: Agent[]; onCreate: () => void; onDetail: (id: string) => void }): React.JSX.Element {
-  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">AGENTS</span><h1>智能体</h1><p>管理身份、模型、技能和工具。</p></div><button className="primary-button" onClick={onCreate}><Plus size={17} />创建智能体</button></header><div className="table-card"><div className="table-head"><span>智能体</span><span>模型</span><span>能力</span><span>状态</span><span /></div>{agents.map((agent) => <button className="agent-table-row" key={agent.id} onClick={() => onDetail(agent.id)}><span className="agent-cell"><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></span><span><em>{agent.model}</em></span><span className="tags">{agent.skills.slice(0, 2).map((skill) => <i key={skill}>{skillDisplayName(skill)}</i>)}</span><span className="online"><i /> 可用</span><MoreHorizontal size={18} /></button>)}</div></div>
+  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">AGENTS</span><h1>智能体</h1><p>管理身份、模型、技能和工具。</p></div><button className="primary-button" onClick={onCreate}><Plus size={17} />创建智能体</button></header><div className="table-card"><div className="table-head"><span>智能体</span><span>模型</span><span>能力</span><span>状态</span><span /></div>{agents.map((agent) => <button className="agent-table-row" key={agent.id} onClick={() => onDetail(agent.id)}><span className="agent-cell"><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></span><span><em>{agent.model}</em></span><span className="tags">{agent.skills.slice(0, 2).map((skill) => <i key={skill}>{skillDisplayName(skill)}</i>)}</span><span className="online"><i className="dot" /> 可用</span><MoreHorizontal size={18} /></button>)}</div></div>
 }
 
 function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element {
   const [items, setItems] = useState<Array<{ id: string; name: string; description: string; status: string }>>([])
   useEffect(() => { void window.mindmesh.catalog[kind]().then(setItems) }, [kind])
-  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div></header><div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p><span className="status-tag">{item.status}</span></article>)}</div></div>
+  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div></header>{items.length === 0 ? <div className="empty-state"><span className="empty-mark">{kind === 'skills' ? <Sparkles size={19} /> : <Wrench size={19} />}</span><h1>{kind === 'skills' ? '还没有可用技能' : '还没有可用工具'}</h1><p>安装后会自动出现在这里，并可绑定到智能体。</p></div> : <div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p><span className="status-tag">{item.status}</span></article>)}</div>}</div>
 }
 
 function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: (profile: UserProfile) => void }): React.JSX.Element {
@@ -541,7 +867,7 @@ function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange
             <div className="setting-row provider-row">
               <ProviderLogo provider={provider.id} />
               <div><strong>{provider.name}</strong><p>{provider.configured ? `${provider.description} 已连接，可以用于智能体对话。` : provider.description}</p></div>
-              <span className={`state-badge ${provider.configured ? '' : 'inactive'}`}>{provider.configured ? '已配置' : '需要配置'}</span>
+              <span className={`state-badge ${provider.configured ? '' : 'warn'}`}>{provider.configured ? '已配置' : '需要配置'}</span>
               <button className={provider.configured ? 'secondary-button compact' : 'primary-button compact'} onClick={() => openEditor(provider)}>
                 <KeyRound size={15} />{provider.configured ? '编辑' : '连接'}
               </button>
@@ -559,7 +885,7 @@ function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange
         {editing === 'custom' && !customConfigured && renderProviderForm()}
       </section>
       <section className="settings-section"><h2>本地文件</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>Agent 工作目录</strong><p className="workspace-path">{workspace || '读取中…'}</p><small>在 Agent 编辑页启用“文件”工具后即可使用。文件写入限制在此目录；切换后模型会话重新开始，聊天消息仍保留。</small>{workspaceError && <p className="form-error" role="alert">{workspaceError}</p>}</div><button className="secondary-button compact" disabled={busy || choosingWorkspace} onClick={() => void chooseWorkspace()}>选择文件夹</button></div></section>
-      <section className="settings-section"><h2>运行状态</h2><div className="setting-row"><div className="runtime-icon"><Activity size={19} /></div><div><strong>{runtime?.label ?? '检查中'}</strong><p>{runtime?.detail}</p></div><span className={`state-badge ${runtime?.state === 'demo' ? 'inactive' : ''}`}>{runtime?.state === 'demo' ? '等待连接' : '正常'}</span></div></section>
+      <section className="settings-section"><h2>运行状态</h2><div className="setting-row"><div className="runtime-icon"><Activity size={19} /></div><div><strong>{runtime?.label ?? '检查中'}</strong><p>{runtime?.detail}</p></div><span className={`state-badge ${runtime?.state === 'demo' ? 'warn' : ''}`}>{runtime?.state === 'demo' ? '等待连接' : '正常'}</span></div></section>
       <section className="settings-section"><h2>本地数据</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>保存在这台设备上</strong><p>智能体、协作空间和消息不会自动上传到云端。</p></div></div></section>
     </div>
   )
@@ -704,4 +1030,34 @@ function AgentDrawer({ agent, onClose, onChat, onEdit, onRemove }: {
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element { return <label className="field"><span>{label}</span>{children}</label> }
-function Avatar({ name, image, large = false }: { name: string; image?: string | null; large?: boolean }): React.JSX.Element { const initials = name.trim().slice(0, 2).toUpperCase() || 'M'; return <span className={large ? 'avatar large' : 'avatar'}>{image ? <img src={image} alt="" /> : initials}</span> }
+
+/** 头像首字：拉丁名取各词首字母（Product Manager → PM），中文名取前两字。 */
+function avatarInitials(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) return 'M'
+  if (/^[\p{Script=Latin}\p{N}]/u.test(trimmed)) {
+    const words = trimmed.split(/[\s._-]+/).filter(Boolean)
+    const initials = words.length > 1 ? words[0][0] + words[1][0] : trimmed.slice(0, 2)
+    return initials.toUpperCase()
+  }
+  return Array.from(trimmed).slice(0, 2).join('')
+}
+
+/**
+ * 由姓名派生稳定的归一化色位（0–1，同一个人永远同色）。
+ * 只输出 0–1，具体色相区间交给样式表的调色板（--p-avatar-h0 / -dh / -s），
+ * 这样换配色时头像色带会整体跟随，不会遗留在某个过时的色相范围里。
+ */
+function avatarTone(name: string): number {
+  let hash = 0
+  for (const character of name.trim()) hash = (hash * 31 + (character.codePointAt(0) ?? 0)) % 100003
+  return Number(((hash % 1000) / 1000).toFixed(3))
+}
+
+function Avatar({ name, image, large = false }: { name: string; image?: string | null; large?: boolean }): React.JSX.Element {
+  return (
+    <span className={large ? 'avatar large' : 'avatar'} style={{ '--avatar-t': avatarTone(name) } as React.CSSProperties} aria-hidden="true">
+      {image ? <img src={image} alt="" /> : avatarInitials(name)}
+    </span>
+  )
+}

@@ -16,7 +16,17 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 1100,
+    /* 最小窗口尺寸 = 三栏比例（导航 17.5% / 列表 22% / 内容 60.5%）能站住的下限。
+       最窄的一栏是导航（占总宽 17.5%）：1200 时约 210px，扣掉两侧 16px 内距
+       还剩约 178px，正好容下「36px 品牌标 + 字标」和「28px 图标 + 12px 间距 +
+       四字标签（协作空间）」两种最长内容。再小（如 1100）三栏结构不崩，
+       但导航栏开始出现文字贴边。
+       ⚠️ 下调这个值之前，先看 styles.css 响应式段末尾记的两条：< 1200 的
+          三栏可用性、以及折叠态那两条兄弟选择器是否仍然成立。
+       ⚠️ 它同时是「响应式分区」退场的依据：窗口不可能窄到需要降级，
+          所以三栏比例在所有可达尺寸下都是同一套默认值（styles.css 的
+          --nav-share / --list-share）。 */
+    minWidth: 1200,
     minHeight: 700,
     show: false,
     autoHideMenuBar: true,
