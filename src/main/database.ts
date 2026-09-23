@@ -105,39 +105,89 @@ export class MindMeshDatabase {
   }
 
   private seed(): void {
-    if (this.db.prepare("SELECT value FROM app_meta WHERE key = 'seeded'").get()) return
-    const count = this.db.prepare('SELECT COUNT(*) AS count FROM agents').get() as { count: number }
-    const spaces = this.db.prepare('SELECT COUNT(*) AS count FROM spaces').get() as { count: number }
-    if (count.count > 0 || spaces.count > 0) {
-      this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('seeded', '1')").run()
-      return
+    const seeded = Boolean(this.db.prepare("SELECT value FROM app_meta WHERE key = 'seeded'").get())
+    let seedMode = (this.db.prepare("SELECT value FROM app_meta WHERE key = 'starterSeedMode'").get() as
+      { value: string } | undefined)?.value
+    if (!seeded && !seedMode) {
+      const count = this.db.prepare('SELECT COUNT(*) AS count FROM agents').get() as { count: number }
+      const spaces = this.db.prepare('SELECT COUNT(*) AS count FROM spaces').get() as { count: number }
+      seedMode = count.count === 0 && spaces.count === 0 ? 'fresh' : 'upgrade'
+      this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('starterSeedMode', ?)").run(seedMode)
     }
+    this.seedStarterExamples(!seeded && seedMode === 'fresh')
+    if (!seeded) this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('seeded', '1')").run()
+    this.db.prepare("DELETE FROM app_meta WHERE key = 'starterSeedMode'").run()
+  }
 
-    const researcher = this.createAgent({
-      name: 'Researcher',
-      role: '研究分析专家',
-      persona: '你是一名严谨的研究分析专家。优先使用事实与证据，输出结构化结论。',
-      provider: 'deepseek-official',
-      model: 'deepseek-v4-flash',
-      skills: ['研究分析', '报告撰写'],
-      tools: ['网页搜索', '文件'],
-    })
-    const developer = this.createAgent({
-      name: 'Developer',
-      role: '软件工程师',
-      persona: '你是一名务实的软件工程师。先澄清约束，再给出可验证的实现。',
-      provider: 'deepseek-official',
-      model: 'deepseek-v4-flash',
-      skills: ['代码审查'],
-      tools: ['文件', 'Shell'],
-    })
-    this.createSpace({
-      name: 'AI Product Research',
-      description: '讨论和研究 Multi-Agent 产品设计。',
-      context: '当前目标：完成 MindMesh MVP。优先验证 Agent 创建、私聊和 Space 协作。',
-      memberIds: [researcher.id, developer.id],
-    })
-    this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('seeded', '1')").run()
+  private seedStarterExamples(includeLegacyExamples: boolean): void {
+    if (this.db.prepare("SELECT value FROM app_meta WHERE key = 'starterExamplesV2'").get()) return
+    const base = { provider: 'deepseek-official' as const, model: 'deepseek-v4-flash' }
+    if (includeLegacyExamples) {
+      const researcher = this.ensureStarterAgent('starter-v1-researcher', { ...base, name: 'Researcher', role: '研究分析专家',
+        persona: '你是一名严谨的研究分析专家。优先使用事实与证据，输出结构化结论。',
+        skills: ['研究分析', '报告撰写'], tools: ['网页搜索', '文件'] })
+      const developer = this.ensureStarterAgent('starter-v1-developer', { ...base, name: 'Developer', role: '软件工程师',
+        persona: '你是一名务实的软件工程师。先澄清约束，再给出可验证的实现。',
+        skills: ['代码审查'], tools: ['文件', 'Shell'] })
+      this.ensureStarterSpace('starter-v1-ai-product-research', {
+        name: 'AI Product Research', description: '讨论和研究 Multi-Agent 产品设计。',
+        context: '当前目标：完成 MindMesh MVP。优先验证 Agent 创建、私聊和 Space 协作。',
+        memberIds: [researcher.id, developer.id],
+      })
+    }
+    const productManager = this.ensureStarterAgent('starter-v2-product-manager', { ...base, name: 'Product Manager', role: '产品经理',
+      persona: '你负责澄清用户问题、范围和优先级。将讨论收敛为明确决策、验收标准和下一步。',
+      skills: ['需求分析', '任务拆解'], tools: ['文件'] })
+    const projectCoordinator = this.ensureStarterAgent('starter-v2-project-coordinator', { ...base, name: 'Project Coordinator', role: '项目协调员',
+      persona: '你负责把目标拆成里程碑、任务和负责人，识别依赖与风险，并用简洁的进度清单推动执行。',
+      skills: ['项目计划', '任务拆解'], tools: ['文件'] })
+    const studyCoach = this.ensureStarterAgent('starter-v2-study-coach', { ...base, name: 'Study Coach', role: '学习教练',
+      persona: '你会根据学习目标、截止时间和每日可用时间制定计划，用主动回忆、间隔复习和小测验跟踪进度。',
+      skills: ['学习计划', '知识梳理'], tools: ['文件'] })
+    const englishTutor = this.ensureStarterAgent('starter-v2-english-tutor', { ...base, name: 'English Tutor', role: '英语教练',
+      persona: '你帮助用户练习实用英语。先给出自然表达，再简明解释错误，并提供可立即完成的对话或写作练习。',
+      skills: ['语言学习', '写作反馈'], tools: [] })
+    const fitnessCoach = this.ensureStarterAgent('starter-v2-fitness-coach', { ...base, name: 'Fitness Coach', role: '健身教练',
+      persona: '你根据时间、场地、设备和运动经验制定安全、可持续的训练计划，并给出热身、进阶和恢复建议。',
+      skills: ['训练计划'], tools: [] })
+    const mealPlanner = this.ensureStarterAgent('starter-v2-meal-planner', { ...base, name: 'Meal Planner', role: '饮食规划师',
+      persona: '你结合预算、口味、烹饪时间和忌口安排易执行的餐单，同时整理采购清单和备餐顺序。',
+      skills: ['餐单规划', '清单整理'], tools: ['文件'] })
+    const travelPlanner = this.ensureStarterAgent('starter-v2-travel-planner', { ...base, name: 'Travel Planner', role: '旅行规划师',
+      persona: '你根据出发地、日期、预算和兴趣制定节奏合理的行程，优先核对交通、营业时间和预订条件。',
+      skills: ['行程规划', '清单整理'], tools: ['网页搜索', '文件'] })
+
+    this.ensureStarterSpace('starter-v2-product-delivery', { name: 'Product Delivery Squad', description: '从需求澄清到项目推进的工作协作组。',
+      context: '请提供目标、用户、截止时间和已知限制。Product Manager 收敛范围与验收标准，Project Coordinator 拆解里程碑、依赖和负责人。',
+      memberIds: [productManager.id, projectCoordinator.id] })
+    this.ensureStarterSpace('starter-v2-study-growth', { name: 'Study Growth Circle', description: '制定学习计划、讲解难点并进行语言练习。',
+      context: '请先说明学习目标、当前水平、截止时间和每周可用时间。Study Coach 负责计划和检查点，English Tutor 负责英语练习。',
+      memberIds: [studyCoach.id, englishTutor.id] })
+    this.ensureStarterSpace('starter-v2-healthy-living', { name: 'Healthy Living Plan', description: '把运动和日常饮食整合成可执行的生活计划。',
+      context: '请说明作息、运动基础、饮食偏好、忌口和预算。Fitness Coach 安排训练，Meal Planner 安排饮食与采购清单。',
+      memberIds: [fitnessCoach.id, mealPlanner.id] })
+    this.ensureStarterSpace('starter-v2-weekend-trip', { name: 'Weekend Trip Crew', description: '用有限时间和预算规划一次轻松的短途旅行。',
+      context: '请提供出发地、日期、人数、预算和兴趣。Travel Planner 负责行程与交通，Meal Planner 补充用餐建议和预算。',
+      memberIds: [travelPlanner.id, mealPlanner.id] })
+    this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('starterExamplesV2', '1')").run()
+  }
+
+  private ensureStarterAgent(id: string, input: CreateAgentInput): Agent {
+    const existing = this.getAgent(id)
+    if (existing) return existing
+    const names = new Set(this.listAgents().map((agent) => agent.name))
+    let name = input.name
+    for (let suffix = 1; names.has(name); suffix += 1) name = `${input.name} (示例${suffix > 1 ? ` ${suffix}` : ''})`
+    return this.createAgent({ ...input, name }, id)
+  }
+
+  private ensureStarterSpace(id: string, input: CreateSpaceInput): Space {
+    const existing = this.getSpace(id)
+    if (existing) return existing
+    const names = new Set(this.listSpaces().map((space) => space.name))
+    let name = input.name
+    for (let suffix = 1; names.has(name); suffix += 1) name = `${input.name} (示例${suffix > 1 ? ` ${suffix}` : ''})`
+    return this.createSpace({ ...input, name }, id)
   }
 
   listAgents(): Agent[] {
@@ -150,8 +200,8 @@ export class MindMeshDatabase {
     return row ? { ...row, skills: JSON.parse(row.skills), tools: JSON.parse(row.tools) } : undefined
   }
 
-  createAgent(input: CreateAgentInput): Agent {
-    const agent: Agent = { ...input, id: randomUUID(), createdAt: new Date().toISOString() }
+  createAgent(input: CreateAgentInput, id: string = randomUUID()): Agent {
+    const agent: Agent = { ...input, id, createdAt: new Date().toISOString() }
     this.db.prepare(`
       INSERT INTO agents (id, name, role, persona, provider, model, skills, tools, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -248,8 +298,8 @@ export class MindMeshDatabase {
     return this.getSpace(id)!
   }
 
-  createSpace(input: CreateSpaceInput): Space {
-    const space: Space = { ...input, id: randomUUID(), createdAt: new Date().toISOString() }
+  createSpace(input: CreateSpaceInput, id: string = randomUUID()): Space {
+    const space: Space = { ...input, id, createdAt: new Date().toISOString() }
     this.db.exec('BEGIN')
     try {
       this.db.prepare('INSERT INTO spaces (id, name, description, context, createdAt) VALUES (?, ?, ?, ?, ?)')

@@ -155,18 +155,20 @@ async function runRound(round) {
 
       await evaluate(`Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '对话').click()`)
       await until(() => evaluate('Boolean(document.querySelector(".chat-page .chat-header button"))'))
+      const agentCountBeforeDelete = await evaluate('window.mindmesh.agents.list().then(agents => agents.length)')
       await evaluate("document.querySelector('.chat-page .chat-header button').click()")
       await until(() => evaluate('Boolean(document.querySelector(".agent-drawer .danger-button"))'))
       await evaluate("window.confirm = () => true; document.querySelector('.agent-drawer .danger-button').click()")
       await until(() => evaluate('document.querySelector(".chat-page h1")?.textContent === "Developer"'))
-      assert.equal(await evaluate('window.mindmesh.agents.list().then(agents => agents.length)'), 1)
+      assert.equal(await evaluate('window.mindmesh.agents.list().then(agents => agents.length)'), agentCountBeforeDelete - 1)
       console.log('Electron Agent delete UI: OK')
 
       await evaluate(`Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '协作空间').click()`)
       await until(() => evaluate('Boolean(document.querySelector(".space-page .danger-button"))'))
+      const spaceCountBeforeDelete = await evaluate('window.mindmesh.spaces.list().then(spaces => spaces.length)')
       await evaluate("document.querySelector('.space-page .danger-button').click()")
-      await until(() => evaluate('Boolean(document.querySelector(".empty-state h1"))'))
-      assert.equal(await evaluate('window.mindmesh.spaces.list().then(spaces => spaces.length)'), 0)
+      await until(() => evaluate(`window.mindmesh.spaces.list().then(spaces => spaces.length === ${spaceCountBeforeDelete - 1})`))
+      assert.equal(await evaluate('window.mindmesh.spaces.list().then(spaces => spaces.length)'), spaceCountBeforeDelete - 1)
       console.log('Electron Space delete UI: OK')
 
       await evaluate(`Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '设置').click()`)

@@ -6,6 +6,96 @@ import { describe, expect, it } from 'vitest'
 import { MindMeshDatabase } from '../src/main/database'
 import { getAgentCapabilityHash } from '../src/main/agent-capability'
 
+describe('starter examples', () => {
+  it('provides practical multi-Agent teams and does not recreate deleted examples', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-examples-'))
+    const path = join(directory, 'mindmesh.sqlite')
+    const db = new MindMeshDatabase(path)
+    try {
+      expect(db.listAgents().map((agent) => agent.name)).toEqual(expect.arrayContaining([
+        'Researcher', 'Developer', 'Product Manager', 'Project Coordinator', 'Study Coach', 'English Tutor',
+        'Fitness Coach', 'Meal Planner', 'Travel Planner',
+      ]))
+      expect(db.listSpaces().map((space) => space.name)).toEqual(expect.arrayContaining([
+        'AI Product Research', 'Product Delivery Squad', 'Study Growth Circle',
+        'Healthy Living Plan', 'Weekend Trip Crew',
+      ]))
+      const life = db.listSpaces().find((space) => space.name === 'Healthy Living Plan')!
+      expect(life.context).toContain('饮食')
+      expect(life.memberIds).toHaveLength(2)
+      db.removeSpace(life.id)
+    } finally { db.close() }
+
+    const reopened = new MindMeshDatabase(path)
+    try {
+      expect(reopened.listSpaces().some((space) => space.name === 'Healthy Living Plan')).toBe(false)
+    } finally {
+      reopened.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves deleted legacy examples and isolates starter data from name collisions on upgrade', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-examples-upgrade-'))
+    const path = join(directory, 'mindmesh.sqlite')
+    new MindMeshDatabase(path).close()
+    const old = new DatabaseSync(path)
+    old.exec(`PRAGMA foreign_keys = ON;
+      DELETE FROM app_meta WHERE key = 'starterExamplesV2';
+      DELETE FROM spaces WHERE id LIKE 'starter-v2-%' OR id = 'starter-v1-ai-product-research';
+      DELETE FROM agents WHERE id LIKE 'starter-v2-%' OR id LIKE 'starter-v1-%';`)
+    old.prepare(`INSERT INTO agents
+      (id, name, role, persona, provider, model, skills, tools, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run('custom-product-manager', 'Product Manager', '自定义角色', '用户自建内容',
+        'deepseek-official', 'deepseek-v4-flash', '[]', '[]', '2026-01-01')
+    old.prepare(`INSERT INTO spaces (id, name, description, context, createdAt)
+      VALUES (?, ?, ?, ?, ?)`)
+      .run('custom-healthy-space', 'Healthy Living Plan', '用户自建空间', '保留我', '2026-01-01')
+    old.close()
+
+    try {
+      const db = new MindMeshDatabase(path)
+      try {
+        expect(db.listAgents().some((agent) => ['Researcher', 'Developer'].includes(agent.name))).toBe(false)
+        expect(db.listSpaces().some((space) => space.name === 'AI Product Research')).toBe(false)
+        expect(db.getAgent('custom-product-manager')).toMatchObject({
+          name: 'Product Manager', persona: '用户自建内容',
+        })
+        expect(db.getAgent('starter-v2-product-manager')?.name).toBe('Product Manager (示例)')
+        expect(db.getSpace('custom-healthy-space')).toMatchObject({ name: 'Healthy Living Plan', context: '保留我' })
+        expect(db.getSpace('starter-v2-healthy-living')?.name).toBe('Healthy Living Plan (示例)')
+        expect(db.getSpace('starter-v2-product-delivery')?.memberIds)
+          .toContain('starter-v2-product-manager')
+      } finally { db.close() }
+    } finally { rmSync(directory, { recursive: true, force: true }) }
+  })
+
+  it('finishes a fresh starter seed after an interrupted first run', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-examples-retry-'))
+    const path = join(directory, 'mindmesh.sqlite')
+    new MindMeshDatabase(path).close()
+    const partial = new DatabaseSync(path)
+    partial.exec(`PRAGMA foreign_keys = ON;
+      DELETE FROM spaces;
+      DELETE FROM agents WHERE id != 'starter-v1-researcher';
+      DELETE FROM app_meta WHERE key IN ('seeded', 'starterExamplesV2');
+      INSERT INTO app_meta (key, value) VALUES ('starterSeedMode', 'fresh')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value;`)
+    partial.close()
+
+    try {
+      const db = new MindMeshDatabase(path)
+      try {
+        expect(db.getAgent('starter-v1-researcher')?.name).toBe('Researcher')
+        expect(db.getAgent('starter-v1-developer')?.name).toBe('Developer')
+        expect(db.getSpace('starter-v1-ai-product-research')?.memberIds).toHaveLength(2)
+        expect(db.getAgent('starter-v2-study-coach')?.name).toBe('Study Coach')
+      } finally { db.close() }
+    } finally { rmSync(directory, { recursive: true, force: true }) }
+  })
+})
+
 describe('updateAgent', () => {
   it('updates editable fields without changing the agent ID or space membership', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-agent-'))
