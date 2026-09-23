@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { MindMeshDatabase } from '../src/main/database'
+import { createSkillReference } from '../src/shared/skill-reference'
 import { getAgentCapabilityHash } from '../src/main/agent-capability'
 
 describe('starter examples', () => {
@@ -20,6 +21,25 @@ describe('starter examples', () => {
         'AI Product Research', 'Product Delivery Squad', 'Study Growth Circle',
         'Healthy Living Plan', 'Weekend Trip Crew',
       ]))
+      expect(db.getAgent('starter-v2-product-manager')?.skills).toEqual([
+        createSkillReference('mindmesh-builtin-user-story-writer-v1', '用户故事'),
+        createSkillReference('mindmesh-builtin-project-planner-v1', '项目规划'),
+      ])
+      expect(db.getAgent('starter-v2-study-coach')?.skills).toEqual([
+        createSkillReference('mindmesh-builtin-study-plan-builder-v1', '学习计划'),
+      ])
+      expect(db.getAgent('starter-v2-english-tutor')?.skills).toEqual([
+        createSkillReference('mindmesh-builtin-language-tutor-v1', '语言辅导'),
+      ])
+      expect(db.getAgent('starter-v2-fitness-coach')?.skills).toEqual([
+        createSkillReference('mindmesh-builtin-workout-planner-v1', '训练计划'),
+      ])
+      expect(db.getAgent('starter-v2-meal-planner')?.skills).toEqual([
+        createSkillReference('mindmesh-builtin-meal-plan-builder-v1', '餐单规划'),
+      ])
+      expect(db.getAgent('starter-v2-travel-planner')?.skills).toEqual([
+        createSkillReference('mindmesh-builtin-trip-planner-v1', '旅行规划'),
+      ])
       const life = db.listSpaces().find((space) => space.name === 'Healthy Living Plan')!
       expect(life.context).toContain('饮食')
       expect(life.memberIds).toHaveLength(2)
@@ -91,6 +111,36 @@ describe('starter examples', () => {
         expect(db.getAgent('starter-v1-developer')?.name).toBe('Developer')
         expect(db.getSpace('starter-v1-ai-product-research')?.memberIds).toHaveLength(2)
         expect(db.getAgent('starter-v2-study-coach')?.name).toBe('Study Coach')
+      } finally { db.close() }
+    } finally { rmSync(directory, { recursive: true, force: true }) }
+  })
+
+  it('upgrades unchanged starter skills while preserving user edits', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-skill-upgrade-'))
+    const path = join(directory, 'mindmesh.sqlite')
+    new MindMeshDatabase(path).close()
+    const old = new DatabaseSync(path)
+    old.prepare('UPDATE agents SET skills = ? WHERE id = ?')
+      .run(JSON.stringify(['需求分析', '任务拆解']), 'starter-v2-product-manager')
+    old.prepare('UPDATE agents SET skills = ? WHERE id = ?')
+      .run(JSON.stringify(['我的自定义技能']), 'starter-v2-study-coach')
+    old.prepare('UPDATE agents SET skills = ? WHERE id = ?')
+      .run(JSON.stringify(['训练计划']), 'starter-v2-fitness-coach')
+    old.prepare("DELETE FROM app_meta WHERE key = 'starterSkillsV3'").run()
+    old.prepare("DELETE FROM app_meta WHERE key = 'starterSkillRefsV4'").run()
+    old.close()
+
+    try {
+      const db = new MindMeshDatabase(path)
+      try {
+        expect(db.getAgent('starter-v2-product-manager')?.skills).toEqual([
+          createSkillReference('mindmesh-builtin-user-story-writer-v1', '用户故事'),
+          createSkillReference('mindmesh-builtin-project-planner-v1', '项目规划'),
+        ])
+        expect(db.getAgent('starter-v2-study-coach')?.skills).toEqual(['我的自定义技能'])
+        expect(db.getAgent('starter-v2-fitness-coach')?.skills).toEqual([
+          createSkillReference('mindmesh-builtin-workout-planner-v1', '训练计划'),
+        ])
       } finally { db.close() }
     } finally { rmSync(directory, { recursive: true, force: true }) }
   })

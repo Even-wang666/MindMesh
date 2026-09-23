@@ -1,12 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Agent } from '../shared/contracts'
-
-const builtInSkills = [
-  { id: 'research', name: '研究分析', description: '整理资料、比较证据并形成结构化结论。', body: '先明确问题和证据范围；区分事实、推断和未知；给出可核查的来源与结论。' },
-  { id: 'report', name: '报告撰写', description: '将分析结果组织为清晰的专业报告。', body: '先明确读者、目的和结论；用标题组织依据、限制与建议；保持简洁，避免没有证据的断言。' },
-  { id: 'review', name: '代码审查', description: '检查代码质量、风险和可维护性。', body: '先定位具体变更与预期行为；优先报告可复现的正确性问题、安全风险和缺失的关键验证，并给出文件位置。' },
-]
+import { parseSkillReference } from '../shared/skill-reference'
+import { defaultSkills } from './default-skills'
 
 export const toolCatalog = [
   { id: 'web', name: '网页搜索', description: '检索公开网页资料。' },
@@ -19,12 +15,13 @@ type SkillItem = { id: string; name: string; description: string; path: string }
 export function listSkillCatalog(dataDirectory: string): SkillItem[] {
   const root = join(dataDirectory, 'skills')
   mkdirSync(root, { recursive: true })
-  for (const skill of builtInSkills) {
+  for (const skill of defaultSkills) {
     const directory = join(root, skill.id)
     const path = join(directory, 'SKILL.md')
     if (existsSync(path)) continue
     mkdirSync(directory, { recursive: true })
-    writeFileSync(path, `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\n${skill.body}\n`)
+    const attribution = skill.source ? `license: MIT\nsource: ${skill.source}\n` : ''
+    writeFileSync(path, `---\nname: ${skill.name}\ndescription: ${skill.description}\n${attribution}---\n\n${skill.body}\n`)
   }
   return readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory()).flatMap((entry) => {
     const path = join(root, entry.name, 'SKILL.md')
@@ -40,9 +37,12 @@ export function listSkillCatalog(dataDirectory: string): SkillItem[] {
 
 export function prepareAgentCapabilities(agent: Agent, dataDirectory: string, dshHome: string): string {
   const catalog = listSkillCatalog(dataDirectory)
-  const selected = agent.skills.map((name) => {
-    const skill = catalog.find((item) => item.name === name)
-    if (!skill) throw new Error(`技能「${name}」未安装`)
+  const selected = agent.skills.map((value) => {
+    const reference = parseSkillReference(value)
+    const legacyMatches = reference ? [] : catalog.filter((item) => item.name === value)
+    if (legacyMatches.length > 1) throw new Error(`技能「${value}」有多个版本，请编辑智能体并重新选择`)
+    const skill = reference ? catalog.find((item) => item.id === reference.id) : legacyMatches[0]
+    if (!skill) throw new Error(`技能「${reference?.name ?? value}」未安装`)
     return skill
   })
   const selectedRoot = join(dshHome, 'selected-skills')

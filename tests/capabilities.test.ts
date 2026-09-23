@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
 import type { Agent } from '../src/shared/contracts'
+import { createSkillReference } from '../src/shared/skill-reference'
 import { listSkillCatalog, prepareAgentCapabilities } from '../src/main/capabilities'
 
 const agent: Agent = {
@@ -20,7 +21,16 @@ describe('Harness capability binding', () => {
       const custom = join(directory, 'skills', 'custom')
       mkdirSync(custom, { recursive: true })
       writeFileSync(join(custom, 'SKILL.md'), '---\nname: 自定义技能\ndescription: 一项本地技能\n---\n\n执行自定义步骤。\n')
-      expect(listSkillCatalog(directory).map((item) => item.name)).toContain('自定义技能')
+      const upstream = join(directory, 'skills', 'workout-planner')
+      mkdirSync(upstream, { recursive: true })
+      writeFileSync(join(upstream, 'SKILL.md'), '---\nname: 训练计划\ndescription: Existing same-name install\n---\n\n不要使用这个同名技能。\n')
+      const catalog = listSkillCatalog(directory)
+      expect(catalog.map((item) => item.name)).toEqual(expect.arrayContaining([
+        '自定义技能', '项目规划', '用户故事', '学习计划', '语言辅导', '训练计划', '餐单规划', '旅行规划',
+      ]))
+      expect(readFileSync(catalog.find((item) => item.id === 'mindmesh-builtin-workout-planner-v1')!.path, 'utf8'))
+        .toContain('github.com/JayRHa/AgentSkills')
+      expect(catalog.filter((item) => item.name === '训练计划')).toHaveLength(2)
       const home = join(directory, 'harness', 'one')
       const path = prepareAgentCapabilities(agent, directory, home)
       const patch = readFileSync(path, 'utf8')
@@ -29,6 +39,12 @@ describe('Harness capability binding', () => {
       expect(patch).toMatch(/id: tool-web\n  disabled: true/)
       expect(patch).toMatch(/id: tool-pwsh\n  disabled: true/)
       expect(readFileSync(join(home, 'selected-skills', 'research.md'), 'utf8')).toContain('研究分析')
+      prepareAgentCapabilities({ ...agent, skills: [
+        createSkillReference('mindmesh-builtin-workout-planner-v1', '训练计划'),
+      ] }, directory, home)
+      expect(readFileSync(join(home, 'selected-skills', 'mindmesh-builtin-workout-planner-v1.md'), 'utf8')).toContain('渐进规则')
+      expect(() => prepareAgentCapabilities({ ...agent, skills: ['训练计划'] }, directory, home))
+        .toThrow('有多个版本')
       expect(() => prepareAgentCapabilities({ ...agent, skills: ['未安装技能'] }, directory, home)).toThrow('未安装')
     } finally {
       rmSync(directory, { recursive: true, force: true })

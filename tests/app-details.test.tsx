@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent, ChatDelta, ChatProgress, Message, MindMeshApi, Space } from '../src/shared/contracts'
+import { createSkillReference } from '../src/shared/skill-reference'
 import { App } from '../src/renderer/src/App'
 
 afterEach(cleanup)
@@ -99,6 +100,48 @@ describe('local file workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '选择文件夹' }))
     expect(await screen.findByText('C:\\My Files')).toBeInTheDocument()
     expect(api.settings.chooseWorkspace).toHaveBeenCalledOnce()
+  })
+
+  it('shows the friendly name for a stable skill reference', async () => {
+    const api = mockApi()
+    api.agents.list = vi.fn(async () => [{
+      ...agent,
+      skills: [createSkillReference('mindmesh-builtin-workout-planner-v1', '训练计划')],
+    }])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /查看详情/ }))
+
+    expect(screen.getByText('训练计划')).toBeInTheDocument()
+    expect(screen.queryByText(/mindmesh-builtin-workout-planner-v1/)).not.toBeInTheDocument()
+  })
+
+  it('requires an exact choice when a legacy skill name has multiple matches', async () => {
+    let currentAgent = { ...agent, skills: ['训练计划'] }
+    const api = mockApi()
+    api.agents.list = vi.fn(async () => [currentAgent])
+    api.agents.update = vi.fn(async (_id, input) => (currentAgent = { ...currentAgent, ...input }))
+    api.catalog.skills = vi.fn(async () => [
+      { id: 'custom-workout', name: '训练计划', description: '用户版本', status: '已安装' },
+      { id: 'mindmesh-builtin-workout-planner-v1', name: '训练计划', description: '内置版本', status: '已安装' },
+    ])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /查看详情/ }))
+    fireEvent.click(screen.getByRole('button', { name: '编辑智能体' }))
+    fireEvent.click(screen.getByRole('button', { name: /下一步/ }))
+    fireEvent.click(screen.getByRole('button', { name: /下一步/ }))
+    const choices = await screen.findAllByRole('button', { name: /训练计划/ })
+    expect(choices.every((choice) => !choice.classList.contains('checked'))).toBe(true)
+    fireEvent.click(choices[0])
+    fireEvent.click(screen.getByRole('button', { name: /下一步/ }))
+    fireEvent.click(screen.getByRole('button', { name: /保存修改/ }))
+
+    await waitFor(() => expect(currentAgent.skills).toEqual([
+      createSkillReference('custom-workout', '训练计划'),
+    ]))
   })
 })
 

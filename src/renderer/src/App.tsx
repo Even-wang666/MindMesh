@@ -13,6 +13,7 @@ import type {
 import {
   getModelProviderApiKeyError, getModelProviderDefinition, MODEL_PROVIDER_DEFINITIONS,
 } from '../../shared/model-providers'
+import { createSkillReference, skillDisplayName } from '../../shared/skill-reference'
 import { BrandLogo } from './BrandLogo'
 import anthropicLogo from './assets/providers/anthropic.svg'
 import deepseekLogo from './assets/providers/deepseek.svg'
@@ -380,7 +381,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }): React.JSX.Element {
 }
 
 function AgentsPage({ agents, onCreate, onDetail }: { agents: Agent[]; onCreate: () => void; onDetail: (id: string) => void }): React.JSX.Element {
-  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">AGENTS</span><h1>智能体</h1><p>管理身份、模型、技能和工具。</p></div><button className="primary-button" onClick={onCreate}><Plus size={17} />创建智能体</button></header><div className="table-card"><div className="table-head"><span>智能体</span><span>模型</span><span>能力</span><span>状态</span><span /></div>{agents.map((agent) => <button className="agent-table-row" key={agent.id} onClick={() => onDetail(agent.id)}><span className="agent-cell"><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></span><span><em>{agent.model}</em></span><span className="tags">{agent.skills.slice(0, 2).map((skill) => <i key={skill}>{skill}</i>)}</span><span className="online"><i /> 可用</span><MoreHorizontal size={18} /></button>)}</div></div>
+  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">AGENTS</span><h1>智能体</h1><p>管理身份、模型、技能和工具。</p></div><button className="primary-button" onClick={onCreate}><Plus size={17} />创建智能体</button></header><div className="table-card"><div className="table-head"><span>智能体</span><span>模型</span><span>能力</span><span>状态</span><span /></div>{agents.map((agent) => <button className="agent-table-row" key={agent.id} onClick={() => onDetail(agent.id)}><span className="agent-cell"><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></span><span><em>{agent.model}</em></span><span className="tags">{agent.skills.slice(0, 2).map((skill) => <i key={skill}>{skillDisplayName(skill)}</i>)}</span><span className="online"><i /> 可用</span><MoreHorizontal size={18} /></button>)}</div></div>
 }
 
 function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element {
@@ -615,8 +616,8 @@ function AgentWizard({ initialAgent, onClose, onSaved }: {
     tools: initialAgent.tools,
   } : defaultAgent)
   const [models, setModels] = useState<ModelOption[]>([])
-  const [skills, setSkills] = useState<Array<{ name: string; description: string }>>([])
-  const [tools, setTools] = useState<Array<{ name: string; description: string }>>([])
+  const [skills, setSkills] = useState<Array<{ id: string; name: string; description: string }>>([])
+  const [tools, setTools] = useState<Array<{ id: string; name: string; description: string }>>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const steps = ['身份', '模型', '技能', '工具']
@@ -631,7 +632,7 @@ function AgentWizard({ initialAgent, onClose, onSaved }: {
     const firstModel = models.find((model) => model.provider === provider)
     setForm({ ...form, provider, model: firstModel?.id ?? '' })
   }
-  function toggle(value: string): void { const key = step === 2 ? 'skills' : 'tools'; setForm((current) => ({ ...current, [key]: current[key].includes(value) ? current[key].filter((item) => item !== value) : [...current[key], value] })) }
+  function toggle(value: string, legacyValue = value, acceptLegacy = true): void { const key = step === 2 ? 'skills' : 'tools'; setForm((current) => { const checked = current[key].includes(value) || (acceptLegacy && current[key].includes(legacyValue)); const remaining = current[key].filter((item) => item !== value && item !== legacyValue); return { ...current, [key]: checked ? remaining : [...remaining, value] } }) }
   async function next(): Promise<void> {
     if (step < 3) { setStep(step + 1); return }
     setSaving(true)
@@ -654,7 +655,7 @@ function AgentWizard({ initialAgent, onClose, onSaved }: {
         <div className="wizard-body">
           {step === 0 && <><h3>它是谁？</h3><div className="avatar-picker"><Avatar name={form.name || 'M'} large /><button className="secondary-button">选择头像</button><small>MVP 使用默认头像</small></div><Field label="名称"><input autoFocus value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 Researcher" /></Field><Field label="角色定位"><input value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} placeholder="例如 研究分析专家" /></Field><Field label="身份设定"><textarea value={form.persona} onChange={(event) => setForm({ ...form, persona: event.target.value })} placeholder="描述它是谁、擅长什么，以及应该如何回答。" /></Field></>}
           {step === 1 && <><h3>选择模型</h3><Field label="模型服务商"><select value={form.provider} onChange={(event) => selectProvider(event.target.value)}>{providerIds.map((provider) => <option key={provider} value={provider}>{provider === 'custom' ? '自定义服务' : getModelProviderDefinition(provider)?.name ?? provider}</option>)}</select></Field><Field label="模型"><select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })}>{providerModels.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></Field><div className="info-box"><CircleHelp size={18} /><p>不同模型在推理、编程、创作和速度方面各有特点。</p></div></>}
-          {(step === 2 || step === 3) && <><h3>{step === 2 ? '它会什么？' : '它可以使用哪些工具？'}</h3><div className="choice-list">{options.map((option) => { const checked = (step === 2 ? form.skills : form.tools).includes(option.name); return <button key={option.name} className={checked ? 'checked' : ''} onClick={() => toggle(option.name)}><i>{checked ? '✓' : '+'}</i><span><strong>{option.name}</strong><small>{option.description}</small></span></button> })}</div></>}
+          {(step === 2 || step === 3) && <><h3>{step === 2 ? '它会什么？' : '它可以使用哪些工具？'}</h3><div className="choice-list">{options.map((option) => { const value = step === 2 ? createSkillReference(option.id, option.name) : option.name; const selected = step === 2 ? form.skills : form.tools; const uniqueLegacy = step !== 2 || skills.filter((item) => item.name === option.name).length === 1; const checked = selected.includes(value) || (uniqueLegacy && selected.includes(option.name)); return <button key={value} className={checked ? 'checked' : ''} onClick={() => toggle(value, option.name, uniqueLegacy)}><i>{checked ? '✓' : '+'}</i><span><strong>{option.name}</strong><small>{option.description}</small></span></button> })}</div></>}
         </div>
         <footer>{error && <p className="form-error" role="alert">{error}</p>}<button className="secondary-button" disabled={saving} onClick={step === 0 ? onClose : () => setStep(step - 1)}>{step === 0 ? '取消' : '上一步'}</button><button className="primary-button" disabled={saving || (step === 0 && (!form.name.trim() || !form.persona.trim()))} onClick={() => void next()}>{step === 3 ? (initialAgent ? '保存修改' : '创建智能体') : '下一步'} <ChevronRight size={16} /></button></footer>
       </div>
@@ -699,7 +700,7 @@ function AgentDrawer({ agent, onClose, onChat, onEdit, onRemove }: {
     try { await onRemove(agent.id) }
     catch { setError('删除失败，请重试。'); setRemoving(false) }
   }
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="agent-drawer" onMouseDown={(event) => event.stopPropagation()}><header><Avatar name={agent.name} large /><div><h2>{agent.name}</h2><p>{agent.role}</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header><section><span className="eyebrow">身份设定</span><p>{agent.persona}</p></section><section><span className="eyebrow">模型</span><p><em>{agent.model}</em></p></section><section><span className="eyebrow">技能</span><div className="tags">{agent.skills.map((item) => <i key={item}>{item}</i>)}</div></section><section><span className="eyebrow">工具</span><div className="tags">{agent.tools.map((item) => <i key={item}>{item}</i>)}</div></section><footer>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button" disabled={removing} onClick={() => onChat(agent.id)}>开始对话</button><button className="secondary-button" disabled={removing} onClick={() => onEdit(agent.id)}>编辑智能体</button><button className="danger-button" disabled={removing} onClick={() => void remove()}><Trash2 size={15} />删除智能体</button></footer></aside></div>
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="agent-drawer" onMouseDown={(event) => event.stopPropagation()}><header><Avatar name={agent.name} large /><div><h2>{agent.name}</h2><p>{agent.role}</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header><section><span className="eyebrow">身份设定</span><p>{agent.persona}</p></section><section><span className="eyebrow">模型</span><p><em>{agent.model}</em></p></section><section><span className="eyebrow">技能</span><div className="tags">{agent.skills.map((item) => <i key={item}>{skillDisplayName(item)}</i>)}</div></section><section><span className="eyebrow">工具</span><div className="tags">{agent.tools.map((item) => <i key={item}>{item}</i>)}</div></section><footer>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button" disabled={removing} onClick={() => onChat(agent.id)}>开始对话</button><button className="secondary-button" disabled={removing} onClick={() => onEdit(agent.id)}>编辑智能体</button><button className="danger-button" disabled={removing} onClick={() => void remove()}><Trash2 size={15} />删除智能体</button></footer></aside></div>
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element { return <label className="field"><span>{label}</span>{children}</label> }

@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { Agent, CreateAgentInput, CreateSpaceInput, Message, Space, UserProfile } from '../shared/contracts'
+import { createSkillReference } from '../shared/skill-reference'
 import { getAgentCapabilityHash } from './agent-capability'
 
 type AgentRow = Omit<Agent, 'skills' | 'tools'> & { skills: string; tools: string }
@@ -13,6 +14,41 @@ type RuntimeSessionRow = {
   agentSnapshot: string | null
   lastConsumedMessageSequence: number
 }
+
+const starterSkillUpgrades = {
+  'starter-v2-product-manager': { previous: ['需求分析', '任务拆解'], current: [
+    createSkillReference('mindmesh-builtin-user-story-writer-v1', '用户故事'),
+    createSkillReference('mindmesh-builtin-project-planner-v1', '项目规划'),
+  ] },
+  'starter-v2-project-coordinator': { previous: ['项目计划', '任务拆解'], current: [
+    createSkillReference('mindmesh-builtin-project-planner-v1', '项目规划'),
+  ] },
+  'starter-v2-study-coach': { previous: ['学习计划', '知识梳理'], current: [
+    createSkillReference('mindmesh-builtin-study-plan-builder-v1', '学习计划'),
+  ] },
+  'starter-v2-english-tutor': { previous: ['语言学习', '写作反馈'], current: [
+    createSkillReference('mindmesh-builtin-language-tutor-v1', '语言辅导'),
+  ] },
+  'starter-v2-fitness-coach': { previous: ['训练计划'], current: [
+    createSkillReference('mindmesh-builtin-workout-planner-v1', '训练计划'),
+  ] },
+  'starter-v2-meal-planner': { previous: ['餐单规划', '清单整理'], current: [
+    createSkillReference('mindmesh-builtin-meal-plan-builder-v1', '餐单规划'),
+  ] },
+  'starter-v2-travel-planner': { previous: ['行程规划', '清单整理'], current: [
+    createSkillReference('mindmesh-builtin-trip-planner-v1', '旅行规划'),
+  ] },
+} as const
+
+const localizedStarterSkills = {
+  'starter-v2-product-manager': ['用户故事', '项目规划'],
+  'starter-v2-project-coordinator': ['项目规划'],
+  'starter-v2-study-coach': ['学习计划'],
+  'starter-v2-english-tutor': ['语言辅导'],
+  'starter-v2-fitness-coach': ['训练计划'],
+  'starter-v2-meal-planner': ['餐单规划'],
+  'starter-v2-travel-planner': ['旅行规划'],
+} as const
 
 export type RuntimeSession = {
   harnessSessionId: string
@@ -115,6 +151,8 @@ export class MindMeshDatabase {
       this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('starterSeedMode', ?)").run(seedMode)
     }
     this.seedStarterExamples(!seeded && seedMode === 'fresh')
+    this.upgradeStarterSkills()
+    this.upgradeStarterSkillReferences()
     if (!seeded) this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('seeded', '1')").run()
     this.db.prepare("DELETE FROM app_meta WHERE key = 'starterSeedMode'").run()
   }
@@ -137,25 +175,25 @@ export class MindMeshDatabase {
     }
     const productManager = this.ensureStarterAgent('starter-v2-product-manager', { ...base, name: 'Product Manager', role: '产品经理',
       persona: '你负责澄清用户问题、范围和优先级。将讨论收敛为明确决策、验收标准和下一步。',
-      skills: ['需求分析', '任务拆解'], tools: ['文件'] })
+      skills: [...starterSkillUpgrades['starter-v2-product-manager'].current], tools: ['文件'] })
     const projectCoordinator = this.ensureStarterAgent('starter-v2-project-coordinator', { ...base, name: 'Project Coordinator', role: '项目协调员',
       persona: '你负责把目标拆成里程碑、任务和负责人，识别依赖与风险，并用简洁的进度清单推动执行。',
-      skills: ['项目计划', '任务拆解'], tools: ['文件'] })
+      skills: [...starterSkillUpgrades['starter-v2-project-coordinator'].current], tools: ['文件'] })
     const studyCoach = this.ensureStarterAgent('starter-v2-study-coach', { ...base, name: 'Study Coach', role: '学习教练',
       persona: '你会根据学习目标、截止时间和每日可用时间制定计划，用主动回忆、间隔复习和小测验跟踪进度。',
-      skills: ['学习计划', '知识梳理'], tools: ['文件'] })
+      skills: [...starterSkillUpgrades['starter-v2-study-coach'].current], tools: ['文件'] })
     const englishTutor = this.ensureStarterAgent('starter-v2-english-tutor', { ...base, name: 'English Tutor', role: '英语教练',
       persona: '你帮助用户练习实用英语。先给出自然表达，再简明解释错误，并提供可立即完成的对话或写作练习。',
-      skills: ['语言学习', '写作反馈'], tools: [] })
+      skills: [...starterSkillUpgrades['starter-v2-english-tutor'].current], tools: [] })
     const fitnessCoach = this.ensureStarterAgent('starter-v2-fitness-coach', { ...base, name: 'Fitness Coach', role: '健身教练',
       persona: '你根据时间、场地、设备和运动经验制定安全、可持续的训练计划，并给出热身、进阶和恢复建议。',
-      skills: ['训练计划'], tools: [] })
+      skills: [...starterSkillUpgrades['starter-v2-fitness-coach'].current], tools: [] })
     const mealPlanner = this.ensureStarterAgent('starter-v2-meal-planner', { ...base, name: 'Meal Planner', role: '饮食规划师',
       persona: '你结合预算、口味、烹饪时间和忌口安排易执行的餐单，同时整理采购清单和备餐顺序。',
-      skills: ['餐单规划', '清单整理'], tools: ['文件'] })
+      skills: [...starterSkillUpgrades['starter-v2-meal-planner'].current], tools: ['文件'] })
     const travelPlanner = this.ensureStarterAgent('starter-v2-travel-planner', { ...base, name: 'Travel Planner', role: '旅行规划师',
       persona: '你根据出发地、日期、预算和兴趣制定节奏合理的行程，优先核对交通、营业时间和预订条件。',
-      skills: ['行程规划', '清单整理'], tools: ['网页搜索', '文件'] })
+      skills: [...starterSkillUpgrades['starter-v2-travel-planner'].current], tools: ['网页搜索', '文件'] })
 
     this.ensureStarterSpace('starter-v2-product-delivery', { name: 'Product Delivery Squad', description: '从需求澄清到项目推进的工作协作组。',
       context: '请提供目标、用户、截止时间和已知限制。Product Manager 收敛范围与验收标准，Project Coordinator 拆解里程碑、依赖和负责人。',
@@ -170,6 +208,32 @@ export class MindMeshDatabase {
       context: '请提供出发地、日期、人数、预算和兴趣。Travel Planner 负责行程与交通，Meal Planner 补充用餐建议和预算。',
       memberIds: [travelPlanner.id, mealPlanner.id] })
     this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('starterExamplesV2', '1')").run()
+  }
+
+  private upgradeStarterSkills(): void {
+    if (this.db.prepare("SELECT value FROM app_meta WHERE key = 'starterSkillsV3'").get()) return
+    for (const [id, skills] of Object.entries(starterSkillUpgrades)) {
+      const agent = this.getAgent(id)
+      if (!agent || JSON.stringify(skills.previous) === JSON.stringify(skills.current) ||
+        JSON.stringify(agent.skills) !== JSON.stringify(skills.previous)) continue
+      this.db.prepare('UPDATE agents SET skills = ? WHERE id = ?').run(JSON.stringify(skills.current), id)
+      this.db.prepare('DELETE FROM runtime_sessions WHERE contextKey = ? OR contextKey LIKE ?')
+        .run(`private:${id}`, `space:%:${id}`)
+    }
+    this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('starterSkillsV3', '1')").run()
+  }
+
+  private upgradeStarterSkillReferences(): void {
+    if (this.db.prepare("SELECT value FROM app_meta WHERE key = 'starterSkillRefsV4'").get()) return
+    for (const [id, previous] of Object.entries(localizedStarterSkills)) {
+      const agent = this.getAgent(id)
+      if (!agent || JSON.stringify(agent.skills) !== JSON.stringify(previous)) continue
+      const current = starterSkillUpgrades[id as keyof typeof starterSkillUpgrades].current
+      this.db.prepare('UPDATE agents SET skills = ? WHERE id = ?').run(JSON.stringify(current), id)
+      this.db.prepare('DELETE FROM runtime_sessions WHERE contextKey = ? OR contextKey LIKE ?')
+        .run(`private:${id}`, `space:%:${id}`)
+    }
+    this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('starterSkillRefsV4', '1')").run()
   }
 
   private ensureStarterAgent(id: string, input: CreateAgentInput): Agent {
