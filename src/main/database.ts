@@ -163,7 +163,7 @@ export class MindMeshDatabase {
 
   private seedStarterExamples(includeLegacyExamples: boolean): void {
     if (this.db.prepare("SELECT value FROM app_meta WHERE key = 'starterExamplesV2'").get()) return
-    const base = { provider: 'deepseek-official' as const, model: 'deepseek-v4-flash' }
+    const base = { provider: 'deepseek-official' as const, model: 'deepseek-flash' }
     if (includeLegacyExamples) {
       const researcher = this.ensureStarterAgent('starter-v1-researcher', { ...base, name: 'Researcher', role: '研究分析专家',
         persona: '你是一名严谨的研究分析专家。优先使用事实与证据，输出结构化结论。',

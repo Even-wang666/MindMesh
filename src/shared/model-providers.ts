@@ -36,8 +36,8 @@ export const MODEL_PROVIDER_DEFINITIONS: ModelProviderDefinition[] = [
 ]
 
 export const MODEL_CATALOG = [
-  { provider: 'deepseek-official', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
-  { provider: 'deepseek-official', id: 'deepseek-v3.2', name: 'DeepSeek V3.2' },
+  { provider: 'deepseek-official', id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1_000_000 },
+  { provider: 'deepseek-official', id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1_000_000 },
   { provider: 'moonshotai-cn', id: 'kimi-k2.5', name: 'Kimi K2.5' },
   { provider: 'moonshotai-cn', id: 'kimi-k2-thinking', name: 'Kimi K2 Thinking' },
   { provider: 'openai', id: 'gpt-5.2', name: 'GPT-5.2' },
@@ -45,6 +45,16 @@ export const MODEL_CATALOG = [
   { provider: 'anthropic', id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
   { provider: 'anthropic', id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
 ]
+
+export function getModelContextWindow(provider: string, model: string): number | undefined {
+  const catalogWindow = MODEL_CATALOG.find((item) => item.provider === provider && item.id === model)?.contextWindow
+  if (catalogWindow) return catalogWindow
+  // DeepSeek keeps accepting these legacy Flash aliases and routes them to the current Flash model.
+  if (provider === 'deepseek-official' && ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'].includes(model)) {
+    return 1_000_000
+  }
+  return undefined
+}
 
 export function supportsImageInput(provider: string, model: string): boolean {
   return provider === 'deepseek-official'

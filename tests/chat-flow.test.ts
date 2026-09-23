@@ -4,7 +4,7 @@ import { MindMeshDatabase } from '../src/main/database'
 import { MindMeshServices } from '../src/main/services'
 import { getAgentCapabilityHash, SessionResumeUnsupportedError, type DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
 import type { ModelProviderSettings } from '../src/main/model-provider-settings'
-import type { ChatImageAttachment } from '../src/shared/contracts'
+import type { ChatImageAttachment, Message } from '../src/shared/contracts'
 
 const image: ChatImageAttachment = {
   type: 'image', name: 'chart.png', mediaType: 'image/png', bytes: 68,
@@ -68,6 +68,126 @@ describe('chat failures', () => {
 })
 
 describe('session context', () => {
+  it('uses the live DeepSeek model list when the API is configured', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const providerSettings = {
+      getProvider: vi.fn(() => ({ id: 'deepseek-official', apiKey: 'sk-test', name: 'DeepSeek' })),
+      statuses: vi.fn(() => []),
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-pro' }, { id: 'deepseek-future' }] }),
+    })))
+    const service = new MindMeshServices(db, {} as DeepSeekHarnessAdapter,
+      providerSettings as unknown as ModelProviderSettings, () => undefined)
+    try {
+      expect((await service.models()).filter((item) => item.provider === 'deepseek-official'))
+        .toEqual([
+          { provider: 'deepseek-official', id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1_000_000 },
+          { provider: 'deepseek-official', id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1_000_000 },
+          { provider: 'deepseek-official', id: 'deepseek-future', name: 'deepseek-future' },
+        ])
+    } finally { db.close(); vi.unstubAllGlobals() }
+  })
+
+  it('refreshes the DeepSeek balance after a completed answer', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'session' })
+    const providerSettings = {
+      getProvider: vi.fn(() => ({ id: 'deepseek-official', apiKey: 'sk-test', name: 'DeepSeek' })),
+      statuses: vi.fn(() => [{ id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API', configured: true, source: 'saved' }]),
+    }
+    const request = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ is_available: true, balance_infos: [{ currency: 'CNY', total_balance: '88.50', granted_balance: '8.50', topped_up_balance: '80.00' }] }),
+    }))
+    vi.stubGlobal('fetch', request)
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      providerSettings as unknown as ModelProviderSettings, () => undefined)
+    try {
+      await service.sendPrivate(db.listAgents()[0].id, '你好')
+      await vi.waitFor(() => expect(request).toHaveBeenCalledWith('https://api.deepseek.com/user/balance', expect.anything()))
+      expect(service.modelProviders()[0].balance?.items[0]).toMatchObject({ currency: 'CNY', total: '88.50' })
+    } finally { db.close(); vi.unstubAllGlobals() }
+  })
+
+  it('routes a turn through the selected model and permission ceiling', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'selected-session' })
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const initial = db.listAgents()[0]
+      db.updateAgent(initial.id, { ...initial, tools: ['网页搜索', '文件', 'Shell'] })
+      await (service.sendPrivate as unknown as (...args: unknown[]) => Promise<Message[]>)(
+        initial.id, '限制权限', [], { model: 'deepseek-v4-pro', permission: 'workspace' },
+      )
+
+      expect(run.mock.calls[0][0]).toMatchObject({
+        model: 'deepseek-v4-pro',
+        tools: ['网页搜索', '文件'],
+      })
+      await service.sendPrivate(initial.id, '恢复权限', [], { model: 'deepseek-v4-pro', permission: 'full' })
+      expect(run.mock.calls[1][0].tools).toEqual(['网页搜索', '文件', 'Shell'])
+    } finally { db.close() }
+  })
+
+  it('rejects a model override that was not returned by the DeepSeek model catalog', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn()
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      await expect(service.sendPrivate(db.listAgents()[0].id, '你好', [], {
+        model: 'deepseek-made-up', permission: 'full',
+      })).rejects.toThrow('DeepSeek 模型不可用')
+      expect(run).not.toHaveBeenCalled()
+    } finally { db.close() }
+  })
+
+  it('replays private history when switching models restarts the runtime session', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn()
+      .mockResolvedValueOnce({ text: '旧回复', sessionId: 'old-session' })
+      .mockResolvedValueOnce({ text: '新回复', sessionId: 'new-session' })
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const agentId = db.listAgents()[0].id
+      await service.sendPrivate(agentId, '旧问题')
+      await service.sendPrivate(agentId, '新问题', [], { model: 'deepseek-v4-pro', permission: 'full' })
+      expect(run.mock.calls[1][1]).toContain('旧问题')
+      expect(run.mock.calls[1][1]).toContain('旧回复')
+      expect(run.mock.calls[1][1]).toContain('新问题')
+    } finally { db.close() }
+  })
+
+  it('keeps the newest result when DeepSeek balance refreshes finish out of order', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const providerSettings = {
+      getProvider: vi.fn(() => ({ id: 'deepseek-official', apiKey: 'sk-test', name: 'DeepSeek' })),
+      statuses: vi.fn(() => [{ id: 'deepseek-official', name: 'DeepSeek', description: '', configured: true, source: 'saved' }]),
+    }
+    let resolveFirst!: (value: unknown) => void
+    let resolveSecond!: (value: unknown) => void
+    vi.stubGlobal('fetch', vi.fn()
+      .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve })))
+    const response = (total: string) => ({ ok: true, json: async () => ({ is_available: true,
+      balance_infos: [{ currency: 'CNY', total_balance: total, granted_balance: '0.00', topped_up_balance: total }] }) })
+    const service = new MindMeshServices(db, {} as DeepSeekHarnessAdapter,
+      providerSettings as unknown as ModelProviderSettings, () => undefined)
+    try {
+      const first = service.refreshModelProviders()
+      const second = service.refreshModelProviders()
+      resolveSecond(response('20.00'))
+      await second
+      resolveFirst(response('10.00'))
+      await first
+      expect(service.modelProviders()[0].balance?.items[0].total).toBe('20.00')
+    } finally { db.close(); vi.unstubAllGlobals() }
+  })
+
   it('sends image attachments only through a DeepSeek Flash route', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '看到了图片', sessionId: 'session' })

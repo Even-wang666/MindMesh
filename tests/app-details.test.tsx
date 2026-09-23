@@ -3,11 +3,11 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Agent, ChatDelta, ChatProgress, Message, MindMeshApi, Space } from '../src/shared/contracts'
+import type { Agent, ChatDelta, ChatProgress, Message, MindMeshApi, ModelProviderStatus, Space } from '../src/shared/contracts'
 import { createSkillReference } from '../src/shared/skill-reference'
 import { App } from '../src/renderer/src/App'
 
-afterEach(cleanup)
+afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 beforeEach(() => { Element.prototype.scrollIntoView = vi.fn() })
 
 const agent: Agent = {
@@ -145,6 +145,51 @@ describe('local file workspace', () => {
   })
 })
 
+describe('model provider balance', () => {
+  it('shows the configured DeepSeek balance in settings', async () => {
+    const api = mockApi()
+    api.settings.modelProviders = vi.fn(async () => ([{
+      id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API',
+      configured: true, source: 'saved',
+      balance: {
+        available: true, updatedAt: '2026-09-23T12:30:00.000Z',
+        items: [{ currency: 'CNY', total: '110.00', granted: '10.00', toppedUp: '100.00' }],
+      },
+    }] as ModelProviderStatus[]))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+
+    expect(await screen.findByText('¥110.00')).toBeInTheDocument()
+    expect(screen.getByText('CNY')).toBeInTheDocument()
+  })
+
+  it('refreshes the model catalog after saving a provider', async () => {
+    const api = mockApi()
+    const unconfigured: ModelProviderStatus[] = [{
+      id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API',
+      configured: false, source: null,
+    }]
+    const configured: ModelProviderStatus[] = [{
+      id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API',
+      configured: true, source: 'saved',
+    }]
+    api.settings.modelProviders = vi.fn(async () => unconfigured)
+    api.settings.saveModelProvider = vi.fn(async () => configured)
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    await screen.findByText('DeepSeek 官方 API')
+    fireEvent.click(screen.getByRole('button', { name: '连接' }))
+    fireEvent.change(await screen.findByPlaceholderText(/sk-0123456789/), { target: { value: `sk-${'a'.repeat(30)}` } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(api.settings.saveModelProvider).toHaveBeenCalledOnce())
+    await waitFor(() => expect(api.catalog.models).toHaveBeenCalledTimes(2))
+  })
+})
+
 describe('user profile', () => {
   it('saves the nickname and avatar and shows them on existing user messages', async () => {
     const api = mockApi()
@@ -269,6 +314,49 @@ describe('space background', () => {
 })
 
 describe('chat flow', () => {
+  it('selects the conversation model and permission from the composer', async () => {
+    const api = mockApi()
+    api.catalog.models = vi.fn(async () => [
+      { provider: 'deepseek-official', id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1_000_000 },
+      { provider: 'deepseek-official', id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1_000_000 },
+    ])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /选择模型/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'DeepSeek V4 Pro' }))
+    fireEvent.click(screen.getByRole('button', { name: /权限：允许完全访问/ }))
+    fireEvent.click(screen.getByRole('button', { name: '仅对话' }))
+    expect(screen.getByRole('button', { name: /上下文窗口/ })).toHaveAccessibleName(/1M/)
+    const input = screen.getByPlaceholderText('给 Researcher 发送消息…')
+    fireEvent.change(input, { target: { value: '使用新模型' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(api.chat.sendPrivate).toHaveBeenCalledWith(
+      agent.id, '使用新模型', [], { model: 'deepseek-v4-pro', permission: 'chat' },
+    ))
+  })
+
+  it('keeps non-DeepSeek conversations usable while model switching is unavailable', async () => {
+    const openAiAgent = { ...agent, provider: 'openai', model: 'gpt-4.1' }
+    const api = mockApi()
+    api.agents.list = vi.fn(async () => [openAiAgent])
+    api.catalog.models = vi.fn(async () => [
+      { provider: 'openai', id: 'gpt-4.1', name: 'GPT-4.1' },
+    ])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    expect(screen.getByRole('button', { name: /选择模型/ })).toBeDisabled()
+    fireEvent.change(input, { target: { value: '普通对话' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(api.chat.sendPrivate).toHaveBeenCalledWith(
+      agent.id, '普通对话', [], { permission: 'full' },
+    ))
+  })
+
   it('previews and sends a DeepSeek image without requiring text', async () => {
     const api = mockApi()
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
@@ -285,6 +373,7 @@ describe('chat flow', () => {
       agent.id,
       '',
       [expect.objectContaining({ type: 'image', name: 'chart.png', mediaType: 'image/png' })],
+      { model: 'deepseek-v4-flash', permission: 'full' },
     ))
   })
 
@@ -392,7 +481,9 @@ describe('chat flow', () => {
     fireEvent.click(screen.getByRole('button', { name: /数据分析师/ }))
     expect(input).toHaveValue('你好 @数据分析师 ')
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(api.chat.sendSpace).toHaveBeenCalledWith('space', '你好 @数据分析师'))
+    await waitFor(() => expect(api.chat.sendSpace).toHaveBeenCalledWith(
+      'space', '你好 @数据分析师', [], { model: 'deepseek-v4-flash', permission: 'full' },
+    ))
   })
 
   it('renders a sent user Markdown message as structured content', async () => {

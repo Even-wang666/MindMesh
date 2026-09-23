@@ -1,15 +1,22 @@
 import type { WebContents } from 'electron'
 import type {
-  ChatImageAttachment, CreateAgentInput, CreateSpaceInput, Message, ModelProviderId, RuntimeStatus, SaveModelProviderInput, UserProfile,
+  Agent, ChatImageAttachment, ChatRunOptions, CreateAgentInput, CreateSpaceInput, Message, ModelProviderId, ModelProviderStatus, RuntimeStatus, SaveModelProviderInput, UserProfile,
 } from '../shared/contracts'
 import { buildPrivatePrompt, buildSpacePrompt, parseMentions } from '../shared/domain'
-import { MODEL_CATALOG, supportsImageInput } from '../shared/model-providers'
+import { getModelContextWindow, MODEL_CATALOG, supportsImageInput } from '../shared/model-providers'
 import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter, getAgentCapabilityHash, SessionResumeUnsupportedError } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
 
 export class MindMeshServices {
   private runtimeFailed = false
+  private deepSeekBalance: ModelProviderStatus['balance']
+  private deepSeekBalanceError = false
+  private balanceRequestGeneration = 0
+  private deepSeekModelIds = new Set([
+    ...MODEL_CATALOG.filter((item) => item.provider === 'deepseek-official').map((item) => item.id),
+    'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp',
+  ])
 
   constructor(
     readonly db: MindMeshDatabase,
@@ -35,7 +42,14 @@ export class MindMeshServices {
   }
   updateSpaceContext = (id: string, context: string) => this.db.updateSpaceContext(id, context)
   messages = (scope: Message['scope'], scopeId: string) => this.db.listMessages(scope, scopeId)
-  modelProviders = () => this.providerSettings.statuses()
+  modelProviders = () => this.providerSettings.statuses().map((provider) => provider.id === 'deepseek-official'
+    ? { ...provider, balance: provider.configured ? this.deepSeekBalance : undefined,
+        balanceError: provider.configured ? this.deepSeekBalanceError : undefined }
+    : provider)
+  refreshModelProviders = async () => {
+    await this.refreshDeepSeekBalance()
+    return this.modelProviders()
+  }
   runtimeStatus = (): RuntimeStatus => {
     const status = this.harness.status()
     return this.runtimeFailed && status.state !== 'demo'
@@ -55,49 +69,78 @@ export class MindMeshServices {
   }
 
   async saveModelProvider(input: SaveModelProviderInput) {
-    const statuses = this.providerSettings.save(input)
+    this.providerSettings.save(input)
     await this.harness.shutdownAll()
     this.resetRuntimeFailure()
-    return statuses
+    await this.refreshDeepSeekBalance()
+    return this.modelProviders()
   }
 
   async removeModelProvider(id: ModelProviderId) {
-    const statuses = this.providerSettings.remove(id)
+    this.providerSettings.remove(id)
+    if (id === 'deepseek-official') {
+      this.balanceRequestGeneration += 1
+      this.deepSeekBalance = undefined
+      this.deepSeekBalanceError = false
+    }
     await this.harness.shutdownAll()
     this.resetRuntimeFailure()
-    return statuses
+    return this.modelProviders()
   }
 
-  models = () => {
+  models = async () => {
     const custom = this.providerSettings.statuses().find((provider) => provider.id === 'custom')
-    return custom?.model
+    const fallback = custom?.model
       ? [...MODEL_CATALOG, { provider: 'custom', id: custom.model, name: custom.model }]
       : MODEL_CATALOG
+    const provider = this.providerSettings.getProvider('deepseek-official')
+    if (!provider) return fallback
+    try {
+      const response = await fetch('https://api.deepseek.com/models', {
+        headers: { Authorization: `Bearer ${provider.apiKey}` }, signal: AbortSignal.timeout(5_000),
+      })
+      if (!response.ok) return fallback
+      const payload = await response.json() as { data?: Array<{ id?: unknown }> }
+      const live = payload.data?.flatMap((item) => {
+        if (typeof item.id !== 'string' || !/^[\w.-]{1,100}$/.test(item.id)) return []
+        const contextWindow = getModelContextWindow('deepseek-official', item.id)
+        return [{ provider: 'deepseek-official', id: item.id, name: displayDeepSeekModel(item.id),
+          ...(contextWindow ? { contextWindow } : {}) }]
+      }) ?? []
+      if (live.length > 0) this.deepSeekModelIds = new Set([
+        ...live.map((item) => item.id), 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp',
+      ])
+      return live.length > 0 ? [...fallback.filter((item) => item.provider !== 'deepseek-official'), ...live] : fallback
+    } catch { return fallback }
   }
 
-  async sendPrivate(agentId: string, content: string, attachments: ChatImageAttachment[] = []): Promise<Message[]> {
+  async sendPrivate(agentId: string, content: string, attachments: ChatImageAttachment[] = [], options?: ChatRunOptions): Promise<Message[]> {
     const agent = this.db.getAgent(agentId)
     if (!agent) throw new Error('智能体不存在')
-    const images = validateImageAttachments(agent.provider, agent.model, attachments)
+    const runAgent = resolveRunAgent(agent, options, this.deepSeekModelIds)
+    const images = validateImageAttachments(runAgent.provider, runAgent.model, attachments)
     const promptContent = content.trim() || '请分析附带的图片。'
     const contextKey = `private:${agentId}`
     let session = this.db.getOrCreateRuntimeSession(
-      contextKey, agent, `private-${agentId}`, getAgentCapabilityHash(agent),
+      contextKey, runAgent, `private-${agentId}`, getAgentCapabilityHash(runAgent),
     )
-    if (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model)) {
+    let restarted = false
+    if ((options && getAgentCapabilityHash(session.agent) !== getAgentCapabilityHash(runAgent))
+      || (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model))) {
       session = this.db.restartRuntimeSession(
-        contextKey, agent, `private-${agentId}-${crypto.randomUUID()}`, getAgentCapabilityHash(agent),
+        contextKey, runAgent, `private-${agentId}-${crypto.randomUUID()}`, getAgentCapabilityHash(runAgent),
       )
+      restarted = true
     }
     this.db.addMessage({ scope: 'private', scopeId: agentId, authorType: 'user', authorName: this.db.getUserProfile().name, content, attachments: images })
+    const history = this.db.listMessages('private', agentId).slice(-31, -1)
     const requestId = crypto.randomUUID()
     this.emitProgress('private', agentId, session.agent.name)
     let result
     try {
-      result = await this.runAgent(session.agent, buildPrivatePrompt(session.agent, promptContent),
+      result = await this.runAgent(session.agent, buildPrivatePrompt(session.agent, promptContent, restarted ? history : []),
         session.harnessSessionId, 'private', agentId, requestId,
-        () => buildPrivatePrompt(session.agent, promptContent,
-          this.db.listMessages('private', agentId).slice(-31, -1)), images)
+        () => buildPrivatePrompt(session.agent, promptContent, history), images)
     } catch (error) {
       this.recordRuntimeError('private', agent.id, error)
       this.db.addMessage({
@@ -111,16 +154,18 @@ export class MindMeshServices {
       authorName: session.agent.name, content: result.text, reasoning: result.reasoning,
     })
     this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, 0)
+    void this.refreshDeepSeekBalance()
     return this.db.listMessages('private', agentId)
   }
 
-  async sendSpace(spaceId: string, content: string, attachments: ChatImageAttachment[] = []): Promise<Message[]> {
+  async sendSpace(spaceId: string, content: string, attachments: ChatImageAttachment[] = [], options?: ChatRunOptions): Promise<Message[]> {
     const space = this.db.getSpace(spaceId)
     if (!space) throw new Error('协作空间不存在')
     const members = space.memberIds.map((id) => this.db.getAgent(id)).filter((agent) => agent !== undefined)
     const mentioned = parseMentions(content, members)
-    const attachmentRoutes = mentioned.length > 0
-      ? mentioned
+    const runAgents = mentioned.map((agent) => resolveRunAgent(agent, options, this.deepSeekModelIds))
+    const attachmentRoutes = runAgents.length > 0
+      ? runAgents
       : members.filter((agent) => supportsImageInput(agent.provider, agent.model)).slice(0, 1)
     const images = attachmentRoutes.length > 0
       ? attachmentRoutes.reduce((current, agent) => validateImageAttachments(agent.provider, agent.model, current), attachments)
@@ -134,16 +179,18 @@ export class MindMeshServices {
       return this.db.listMessages('space', spaceId)
     }
 
-    for (const agent of mentioned) {
+    for (const runAgent of runAgents) {
+      const agent = members.find((item) => item.id === runAgent.id)!
       const contextKey = `space:${spaceId}:${agent.id}`
       let session = this.db.getOrCreateRuntimeSession(
-        contextKey, agent, `space-${spaceId}-${agent.id}`, getAgentCapabilityHash(agent),
+        contextKey, runAgent, `space-${spaceId}-${agent.id}`, getAgentCapabilityHash(runAgent),
         this.db.lastAgentMessageSequence(spaceId, agent.id),
       )
-      if (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model)) {
+      if ((options && getAgentCapabilityHash(session.agent) !== getAgentCapabilityHash(runAgent))
+        || (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model))) {
         session = this.db.restartRuntimeSession(
-          contextKey, agent, `space-${spaceId}-${agent.id}-${crypto.randomUUID()}`,
-          getAgentCapabilityHash(agent), 0,
+          contextKey, runAgent, `space-${spaceId}-${agent.id}-${crypto.randomUUID()}`,
+          getAgentCapabilityHash(runAgent), 0,
         )
       }
       const visibleMessages = this.db.listMessagesSince('space', spaceId,
@@ -168,8 +215,45 @@ export class MindMeshServices {
         authorName: session.agent.name, content: result.text, reasoning: result.reasoning,
       })
       this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, reply.sequence)
+      void this.refreshDeepSeekBalance()
     }
     return this.db.listMessages('space', spaceId)
+  }
+
+  private async refreshDeepSeekBalance(): Promise<void> {
+    if (typeof this.providerSettings.getProvider !== 'function') return
+    const generation = ++this.balanceRequestGeneration
+    const provider = this.providerSettings.getProvider('deepseek-official')
+    if (!provider) {
+      if (generation === this.balanceRequestGeneration) {
+        this.deepSeekBalance = undefined
+        this.deepSeekBalanceError = false
+      }
+      return
+    }
+    try {
+      const response = await fetch('https://api.deepseek.com/user/balance', {
+        headers: { Authorization: `Bearer ${provider.apiKey}` }, signal: AbortSignal.timeout(5_000),
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const payload = await response.json() as { is_available?: unknown; balance_infos?: unknown }
+      if (typeof payload.is_available !== 'boolean' || !Array.isArray(payload.balance_infos)) throw new Error('Invalid balance payload')
+      const items = payload.balance_infos.flatMap((value) => {
+        if (!value || typeof value !== 'object') return []
+        const item = value as Record<string, unknown>
+        if ((item.currency !== 'CNY' && item.currency !== 'USD')
+          || ![item.total_balance, item.granted_balance, item.topped_up_balance]
+            .every((amount) => typeof amount === 'string' && /^\d+(?:\.\d+)?$/.test(amount))) return []
+        return [{ currency: item.currency as 'CNY' | 'USD', total: item.total_balance as string,
+          granted: item.granted_balance as string, toppedUp: item.topped_up_balance as string }]
+      })
+      if (generation === this.balanceRequestGeneration) {
+        this.deepSeekBalance = { available: payload.is_available, updatedAt: new Date().toISOString(), items }
+        this.deepSeekBalanceError = false
+      }
+    } catch {
+      if (generation === this.balanceRequestGeneration) this.deepSeekBalanceError = true
+    }
   }
 
   private recordRuntimeError(scope: 'private' | 'space', agentId: string, error: unknown): void {
@@ -269,4 +353,27 @@ function matchesImageSignature(bytes: Buffer, mediaType: ChatImageAttachment['me
   if (mediaType === 'image/jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
   if (mediaType === 'image/gif') return bytes.subarray(0, 6).toString('ascii') === 'GIF87a' || bytes.subarray(0, 6).toString('ascii') === 'GIF89a'
   return bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+}
+
+function resolveRunAgent(agent: Agent, options: ChatRunOptions | undefined, deepSeekModelIds: ReadonlySet<string>): Agent {
+  if (options === undefined) return agent
+  if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error('对话选项无效')
+  const permission = options.permission ?? 'full'
+  if (!['chat', 'workspace', 'full'].includes(permission)) throw new Error('权限级别无效')
+  const model = options.model ?? agent.model
+  if (typeof model !== 'string' || !/^[\w.:-]{1,100}$/.test(model)) throw new Error('模型 ID 无效')
+  if (options.model !== undefined) {
+    if (agent.provider !== 'deepseek-official') throw new Error('目前仅支持切换 DeepSeek 模型')
+    if (!deepSeekModelIds.has(model)) throw new Error('DeepSeek 模型不可用，请刷新模型列表')
+  }
+  const tools = permission === 'chat' ? [] : permission === 'workspace'
+    ? agent.tools.filter((tool) => tool !== 'Shell')
+    : agent.tools
+  return { ...agent, model, tools }
+}
+
+function displayDeepSeekModel(model: string): string {
+  if (model === 'deepseek-flash') return 'DeepSeek V4.1 Flash'
+  if (model === 'deepseek-v4-pro') return 'DeepSeek V4 Pro'
+  return model
 }

@@ -29,6 +29,15 @@ export type ChatImageAttachment = {
   bytes: number
 }
 
+export type ChatPermission = 'chat' | 'workspace' | 'full'
+
+export type ChatRunOptions = {
+  model?: string
+  permission?: ChatPermission
+}
+
+export type ModelOption = { provider: string; id: string; name: string; contextWindow?: number }
+
 export type Message = {
   id: string
   scope: 'private' | 'space'
@@ -61,6 +70,12 @@ export type ModelProviderStatus = {
   source: 'saved' | 'environment' | null
   baseUrl?: string
   model?: string
+  balance?: {
+    available: boolean
+    updatedAt: string
+    items: Array<{ currency: 'CNY' | 'USD'; total: string; granted: string; toppedUp: string }>
+  }
+  balanceError?: boolean
 }
 
 export type SaveModelProviderInput = {
@@ -101,15 +116,15 @@ export type MindMeshApi = {
   }
   chat: {
     messages(scope: Message['scope'], scopeId: string): Promise<Message[]>
-    sendPrivate(agentId: string, content: string, attachments?: ChatImageAttachment[]): Promise<Message[]>
-    sendSpace(spaceId: string, content: string, attachments?: ChatImageAttachment[]): Promise<Message[]>
+    sendPrivate(agentId: string, content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions): Promise<Message[]>
+    sendSpace(spaceId: string, content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions): Promise<Message[]>
     onDelta(listener: (event: ChatDelta) => void): () => void
     onProgress(listener: (event: ChatProgress) => void): () => void
   }
   catalog: {
     skills(): Promise<Array<{ id: string; name: string; description: string; status: string }>>
     tools(): Promise<Array<{ id: string; name: string; description: string; status: string }>>
-    models(): Promise<Array<{ provider: string; id: string; name: string }>>
+    models(): Promise<ModelOption[]>
   }
   runtime: {
     status(): Promise<RuntimeStatus>

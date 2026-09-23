@@ -7,11 +7,11 @@ import {
   Plus, Search, Send, Settings, ShieldCheck, Sparkles, Trash2, Wrench, X,
 } from 'lucide-react'
 import type {
-  Agent, ChatImageAttachment, ChatImageMediaType, ChatProgress, CreateAgentInput, Message, ModelProviderId, ModelProviderStatus, RuntimeStatus,
+  Agent, ChatImageAttachment, ChatImageMediaType, ChatPermission, ChatProgress, ChatRunOptions, CreateAgentInput, Message, ModelOption, ModelProviderId, ModelProviderStatus, RuntimeStatus,
   SaveModelProviderInput, Space, UserProfile,
 } from '../../shared/contracts'
 import {
-  getModelProviderApiKeyError, getModelProviderDefinition, MODEL_PROVIDER_DEFINITIONS, supportsImageInput,
+  getModelContextWindow, getModelProviderApiKeyError, getModelProviderDefinition, MODEL_PROVIDER_DEFINITIONS, supportsImageInput,
 } from '../../shared/model-providers'
 import { parseMentions } from '../../shared/domain'
 import { createSkillReference, skillDisplayName } from '../../shared/skill-reference'
@@ -22,8 +22,6 @@ import kimiLogo from './assets/providers/kimi.png'
 import openaiLogo from './assets/providers/openai.svg'
 
 type View = 'chats' | 'spaces' | 'agents' | 'skills' | 'tools' | 'settings'
-type ModelOption = { provider: string; id: string; name: string }
-
 const providerLogos: Partial<Record<ModelProviderId, string>> = {
   'deepseek-official': deepseekLogo,
   'moonshotai-cn': kimiLogo,
@@ -32,7 +30,7 @@ const providerLogos: Partial<Record<ModelProviderId, string>> = {
 }
 
 const defaultAgent: CreateAgentInput = {
-  name: '', role: '', persona: '', provider: 'deepseek-official', model: 'deepseek-v4-flash', skills: [], tools: [],
+  name: '', role: '', persona: '', provider: 'deepseek-official', model: 'deepseek-flash', skills: [], tools: [],
 }
 const defaultProfile: UserProfile = { name: '你', avatar: null }
 
@@ -45,6 +43,7 @@ export function App(): React.JSX.Element {
   const [messages, setMessages] = useState<Message[]>([])
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null)
   const [profile, setProfile] = useState<UserProfile>(defaultProfile)
+  const [models, setModels] = useState<ModelOption[]>([])
   const [agentWizard, setAgentWizard] = useState(false)
   const [spaceWizard, setSpaceWizard] = useState(false)
   const [editingSpaceId, setEditingSpaceId] = useState('')
@@ -77,7 +76,15 @@ export function App(): React.JSX.Element {
     setSelectedSpaceId((current) => nextSpaces.some((space) => space.id === current) ? current : nextSpaces[0]?.id || '')
   }
 
-  useEffect(() => { void refresh() }, [])
+  async function refreshModels(): Promise<void> {
+    try { setModels(await window.mindmesh.catalog.models()) }
+    catch { setModels([]) }
+  }
+
+  useEffect(() => {
+    void refresh()
+    void refreshModels()
+  }, [])
   function showLiveMessages(next: Message[]): void {
     setMessages((current) => {
       const known = new Set(current.map((message) => message.id))
@@ -119,7 +126,7 @@ export function App(): React.JSX.Element {
     return () => { active = false }
   }, [view, selectedAgentId, selectedSpaceId])
 
-  async function send(content: string, attachments: ChatImageAttachment[] = []): Promise<boolean> {
+  async function send(content: string, attachments: ChatImageAttachment[] = [], options: ChatRunOptions = {}): Promise<boolean> {
     if ((!content.trim() && attachments.length === 0) || busy) return true
     const scope = view === 'chats' ? 'private' : 'space'
     const id = view === 'chats' ? selectedAgentId : selectedSpaceId
@@ -137,13 +144,18 @@ export function App(): React.JSX.Element {
       setProgress({ scope, scopeId: id, agentName: selectedAgent.name })
     }
     try {
+      const runOptions = Object.keys(options).length > 0 ? options : undefined
       const result = scope === 'private'
-        ? attachments.length > 0
-          ? await window.mindmesh.chat.sendPrivate(id, content.trim(), attachments)
-          : await window.mindmesh.chat.sendPrivate(id, content.trim())
-        : attachments.length > 0
-          ? await window.mindmesh.chat.sendSpace(id, content.trim(), attachments)
-          : await window.mindmesh.chat.sendSpace(id, content.trim())
+        ? runOptions
+          ? await window.mindmesh.chat.sendPrivate(id, content.trim(), attachments, runOptions)
+          : attachments.length > 0
+            ? await window.mindmesh.chat.sendPrivate(id, content.trim(), attachments)
+            : await window.mindmesh.chat.sendPrivate(id, content.trim())
+        : runOptions
+          ? await window.mindmesh.chat.sendSpace(id, content.trim(), attachments, runOptions)
+          : attachments.length > 0
+            ? await window.mindmesh.chat.sendSpace(id, content.trim(), attachments)
+            : await window.mindmesh.chat.sendSpace(id, content.trim())
       if (conversationRef.current === requestConversation) {
         showLiveMessages(result)
         setStreamingText('')
@@ -208,11 +220,11 @@ export function App(): React.JSX.Element {
       <section className={hasList ? 'content has-list' : 'content'}>
         {view === 'chats' && (
           selectedAgent
-            ? <ChatPanel key={selectedAgent.id} title={selectedAgent.name} subtitle={selectedAgent.role} canAttach={supportsImageInput(selectedAgent.provider, selectedAgent.model)} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
+            ? <ChatPanel key={selectedAgent.id} agent={selectedAgent} models={models} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
             : <EmptyState onCreate={() => setAgentWizard(true)} />
         )}
         {view === 'spaces' && (selectedSpace ? (
-          <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onEdit={() => setEditingSpaceId(selectedSpace.id)} onRemove={async (id) => { await window.mindmesh.spaces.remove(id); await refresh() }} onUpdateContext={async (id, context) => {
+          <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} models={models} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onEdit={() => setEditingSpaceId(selectedSpace.id)} onRemove={async (id) => { await window.mindmesh.spaces.remove(id); await refresh() }} onUpdateContext={async (id, context) => {
             const updated = await window.mindmesh.spaces.updateContext(id, context)
             setSpaces((current) => current.map((space) => space.id === id ? updated : space))
           }} />
@@ -220,7 +232,7 @@ export function App(): React.JSX.Element {
         {view === 'agents' && <AgentsPage agents={agents} onCreate={() => setAgentWizard(true)} onDetail={setDetailAgentId} />}
         {view === 'skills' && <CatalogPage kind="skills" />}
         {view === 'tools' && <CatalogPage kind="tools" />}
-        {view === 'settings' && <SettingsPage runtime={runtime} profile={profile} busy={busy} onProfileChange={setProfile} onRuntimeChange={setRuntime} />}
+        {view === 'settings' && <SettingsPage runtime={runtime} profile={profile} busy={busy} onProfileChange={setProfile} onRuntimeChange={setRuntime} onProviderChange={refreshModels} />}
       </section>
       {agentWizard && <AgentWizard onClose={() => setAgentWizard(false)} onSaved={async () => { setAgentWizard(false); await refresh() }} />}
       {editingAgentId && <AgentWizard initialAgent={agents.find((item) => item.id === editingAgentId)} onClose={() => setEditingAgentId('')} onSaved={async () => { setEditingAgentId(''); await refresh() }} />}
@@ -543,17 +555,19 @@ function ObjectList(props: {
   )
 }
 
-function ChatPanel({ title, subtitle, canAttach, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onDetail }: {
-  title: string; subtitle: string; canAttach: boolean; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
-  onSend: (content: string, attachments?: ChatImageAttachment[]) => Promise<boolean>; onDetail: () => void
+function ChatPanel({ agent, models, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onDetail }: {
+  agent: Agent; models: ModelOption[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
+  onSend: (content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions) => Promise<boolean>; onDetail: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState('')
+  const [model, setModel] = useState(agent.model)
+  const availableModels = modelsForProvider(agent.provider, model, agent.model, models)
   return (
     <div className="page chat-page">
       <header className="chat-header">
         <div className="chat-header-main">
-          <Avatar name={title} />
-          <div><h1>{title}</h1><p>{subtitle}</p></div>
+          <Avatar name={agent.name} />
+          <div><h1>{agent.name}</h1><p>{agent.role}</p></div>
         </div>
         <button className="ghost-button" onClick={onDetail}>查看详情 <ChevronRight size={15} /></button>
       </header>
@@ -568,14 +582,14 @@ function ChatPanel({ title, subtitle, canAttach, messages, profile, busy, progre
         starters={['介绍一下你自己', '帮我梳理一个思路', '你能做些什么？']}
         onStarter={setDraft}
       />
-      <Composer busy={busy} canAttach={canAttach} placeholder={`给 ${title} 发送消息…`} value={draft} onChange={setDraft} onSend={onSend} />
+      <Composer busy={busy} canAttach={supportsImageInput(agent.provider, model)} placeholder={`给 ${agent.name} 发送消息…`} value={draft} onChange={setDraft} onSend={onSend} messages={messages} provider={agent.provider} model={model} models={availableModels} onModelChange={agent.provider === 'deepseek-official' ? setModel : undefined} />
     </div>
   )
 }
 
-function SpacePanel({ space, agents, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onEdit, onRemove, onUpdateContext }: {
-  space: Space; agents: Agent[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
-  onSend: (content: string, attachments?: ChatImageAttachment[]) => Promise<boolean>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
+function SpacePanel({ space, agents, models, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onEdit, onRemove, onUpdateContext }: {
+  space: Space; agents: Agent[]; models: ModelOption[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
+  onSend: (content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions) => Promise<boolean>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
 }): React.JSX.Element {
   const members = agents.filter((agent) => space.memberIds.includes(agent.id))
   const [draft, setDraft] = useState('')
@@ -587,8 +601,15 @@ function SpacePanel({ space, agents, messages, profile, busy, progress, streamin
   const [removeError, setRemoveError] = useState('')
   const [removing, setRemoving] = useState(false)
   const attachmentTargets = parseMentions(draft, members)
+  const routeTargets = attachmentTargets.length > 0 ? attachmentTargets : members.slice(0, 1)
+  const routeAgent = routeTargets[0]
+  const [model, setModel] = useState(routeAgent?.model ?? '')
+  useEffect(() => { setModel(routeAgent?.model ?? '') }, [routeAgent?.id])
+  const canSelectModel = routeTargets.length > 0
+    && routeTargets.every((agent) => agent.provider === 'deepseek-official')
+  const availableModels = modelsForProvider(routeAgent?.provider, model, routeAgent?.model, models)
   const canAttach = attachmentTargets.length > 0
-    ? attachmentTargets.every((agent) => supportsImageInput(agent.provider, agent.model))
+    ? attachmentTargets.every((agent) => supportsImageInput(agent.provider, canSelectModel ? model : agent.model))
     : members.some((agent) => supportsImageInput(agent.provider, agent.model))
   async function remove(): Promise<void> {
     if (!window.confirm(`确定删除协作空间「${space.name}」吗？空间及其聊天消息会从应用中删除。`)) return
@@ -613,7 +634,7 @@ function SpacePanel({ space, agents, messages, profile, busy, progress, streamin
     <div className="page space-page">
       <header className="chat-header"><div className="chat-header-main"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p></div></div><div className="space-header-actions"><button className="ghost-button drawer-toggle" disabled={removing} aria-expanded={drawerOpen} onClick={() => setDrawerOpen((open) => !open)}>编辑空间 <ChevronRight size={15} /></button></div></header>
       <div className="space-layout">
-        <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} starters={['先让每位成员给出一版方案', '统一背景信息后再开始讨论']} onStarter={setDraft} /><Composer busy={busy} canAttach={canAttach} placeholder="@智能体 输入消息…" members={members} value={draft} onChange={setDraft} onSend={onSend} /></div>
+        <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} starters={['先让每位成员给出一版方案', '统一背景信息后再开始讨论']} onStarter={setDraft} /><Composer busy={busy} canAttach={canAttach} placeholder="@智能体 输入消息…" members={members} value={draft} onChange={setDraft} onSend={onSend} messages={messages} provider={routeAgent?.provider} model={model} models={availableModels} onModelChange={canSelectModel ? setModel : undefined} /></div>
         {drawerOpen && <aside className="context-drawer">
           <button className="secondary-button drawer-edit" disabled={busy || removing} onClick={onEdit}>编辑空间信息</button>
           <div className="drawer-section">
@@ -690,16 +711,28 @@ function MessageBody({ content, animated = false }: { content: string; animated?
 }
 
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024
+const PERMISSION_LABELS: Record<ChatPermission, string> = {
+  chat: '仅对话',
+  workspace: '允许工作区访问',
+  full: '允许完全访问',
+}
 
-function Composer({ busy, canAttach, placeholder, members = [], value, onChange, onSend }: {
+function Composer({ busy, canAttach, placeholder, members = [], value, onChange, onSend, messages, provider, model, models = [], onModelChange }: {
   busy: boolean; canAttach: boolean; placeholder: string; members?: Agent[]; value: string
   onChange: React.Dispatch<React.SetStateAction<string>>
-  onSend: (value: string, attachments?: ChatImageAttachment[]) => Promise<boolean>
+  onSend: (value: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions) => Promise<boolean>
+  messages: Message[]; provider?: string; model?: string; models?: ModelOption[]; onModelChange?: (model: string) => void
 }): React.JSX.Element {
   const [attachments, setAttachments] = useState<ChatImageAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState('')
   const [dragging, setDragging] = useState(false)
+  const [permission, setPermission] = useState<ChatPermission>('full')
+  const [openMenu, setOpenMenu] = useState<'permission' | 'model' | 'context' | null>(null)
   const input = useRef<HTMLInputElement>(null)
+  const selectedModel = models.find((item) => item.id === model)
+  const contextWindow = selectedModel?.contextWindow ?? getModelContextWindow(provider ?? '', model ?? '')
+  const estimatedTokens = estimateContextTokens(messages, value)
+  const contextPercent = contextWindow ? Math.min(100, estimatedTokens / contextWindow * 100) : 0
   const mention = /@([\p{L}\p{N}_-]*)$/u.exec(value)
   const matchingMembers = mention ? members.filter((agent) => agent.name.toLowerCase().startsWith(mention[1].toLowerCase())) : []
   const addFiles = useCallback(async (files: FileList | File[]): Promise<void> => {
@@ -772,7 +805,7 @@ function Composer({ busy, canAttach, placeholder, members = [], value, onChange,
     if (busy || (!current.trim() && currentAttachments.length === 0) || (currentAttachments.length > 0 && !canAttach)) return
     onChange('')
     setAttachments([])
-    if (!await onSend(current, currentAttachments)) {
+    if (!await onSend(current, currentAttachments, onModelChange && model ? { model, permission } : { permission })) {
       onChange((draft) => draft || current)
       setAttachments((draft) => draft.length > 0 ? draft : currentAttachments)
     }
@@ -786,8 +819,25 @@ function Composer({ busy, canAttach, placeholder, members = [], value, onChange,
         <textarea value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit() } }} placeholder={placeholder} />
         {attachmentError && <p className="composer-error" role="alert">{attachmentError}</p>}
         <div className="composer-actions">
-          <div className="composer-tools"><input ref={input} className="visually-hidden" aria-label="选择图片" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => { if (event.target.files) void addFiles(event.target.files); event.target.value = '' }} /><button type="button" className="composer-add" aria-label="添加图片" title={canAttach ? '添加图片' : '目前仅 DeepSeek Flash 支持图片输入'} disabled={busy || !canAttach} onClick={() => input.current?.click()}><Plus size={19} /></button><span className="composer-hint"><Command size={13} /><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd> + <kbd>Enter</kbd> 换行</span></div>
-          <button className="send-button" aria-label="发送" disabled={busy || (!value.trim() && attachments.length === 0) || (attachments.length > 0 && !canAttach)} onClick={() => void submit()}>{busy ? <span className="spinner" /> : <Send size={17} />}</button>
+          <div className="composer-tools">
+            <input ref={input} className="visually-hidden" aria-label="选择图片" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => { if (event.target.files) void addFiles(event.target.files); event.target.value = '' }} />
+            <button type="button" className="composer-add" aria-label="添加图片" title={canAttach ? '添加图片' : '目前仅 DeepSeek Flash 支持图片输入'} disabled={busy || !canAttach} onClick={() => input.current?.click()}><Plus size={19} /></button>
+            <div className="composer-control-wrap">
+              <button type="button" className={`composer-control permission ${permission !== 'full' ? 'limited' : ''}`} aria-label={`权限：${PERMISSION_LABELS[permission]}`} aria-expanded={openMenu === 'permission'} onClick={() => setOpenMenu((current) => current === 'permission' ? null : 'permission')}><ShieldCheck size={15} />{PERMISSION_LABELS[permission]}<ChevronRight size={13} /></button>
+              {openMenu === 'permission' && <div className="composer-menu permission-menu">{(Object.keys(PERMISSION_LABELS) as ChatPermission[]).map((item) => <button type="button" key={item} aria-label={PERMISSION_LABELS[item]} className={item === permission ? 'selected' : ''} onClick={() => { setPermission(item); setOpenMenu(null) }}><strong>{PERMISSION_LABELS[item]}</strong><small>{item === 'chat' ? '不使用本地工具' : item === 'workspace' ? '允许文件和网页，不运行 Shell' : '使用智能体已配置的全部工具'}</small></button>)}</div>}
+            </div>
+          </div>
+          <div className="composer-route-controls">
+            <div className="composer-control-wrap">
+              <button type="button" className="context-meter" aria-label={`上下文窗口：约 ${formatTokenCount(estimatedTokens)} / ${contextWindow ? formatTokenCount(contextWindow) : '未知'}`} aria-expanded={openMenu === 'context'} onClick={() => setOpenMenu((current) => current === 'context' ? null : 'context')}><span style={{ '--context-progress': `${contextWindow ? Math.max(2, contextPercent) : 2}%` } as React.CSSProperties} /></button>
+              {openMenu === 'context' && <div className="composer-menu context-menu"><strong>上下文窗口</strong><span>约 {formatTokenCount(estimatedTokens)} / {contextWindow ? formatTokenCount(contextWindow) : '未知'}</span><small>{contextWindow ? '根据当前会话文本估算，实际用量以 API 计费为准。' : '该模型未公布上下文上限；当前用量按会话文本估算。'}</small></div>}
+            </div>
+            <div className="composer-control-wrap">
+              <button type="button" className="composer-control model" aria-label={`选择模型，当前 ${selectedModel?.name ?? '成员模型'}`} aria-expanded={openMenu === 'model'} disabled={!onModelChange} onClick={() => setOpenMenu((current) => current === 'model' ? null : 'model')}>{provider && providerLogos[provider as ModelProviderId] && <img src={providerLogos[provider as ModelProviderId]} alt="" />}{selectedModel?.name ?? '成员模型'}<ChevronRight size={13} /></button>
+              {openMenu === 'model' && <div className="composer-menu model-menu">{models.map((item) => <button type="button" key={item.id} className={item.id === model ? 'selected' : ''} onClick={() => { onModelChange?.(item.id); setOpenMenu(null) }}>{item.name}</button>)}</div>}
+            </div>
+            <button className="send-button" aria-label="发送" disabled={busy || (!value.trim() && attachments.length === 0) || (attachments.length > 0 && !canAttach)} onClick={() => void submit()}>{busy ? <span className="spinner" /> : <Send size={17} />}</button>
+          </div>
         </div>
       </div>
     </div>
@@ -822,6 +872,33 @@ function readFileAsArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
     reader.onerror = () => reject(reader.error)
     reader.readAsArrayBuffer(blob)
   })
+}
+
+function displayModelName(model: string): string {
+  if (model === 'deepseek-v4-flash' || model === 'deepseek-v4-flash-vision-exp') return 'DeepSeek V4.1 Flash'
+  return model.split(/[-_]/).map((part) => part ? part[0].toUpperCase() + part.slice(1) : '').join(' ')
+}
+
+function modelsForProvider(provider: string | undefined, selectedModel: string, configuredModel: string | undefined, models: ModelOption[]): ModelOption[] {
+  if (!provider) return []
+  const available = models.filter((item) => item.provider === provider)
+  for (const id of [configuredModel, selectedModel]) {
+    if (id && !available.some((item) => item.id === id)) {
+      available.push({ provider, id, name: displayModelName(id), contextWindow: getModelContextWindow(provider, id) })
+    }
+  }
+  return available
+}
+
+function estimateContextTokens(messages: Message[], draft: string): number {
+  const characters = [...messages.map((message) => `${message.content}\n${message.reasoning ?? ''}`).join('\n'), ...draft].length
+  return Math.ceil(characters / 2)
+}
+
+function formatTokenCount(value: number): string {
+  if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(1))}M`
+  if (value >= 1_000) return `${Number((value / 1_000).toFixed(1))}K`
+  return String(value)
 }
 
 function EmptyState({ onCreate }: { onCreate: () => void }): React.JSX.Element {
@@ -881,12 +958,13 @@ function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: 
   return <section className="settings-section profile-section"><h2>个人资料</h2><div className="profile-form"><div className="profile-avatar"><Avatar name={draft.name} image={draft.avatar} large /><div><label className="secondary-button compact" htmlFor="profile-avatar-input">选择头像</label><input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => chooseAvatar(event.target.files?.[0])} />{draft.avatar && <button className="text-button" onClick={() => setDraft({ ...draft, avatar: null })}>移除头像</button>}<small>PNG、JPEG、WebP 或 GIF，最大 1 MB</small></div></div><label className="field"><span>展示昵称</span><input value={draft.name} maxLength={40} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button compact" disabled={saving || reading} onClick={() => void saveProfile()}>保存个人资料</button></div></section>
 }
 
-function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange }: {
+function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange, onProviderChange }: {
   runtime: RuntimeStatus | null
   profile: UserProfile
   busy: boolean
   onProfileChange: (profile: UserProfile) => void
   onRuntimeChange: (runtime: RuntimeStatus) => void
+  onProviderChange: () => Promise<void>
 }): React.JSX.Element {
   const [providers, setProviders] = useState<ModelProviderStatus[]>([])
   const [editing, setEditing] = useState<ModelProviderId | null>(null)
@@ -917,6 +995,7 @@ function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange
   async function refreshStatus(nextProviders: ModelProviderStatus[]): Promise<void> {
     setProviders(nextProviders)
     onRuntimeChange(await window.mindmesh.runtime.status())
+    await onProviderChange()
   }
 
   async function save(): Promise<void> {
@@ -988,7 +1067,7 @@ function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange
           <div className="provider-entry" key={provider.id}>
             <div className="setting-row provider-row">
               <ProviderLogo provider={provider.id} />
-              <div><strong>{provider.name}</strong><p>{provider.configured ? `${provider.description} 已连接，可以用于智能体对话。` : provider.description}</p></div>
+              <div><strong>{provider.name}</strong><p>{provider.configured ? `${provider.description} 已连接，可以用于智能体对话。` : provider.description}</p>{provider.id === 'deepseek-official' && provider.configured && <ProviderBalance status={provider} />}</div>
               <span className={`state-badge ${provider.configured ? '' : 'warn'}`}>{provider.configured ? '已配置' : '需要配置'}</span>
               <button className={provider.configured ? 'secondary-button compact' : 'primary-button compact'} onClick={() => openEditor(provider)}>
                 <KeyRound size={15} />{provider.configured ? '编辑' : '连接'}
@@ -1048,6 +1127,14 @@ function ProviderLogo({ provider }: { provider: ModelProviderId }): React.JSX.El
   return logo
     ? <span className={`provider-logo ${provider}`}><img src={logo} alt="" /></span>
     : <span className="provider-logo custom"><Plus size={19} /></span>
+}
+
+function ProviderBalance({ status }: { status: ModelProviderStatus }): React.JSX.Element {
+  if (status.balanceError) return <div className="provider-balance unavailable"><span>余额暂时无法获取</span></div>
+  if (!status.balance) return <div className="provider-balance"><span>余额查询中…</span></div>
+  return <div className="provider-balance"><span className={status.balance.available ? 'balance-dot' : 'balance-dot unavailable'} />{status.balance.items.length > 0
+    ? status.balance.items.map((item) => <strong key={item.currency}>{item.currency === 'CNY' ? '¥' : '$'}{item.total} <small>{item.currency}</small></strong>)
+    : <strong>{status.balance.available ? '可用' : '余额不足'}</strong>}<small>更新于 {new Date(status.balance.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</small></div>
 }
 
 function AgentWizard({ initialAgent, onClose, onSaved }: {

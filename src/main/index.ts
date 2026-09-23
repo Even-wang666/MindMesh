@@ -58,10 +58,10 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('spaces:remove', (_event, id) => current.removeSpace(id))
   ipcMain.handle('spaces:updateContext', (_event, id, context) => current.updateSpaceContext(id, context))
   ipcMain.handle('chat:messages', (_event, scope, scopeId) => current.messages(scope, scopeId))
-  ipcMain.handle('chat:sendPrivate', (_event, agentId, content, attachments) => current.sendPrivate(agentId, content, attachments))
-  ipcMain.handle('chat:sendSpace', (_event, spaceId, content, attachments) => current.sendSpace(spaceId, content, attachments))
+  ipcMain.handle('chat:sendPrivate', (_event, agentId, content, attachments, options) => current.sendPrivate(agentId, content, attachments, options))
+  ipcMain.handle('chat:sendSpace', (_event, spaceId, content, attachments, options) => current.sendSpace(spaceId, content, attachments, options))
   ipcMain.handle('runtime:status', () => current.runtimeStatus())
-  ipcMain.handle('settings:modelProviders', () => current.modelProviders())
+  ipcMain.handle('settings:modelProviders', () => current.refreshModelProviders())
   ipcMain.handle('settings:workspace', () => current.harness.workspacePath)
   ipcMain.handle('settings:chooseWorkspace', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
