@@ -183,7 +183,16 @@ export class MindMeshDatabase {
   }
 
   removeAgent(id: string): void {
-    this.db.prepare('DELETE FROM agents WHERE id = ?').run(id)
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare('DELETE FROM runtime_sessions WHERE contextKey = ? OR contextKey LIKE ?')
+        .run(`private:${id}`, `space:%:${id}`)
+      this.db.prepare('DELETE FROM agents WHERE id = ?').run(id)
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   listSpaces(): Space[] {

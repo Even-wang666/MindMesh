@@ -59,10 +59,7 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
     const path = realpathSync(result.filePaths[0])
     if (!statSync(path).isDirectory()) throw new Error('请选择文件夹')
     if (path === current.harness.workspacePath) return path
-    await current.harness.shutdownAll()
-    current.db.changeWorkspace(path)
-    current.harness.setWorkspace(path)
-    current.resetRuntimeFailure()
+    await current.changeWorkspace(path)
     return path
   })
   ipcMain.handle('settings:profile', () => current.userProfile())

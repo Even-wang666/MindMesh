@@ -22,11 +22,17 @@ export class MindMeshServices {
   listAgents = () => this.db.listAgents()
   createAgent = (input: CreateAgentInput) => this.db.createAgent(input)
   updateAgent = (id: string, input: CreateAgentInput) => this.db.updateAgent(id, input)
-  removeAgent = (id: string) => this.db.removeAgent(id)
+  removeAgent = async (id: string): Promise<void> => {
+    this.db.removeAgent(id)
+    await this.resetRuntimesAndCleanupHomes()
+  }
   listSpaces = () => this.db.listSpaces()
   createSpace = (input: CreateSpaceInput) => this.db.createSpace(input)
   updateSpace = (id: string, input: CreateSpaceInput) => this.db.updateSpace(id, input)
-  removeSpace = (id: string) => this.db.removeSpace(id)
+  removeSpace = async (id: string): Promise<void> => {
+    this.db.removeSpace(id)
+    await this.resetRuntimesAndCleanupHomes()
+  }
   updateSpaceContext = (id: string, context: string) => this.db.updateSpaceContext(id, context)
   messages = (scope: Message['scope'], scopeId: string) => this.db.listMessages(scope, scopeId)
   modelProviders = () => this.providerSettings.statuses()
@@ -39,6 +45,14 @@ export class MindMeshServices {
   resetRuntimeFailure = (): void => { this.runtimeFailed = false }
   userProfile = () => this.db.getUserProfile()
   saveUserProfile = (profile: UserProfile) => this.db.saveUserProfile(profile)
+
+  async changeWorkspace(path: string): Promise<void> {
+    await this.harness.shutdownAll()
+    this.db.changeWorkspace(path)
+    this.harness.setWorkspace(path)
+    this.cleanupUnusedHomes()
+    this.resetRuntimeFailure()
+  }
 
   async saveModelProvider(input: SaveModelProviderInput) {
     const statuses = this.providerSettings.save(input)
@@ -143,6 +157,16 @@ export class MindMeshServices {
     this.runtimeFailed = true
     try { this.onRuntimeError(scope, agentId, error) }
     catch { /* Logging must not replace the visible failure message. */ }
+  }
+
+  private async resetRuntimesAndCleanupHomes(): Promise<void> {
+    await this.harness.shutdownAll()
+    this.cleanupUnusedHomes()
+  }
+
+  private cleanupUnusedHomes(): void {
+    try { this.harness.cleanupUnusedHomes(this.db.referencedCapabilityHashes()) }
+    catch { /* Cache cleanup must not replace a successful data change. */ }
   }
 
   private async runAgent(
