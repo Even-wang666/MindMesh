@@ -192,7 +192,8 @@ export class DeepSeekHarnessAdapter {
   async stop(agent: Agent): Promise<boolean> {
     const key = this.runtimeKey(getAgentCapabilityHash(agent))
     const entry = this.runtimes.get(key)
-    if (!entry) return false
+    /* A runtime can be pooled by capability. Closing it is safe only when this is its sole turn. */
+    if (!entry || entry.active !== 1) return false
     this.runtimes.delete(key)
     await entry.harness.close()
     return true

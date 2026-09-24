@@ -13,7 +13,7 @@ export class MindMeshServices {
   private deepSeekBalance: ModelProviderStatus['balance']
   private deepSeekBalanceError = false
   private balanceRequestGeneration = 0
-  private readonly activeStops = new Map<string, () => Promise<void>>()
+  private readonly activeStops = new Map<string, () => Promise<boolean>>()
   private deepSeekModelIds = new Set([
     ...MODEL_CATALOG.filter((item) => item.provider === 'deepseek-official').map((item) => item.id),
     'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp',
@@ -47,8 +47,7 @@ export class MindMeshServices {
     if ((scope !== 'private' && scope !== 'space') || typeof scopeId !== 'string') return false
     const stop = this.activeStops.get(`${scope}:${scopeId}`)
     if (!stop) return false
-    await stop()
-    return true
+    return stop()
   }
   modelProviders = () => this.providerSettings.statuses().map((provider) => provider.id === 'deepseek-official'
     ? { ...provider, balance: provider.configured ? this.deepSeekBalance : undefined,
@@ -307,15 +306,22 @@ export class MindMeshServices {
   ): ReturnType<DeepSeekHarnessAdapter['run']> {
     let streamed = ''
     let streamedReasoning = ''
-    let stopped = false
+    let stopRequested = false
     const stopKey = `${scope}:${scopeId}`
-    const stop = async (): Promise<void> => {
-      stopped = true
-      await this.harness.stop(agent)
+    const stop = async (): Promise<boolean> => {
+      stopRequested = true
+      try {
+        const stopped = await this.harness.stop(agent)
+        if (!stopped) stopRequested = false
+        return stopped
+      } catch (error) {
+        stopRequested = false
+        throw error
+      }
     }
     this.activeStops.set(stopKey, stop)
     const run = (input: string, id: string) => this.harness.run(agent, input, id, (text, kind) => {
-      if (stopped) return
+      if (stopRequested) return
       if (kind === 'reasoning') streamedReasoning += text
       else streamed += text
       this.emitText(requestId, scope, scopeId, agent.id, text, kind)
@@ -324,20 +330,20 @@ export class MindMeshServices {
     try {
       result = await run(prompt, sessionId)
     } catch (error) {
-      if (stopped) throw new ChatStoppedError(streamed, streamedReasoning)
+      if (stopRequested) throw new ChatStoppedError(streamed, streamedReasoning)
       if (!(error instanceof SessionResumeUnsupportedError)) throw error
       streamed = ''
       streamedReasoning = ''
       try {
         result = await run(recoveryPrompt(), `session-${crypto.randomUUID()}`)
       } catch (recoveryError) {
-        if (stopped) throw new ChatStoppedError(streamed, streamedReasoning)
+        if (stopRequested) throw new ChatStoppedError(streamed, streamedReasoning)
         throw recoveryError
       }
     } finally {
       if (this.activeStops.get(stopKey) === stop) this.activeStops.delete(stopKey)
     }
-    if (stopped) throw new ChatStoppedError(streamed, streamedReasoning)
+    if (stopRequested) throw new ChatStoppedError(streamed, streamedReasoning)
     if (result.text.startsWith(streamed) && result.text.length > streamed.length) {
       this.emitText(requestId, scope, scopeId, agent.id, result.text.slice(streamed.length))
     }

@@ -581,8 +581,12 @@ describe('chat flow', () => {
 
   it('turns the send button into an enabled stop button while a reply is pending', async () => {
     const api = mockApi()
-    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>(() => undefined))
-    const stop = vi.fn(async () => true)
+    let notify!: (event: ChatDelta) => void
+    let resolveSend!: (messages: Message[]) => void
+    let resolveStop!: (stopped: boolean) => void
+    api.chat.onDelta = vi.fn((listener) => { notify = listener; return () => undefined })
+    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { resolveSend = resolve }))
+    const stop = vi.fn(() => new Promise<boolean>((resolve) => { resolveStop = resolve }))
     api.chat.stop = stop
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
@@ -595,6 +599,26 @@ describe('chat flow', () => {
     expect(stopButton).toBeEnabled()
     fireEvent.click(stopButton)
     await waitFor(() => expect(stop).toHaveBeenCalledWith('private', agent.id))
+    act(() => notify({ requestId: 'late', scope: 'private', scopeId: agent.id,
+      agentId: agent.id, text: '停止后不应显示' }))
+    expect(screen.queryByText('停止后不应显示')).not.toBeInTheDocument()
+    await act(async () => { resolveStop(true); resolveSend([]) })
+    expect(await screen.findByRole('button', { name: '发送' })).toBeDisabled()
+  })
+
+  it('shows a retryable error when stopping the model fails', async () => {
+    const api = mockApi()
+    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>(() => undefined))
+    api.chat.stop = vi.fn(async () => { throw new Error('close failed') })
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    fireEvent.change(input, { target: { value: '请分析' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: '停止生成' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('未能停止生成，请重试')
   })
 
   it('reveals a complete model reply gradually after it arrives', async () => {

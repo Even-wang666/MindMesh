@@ -21,7 +21,7 @@ describe('chat failures', () => {
       rejectRun = reject
       emitText = onText
     }))
-    const stop = vi.fn(async () => rejectRun(new Error('runtime closed')))
+    const stop = vi.fn(async () => { rejectRun(new Error('runtime closed')); return true })
     const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
       {} as ModelProviderSettings, () => ({ send }) as unknown as WebContents)
     try {
@@ -39,6 +39,24 @@ describe('chat failures', () => {
       expect(messages.at(-1)?.content).toBe('已经输出')
       expect(send.mock.calls.filter(([channel]) => channel === 'chat:delta'))
         .toEqual([['chat:delta', expect.objectContaining({ text: '已经输出' })]])
+    } finally { db.close() }
+  })
+
+  it('reports that stopping failed when the runtime is not exclusively owned', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    let resolveRun!: (result: { text: string; sessionId: string }) => void
+    const run = vi.fn(() => new Promise<{ text: string; sessionId: string }>((resolve) => { resolveRun = resolve }))
+    const stop = vi.fn(async () => false)
+    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const agent = db.listAgents()[0]
+      const pending = service.sendPrivate(agent.id, '请分析')
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+
+      await expect(service.stop('private', agent.id)).resolves.toBe(false)
+      resolveRun({ text: '正常完成', sessionId: 'session' })
+      expect((await pending).at(-1)?.content).toBe('正常完成')
     } finally { db.close() }
   })
 
