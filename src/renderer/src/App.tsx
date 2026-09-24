@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -687,8 +687,11 @@ function SpacePanel({ space, agents, models, messages, profile, busy, progress, 
 
 function MessageList({ messages, profile, emptyText, progress, streamingText, streamingReasoning, liveReplyIds, starters = [], onStarter }: { messages: Message[]; profile: UserProfile; emptyText: string; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>; starters?: string[]; onStarter?: (starter: string) => void }): React.JSX.Element {
   const end = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    end.current?.scrollIntoView({ behavior: 'smooth' })
+  const hasScrolled = useRef(false)
+  useLayoutEffect(() => {
+    if (!end.current) return
+    end.current.scrollIntoView({ behavior: hasScrolled.current ? 'smooth' : 'auto' })
+    hasScrolled.current = true
   }, [messages, progress, streamingText, streamingReasoning])
   if (!messages.length && !progress && !streamingText && !streamingReasoning) return (
     <div className="conversation-empty">

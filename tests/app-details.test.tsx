@@ -315,6 +315,28 @@ describe('space background', () => {
 })
 
 describe('chat flow', () => {
+  it('opens existing conversations at the bottom without scrolling through history', async () => {
+    const api = mockApi()
+    let notify!: (event: ChatDelta) => void
+    api.chat.messages = vi.fn(async (): Promise<Message[]> => [{
+      id: 'history', scope: 'private', scopeId: agent.id, authorType: 'agent',
+      authorName: agent.name, content: '已有聊天记录', sequence: 1, createdAt: new Date().toISOString(),
+    }])
+    api.chat.onDelta = vi.fn((listener) => { notify = listener; return () => undefined })
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    expect(await screen.findByText('已有聊天记录')).toBeInTheDocument()
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto' }))
+    expect(scrollIntoView).not.toHaveBeenCalledWith({ behavior: 'smooth' })
+
+    scrollIntoView.mockClear()
+    act(() => notify({ requestId: 'request', scope: 'private', scopeId: agent.id,
+      agentId: agent.id, text: '新内容' }))
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' }))
+  })
+
   it('keeps a dedicated resizer between the list and conversation panes', async () => {
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: mockApi() })
     render(<App />)
