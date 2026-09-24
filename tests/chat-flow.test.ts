@@ -60,6 +60,26 @@ describe('chat failures', () => {
     } finally { db.close() }
   })
 
+  it('latches a successful stop until the active run settles', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    let rejectRun!: (error: Error) => void
+    const run = vi.fn(() => new Promise((_resolve, reject) => { rejectRun = reject }))
+    const stop = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const agent = db.listAgents()[0]
+      const pending = service.sendPrivate(agent.id, '请分析')
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+
+      await expect(service.stop('private', agent.id)).resolves.toBe(true)
+      await expect(service.stop('private', agent.id)).resolves.toBe(true)
+      expect(stop).toHaveBeenCalledOnce()
+      rejectRun(new Error('runtime closed'))
+      await pending
+    } finally { db.close() }
+  })
+
   it('shows a runtime error after failure and clears it after a successful reply', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ text: '恢复', sessionId: 'session' })

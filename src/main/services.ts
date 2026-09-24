@@ -307,17 +307,27 @@ export class MindMeshServices {
     let streamed = ''
     let streamedReasoning = ''
     let stopRequested = false
+    let stopSucceeded = false
+    let stopAttempt: Promise<boolean> | null = null
     const stopKey = `${scope}:${scopeId}`
-    const stop = async (): Promise<boolean> => {
+    const stop = (): Promise<boolean> => {
+      if (stopSucceeded) return Promise.resolve(true)
+      if (stopAttempt) return stopAttempt
       stopRequested = true
-      try {
-        const stopped = await this.harness.stop(agent)
-        if (!stopped) stopRequested = false
-        return stopped
-      } catch (error) {
-        stopRequested = false
-        throw error
-      }
+      stopAttempt = (async () => {
+        try {
+          const stopped = await this.harness.stop(agent)
+          stopSucceeded = stopped
+          if (!stopped) stopRequested = false
+          return stopped
+        } catch (error) {
+          stopRequested = false
+          throw error
+        } finally {
+          stopAttempt = null
+        }
+      })()
+      return stopAttempt
     }
     this.activeStops.set(stopKey, stop)
     const run = (input: string, id: string) => this.harness.run(agent, input, id, (text, kind) => {

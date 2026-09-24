@@ -602,7 +602,12 @@ describe('chat flow', () => {
     act(() => notify({ requestId: 'late', scope: 'private', scopeId: agent.id,
       agentId: agent.id, text: '停止后不应显示' }))
     expect(screen.queryByText('停止后不应显示')).not.toBeInTheDocument()
-    await act(async () => { resolveStop(true); resolveSend([]) })
+    await act(async () => resolveStop(true))
+    const stoppedButton = await screen.findByRole('button', { name: '已停止' })
+    expect(stoppedButton).toBeDisabled()
+    fireEvent.click(stoppedButton)
+    expect(stop).toHaveBeenCalledOnce()
+    await act(async () => resolveSend([]))
     expect(await screen.findByRole('button', { name: '发送' })).toBeDisabled()
   })
 
