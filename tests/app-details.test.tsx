@@ -314,6 +314,14 @@ describe('space background', () => {
 })
 
 describe('chat flow', () => {
+  it('keeps a dedicated resizer between the list and conversation panes', async () => {
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: mockApi() })
+    render(<App />)
+
+    expect(await screen.findByRole('separator', { name: /列表栏宽度/ }))
+      .toHaveAttribute('data-pane', 'list-content')
+  })
+
   it('selects the conversation model and permission from the composer', async () => {
     const api = mockApi()
     api.catalog.models = vi.fn(async () => [

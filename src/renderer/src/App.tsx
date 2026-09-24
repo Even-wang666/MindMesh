@@ -195,7 +195,7 @@ export function App(): React.JSX.Element {
   const resetShares = (): void => setShares(null)
   return (
     <main
-      className="app-shell"
+      className={shares ? 'app-shell has-custom-pane-shares' : 'app-shell'}
       ref={appRef}
       /* 只在**用户拖过之后**才写行内变量；没拖过就让 styles.css 里的默认值生效，
          这样「默认比例」始终只有一份定义（在样式表里），两处不会分叉。 */
@@ -313,7 +313,18 @@ function measureShares(shell: HTMLElement): PaneShares & { width: number } {
     const el = shell.querySelector(selector)
     return width > 0 && el ? (el.getBoundingClientRect().width / width) * 100 : 0
   }
-  return { width, nav: shareOf('.primary-nav'), list: shareOf('.object-list') }
+  const nav = shell.querySelector('.primary-nav')
+  const measuredNav = shareOf('.primary-nav')
+  /* 折叠态的导航是固定图标条，但存储模型仍使用展开态的逻辑份额。
+     拖右侧分隔条时保留这个逻辑值，重新展开后导航不会突然缩成图标条宽度。 */
+  const logicalNav = nav?.classList.contains('is-collapsed')
+    ? Number.parseFloat(getComputedStyle(shell).getPropertyValue('--nav-share'))
+    : measuredNav
+  return {
+    width,
+    nav: Number.isFinite(logicalNav) ? logicalNav : measuredNav,
+    list: shareOf('.object-list'),
+  }
 }
 
 /**
@@ -430,6 +441,7 @@ function PaneResizer({ index, appRef, onShares, onReset }: {
   return (
     <div
       className={active ? 'pane-resizer is-active' : 'pane-resizer'}
+      data-pane={index === 0 ? 'nav-list' : 'list-content'}
       role="separator"
       aria-orientation="vertical"
       aria-label={`拖动调整${label}栏宽度，双击恢复默认比例`}

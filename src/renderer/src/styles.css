@@ -530,21 +530,28 @@ h1 { letter-spacing: -.032em; }
   flex: 0 0 calc((100% - var(--nav-rail)) * var(--list-share-rest));
 }
 
+/* 用户拖过右侧分隔条后，折叠态也沿用自定义列表宽度。导航仍保留展开态的
+   逻辑份额，因此重新展开时不会跳成图标条宽度。 */
+.app-shell.has-custom-pane-shares .primary-nav.is-collapsed ~ .object-list {
+  flex-basis: var(--list-share);
+}
+
 /* ── 分区拖拽条：用户可拖动调整三栏宽度 ─────────────────────────────────────
-   默认完全隐形（不改变既有观感），hover / 键盘聚焦 / 拖动时才浮出一条强调色细线。
+   导航侧默认隐形；列表与内容之间常驻一条中性细线，明确提示右侧两区可以调宽。
+   hover / 键盘聚焦 / 拖动时统一浮出强调色。
    份额由 App.tsx 的 usePaneShares 写在这两个变量上（行内覆盖 .app-shell 的
    --nav-share / --list-share），不拖就一直是上面的默认值。
 
-   ⚠️ 用负 margin 让它在布局上**不占宽度**：flex-basis 6px 被左右各 -3px 抵消。
-      否则每多一条分隔条，三栏就集体少 6px —— 三栏合计就不再等于容器宽，
+   ⚠️ 用负 margin 让它在布局上**不占宽度**：flex-basis 10px 被左右各 -5px 抵消。
+      否则每多一条分隔条，三栏就集体少 10px —— 三栏合计就不再等于容器宽，
       验收脚本里那条「三栏合计 == 容器宽」也会失败。
-   ⚠️ z-index 要压住两侧：6px 的命中区与相邻栏各有 3px 重叠，
+   ⚠️ z-index 要压住两侧：10px 的命中区与相邻栏各有 5px 重叠，
       不抬起来的话半边命中区会被邻居抢走点击。
    ⚠️ 拖出来的是**百分比**份额，所以用户设的比例同样跟着窗口缩放走 ——
       这一点和默认态保持一致，不会出现「默认态会缩放、拖过之后就锁死」。 */
 .pane-resizer {
-  flex: 0 0 6px;
-  margin: 0 -3px;
+  flex: 0 0 10px;
+  margin: 0 -5px;
   position: relative;
   z-index: 3;
   border: 0;
@@ -564,6 +571,7 @@ h1 { letter-spacing: -.032em; }
   background: transparent;
   transition: background var(--dur-1) var(--ease);
 }
+.pane-resizer[data-pane='list-content']::before { background: var(--nav-edge); }
 .pane-resizer:hover::before { background: var(--accent-line-strong); }
 .pane-resizer:focus-visible::before,
 .pane-resizer.is-active::before { background: var(--mm-color-iris); }
@@ -573,10 +581,9 @@ h1 { letter-spacing: -.032em; }
 .app-shell.is-resizing { cursor: col-resize; user-select: none; }
 .app-shell.is-resizing .primary-nav { transition: none; }
 
-/* 折叠态不提供拖拽：导航此时是固定图标条、已退出比例，列表的份额走的是
-   「剩余空间的 22/(22+62)」另一套算式。允许拖拽会让「份额」这一个词在两种姿态下
-   指向不同的东西。展开后用户拖过的比例仍在，不受影响。 */
-.primary-nav.is-collapsed ~ .pane-resizer { display: none; }
+/* 折叠态只隐藏紧邻导航的第一根拖拽条；列表与内容之间的第二根仍可调整。
+   用相邻选择器而不是通用兄弟选择器，否则第二根也会被误伤。 */
+.primary-nav.is-collapsed + .pane-resizer { display: none; }
 
 .nav-bottom { margin-top: auto; display: grid; gap: var(--sp-4); }
 
@@ -613,7 +620,9 @@ h1 { letter-spacing: -.032em; }
   flex: 0 0 var(--list-share);
   /* 长标题不许把这一栏顶得比份额更宽 —— flex 项的默认 min-width 是 auto，
      列表里一个长名字就能破坏比例（这条不是理论风险，是 flex 的默认行为） */
-  min-width: 0;
+  /* 与 App.tsx 的 PANE_LIMITS.list 双保险：JS 在拖动/缩窗时夹取，CSS 兜住
+     旧 localStorage 或布局尚未完成的首帧。 */
+  min-width: 220px;
   padding: var(--sp-7) var(--sp-4) var(--sp-4);
   display: flex;
   flex-direction: column;
@@ -796,7 +805,13 @@ h1 { letter-spacing: -.032em; }
 /* 主内容吃掉导航与列表之外的全部剩余 —— 前两栏之和是 38%，它拿到 62%。
    唯一一个 grow 为 1 的项，所以它的 basis 写成 0 是安全的（不存在两个
    basis 0 的项互相错位的问题，那正是令牌段里说的夹取坑）。 */
-.content { min-width: 0; flex: 1 1 0; display: flex; padding: var(--sp-4); }
+.content {
+  /* 与 App.tsx 的 PANE_LIMITS.content 保持一致，避免右侧内容被拖成不可用窄条。 */
+  min-width: 380px;
+  flex: 1 1 0;
+  display: flex;
+  padding: var(--sp-4);
+}
 .content.has-list { padding-left: 0; }
 
 .page {
