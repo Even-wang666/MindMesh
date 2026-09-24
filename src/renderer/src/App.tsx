@@ -761,6 +761,7 @@ function Composer({ busy, canAttach, placeholder, members = [], value, onChange,
   const [stopError, setStopError] = useState('')
   const [stopping, setStopping] = useState(false)
   const [stopAccepted, setStopAccepted] = useState(false)
+  const stopCycle = useRef(0)
   const [dragging, setDragging] = useState(false)
   const [permission, setPermission] = useState<ChatPermission>('full')
   const [openMenu, setOpenMenu] = useState<'permission' | 'model' | 'context' | null>(null)
@@ -836,10 +837,10 @@ function Composer({ busy, canAttach, placeholder, members = [], value, onChange,
     if (!canAttach && attachments.length > 0) setAttachmentError('当前选择的智能体不支持图片输入')
   }, [attachments.length, canAttach])
   useEffect(() => {
-    if (!busy) {
-      setStopAccepted(false)
-      setStopping(false)
-    }
+    stopCycle.current += 1
+    setStopAccepted(false)
+    setStopping(false)
+    setStopError('')
   }, [busy])
   async function submit(): Promise<void> {
     const current = value
@@ -855,15 +856,18 @@ function Composer({ busy, canAttach, placeholder, members = [], value, onChange,
   }
   async function stopGeneration(): Promise<void> {
     if (stopping || stopAccepted) return
+    const cycle = stopCycle.current
     setStopping(true)
     setStopError('')
     try {
-      if (await onStop()) setStopAccepted(true)
+      const stopped = await onStop()
+      if (stopCycle.current !== cycle) return
+      if (stopped) setStopAccepted(true)
       else setStopError('未能停止生成，请重试。')
     } catch {
-      setStopError('未能停止生成，请重试。')
+      if (stopCycle.current === cycle) setStopError('未能停止生成，请重试。')
     } finally {
-      setStopping(false)
+      if (stopCycle.current === cycle) setStopping(false)
     }
   }
   return (

@@ -611,6 +611,29 @@ describe('chat flow', () => {
     expect(await screen.findByRole('button', { name: '发送' })).toBeDisabled()
   })
 
+  it('ignores a stop result that arrives after its generation settled', async () => {
+    const api = mockApi()
+    const sendResolvers: Array<(messages: Message[]) => void> = []
+    let resolveStop!: (stopped: boolean) => void
+    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { sendResolvers.push(resolve) }))
+    api.chat.stop = vi.fn(() => new Promise<boolean>((resolve) => { resolveStop = resolve }))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    fireEvent.change(input, { target: { value: '第一轮' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: '停止生成' }))
+    await act(async () => sendResolvers[0]([]))
+    expect(await screen.findByRole('button', { name: '发送' })).toBeDisabled()
+
+    await act(async () => resolveStop(true))
+    fireEvent.change(input, { target: { value: '第二轮' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(await screen.findByRole('button', { name: '停止生成' })).toBeEnabled()
+    await act(async () => sendResolvers[1]([]))
+  })
+
   it('shows a retryable error when stopping the model fails', async () => {
     const api = mockApi()
     api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>(() => undefined))
