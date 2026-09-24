@@ -436,7 +436,13 @@ h1 { letter-spacing: -.032em; }
   color: var(--nav-ink-line);
   transition: color var(--dur-2) var(--ease);
 }
-.nav-icon > svg { position: relative; z-index: 1; display: block; }
+.nav-icon > svg {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 21px;
+  height: 21px;
+}
 
 /* 选中瞬间：图标先「收一下再弹回」，同时一圈同色光晕向外散掉。
    动画只挂在 .active 上 —— 切走再切回会重新播一次，正好是「被选中」的反馈；
@@ -445,10 +451,10 @@ h1 { letter-spacing: -.032em; }
   color: rgb(var(--nav-tone-rgb));
   animation: nav-icon-pop 440ms var(--ease-pop) both;
 }
-/* 选中同时把笔画加粗一档：20px 的图标上，色相差异本身不够抢眼，
+/* 选中同时把尺寸和笔画各加一档：色相差异本身不够抢眼，
    笔画重量才是「这项被选中了」最直接的信号。lucide 的 stroke-width="2"
    是呈现属性，会被这条 CSS 覆盖。 */
-.nav-item.active .nav-icon > svg { stroke-width: 2.6; }
+.nav-item.active .nav-icon > svg { width: 23px; height: 23px; stroke-width: 2.6; }
 .nav-item.active .nav-icon::after {
   content: '';
   position: absolute;
