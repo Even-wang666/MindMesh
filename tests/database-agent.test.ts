@@ -174,6 +174,35 @@ describe('updateAgent', () => {
   })
 })
 
+describe('agent input validation', () => {
+  it('validates and normalizes agent inputs on create and update', () => {
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const template = db.listAgents()[0]
+      const created = db.createAgent({ ...template, name: '  新研究员  ', role: '  分析  ', persona: '  谨慎回答。  ' })
+      expect(created).toMatchObject({ name: '新研究员', role: '分析', persona: '谨慎回答。' })
+      expect(() => db.createAgent({ ...template, name: '   ' })).toThrow('名称和身份设定不能为空')
+      expect(() => db.updateAgent(created.id, { ...created, persona: '   ' })).toThrow('名称和身份设定不能为空')
+      expect(() => db.createAgent({ ...template, name: '数组形状', skills: 'not-an-array' as unknown as string[] }))
+        .toThrow('技能和工具数据无效')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('reports duplicate agent names in Chinese on create and update', () => {
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const [first, second] = db.listAgents()
+      const message = `已存在名为「${first.name}」的智能体，请换一个名称`
+      expect(() => db.createAgent({ ...first, name: `  ${first.name}  ` })).toThrow(message)
+      expect(() => db.updateAgent(second.id, { ...second, name: `  ${first.name}  ` })).toThrow(message)
+    } finally {
+      db.close()
+    }
+  })
+})
+
 describe('updateSpaceContext', () => {
   it('persists the new background without changing members or messages', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-space-'))
@@ -202,6 +231,24 @@ describe('updateSpaceContext', () => {
 })
 
 describe('space membership and agent deletion', () => {
+  it('validates and normalizes space inputs on create and update', () => {
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const memberIds = db.listAgents().slice(0, 2).map((agent) => agent.id)
+      const created = db.createSpace({
+        name: '  新空间  ', description: '  简介  ', context: '  背景  ', memberIds,
+      })
+      expect(created).toMatchObject({ name: '新空间', description: '简介', context: '背景' })
+      expect(() => db.createSpace({ ...created, name: '   ' })).toThrow('空间名称不能为空')
+      expect(() => db.updateSpace(created.id, { ...created, memberIds: [memberIds[0], memberIds[0]] }))
+        .toThrow('成员不能重复')
+      expect(() => db.createSpace({ ...created, name: '重复成员', memberIds: [memberIds[0], memberIds[0]] }))
+        .toThrow('成员不能重复')
+    } finally {
+      db.close()
+    }
+  })
+
   it('deletes only the selected space, its messages, and runtime sessions', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-space-delete-'))
     const db = new MindMeshDatabase(join(directory, 'mindmesh.sqlite'))

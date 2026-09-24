@@ -139,21 +139,22 @@ export class MindMeshServices {
       )
       restarted = true
     }
+    const sessionAgent = { ...session.agent, name: agent.name, role: agent.role }
     this.db.addMessage({ scope: 'private', scopeId: agentId, authorType: 'user', authorName: this.db.getUserProfile().name, content, attachments: images })
     const history = this.db.listMessages('private', agentId).slice(-31, -1)
     const requestId = crypto.randomUUID()
-    this.emitProgress('private', agentId, session.agent.name)
+    this.emitProgress('private', agentId, sessionAgent.name)
     let result
     try {
-      result = await this.runAgent(session.agent, buildPrivatePrompt(session.agent, promptContent, restarted ? history : []),
+      result = await this.runAgent(sessionAgent, buildPrivatePrompt(sessionAgent, promptContent, restarted ? history : []),
         session.harnessSessionId, 'private', agentId, requestId,
-        () => buildPrivatePrompt(session.agent, promptContent, history), images)
+        () => buildPrivatePrompt(sessionAgent, promptContent, history), images)
     } catch (error) {
       if (error instanceof ChatStoppedError) {
         if (error.text || error.reasoning) {
           this.db.addMessage({
             scope: 'private', scopeId: agentId, authorType: 'agent', authorId: agent.id,
-            authorName: session.agent.name, content: error.text, reasoning: error.reasoning || undefined,
+            authorName: sessionAgent.name, content: error.text, reasoning: error.reasoning || undefined,
           })
         }
         void this.refreshDeepSeekBalance()
@@ -168,7 +169,7 @@ export class MindMeshServices {
     }
     this.db.addMessage({
       scope: 'private', scopeId: agentId, authorType: 'agent', authorId: agent.id,
-      authorName: session.agent.name, content: result.text, reasoning: result.reasoning,
+      authorName: sessionAgent.name, content: result.text, reasoning: result.reasoning,
     })
     this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, 0)
     void this.refreshDeepSeekBalance()
@@ -210,21 +211,22 @@ export class MindMeshServices {
           getAgentCapabilityHash(runAgent), 0,
         )
       }
+      const sessionAgent = { ...session.agent, name: agent.name, role: agent.role }
       const visibleMessages = this.db.listMessagesSince('space', spaceId,
         session.lastConsumedMessageSequence)
-      const prompt = buildSpacePrompt(session.agent, space, visibleMessages)
-      this.emitProgress('space', spaceId, session.agent.name)
+      const prompt = buildSpacePrompt(sessionAgent, space, visibleMessages)
+      this.emitProgress('space', spaceId, sessionAgent.name)
       let result
       try {
-        result = await this.runAgent(session.agent, prompt, session.harnessSessionId,
+        result = await this.runAgent(sessionAgent, prompt, session.harnessSessionId,
           'space', spaceId, crypto.randomUUID(),
-          () => buildSpacePrompt(session.agent, space, this.db.listMessages('space', spaceId)), images)
+          () => buildSpacePrompt(sessionAgent, space, this.db.listMessages('space', spaceId)), images)
       } catch (error) {
         if (error instanceof ChatStoppedError) {
           if (error.text || error.reasoning) {
             this.db.addMessage({
               scope: 'space', scopeId: spaceId, authorType: 'agent', authorId: agent.id,
-              authorName: session.agent.name, content: error.text, reasoning: error.reasoning || undefined,
+              authorName: sessionAgent.name, content: error.text, reasoning: error.reasoning || undefined,
             })
           }
           void this.refreshDeepSeekBalance()
@@ -239,7 +241,7 @@ export class MindMeshServices {
       }
       const reply = this.db.addMessage({
         scope: 'space', scopeId: spaceId, authorType: 'agent', authorId: agent.id,
-        authorName: session.agent.name, content: result.text, reasoning: result.reasoning,
+        authorName: sessionAgent.name, content: result.text, reasoning: result.reasoning,
       })
       this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, reply.sequence)
       void this.refreshDeepSeekBalance()

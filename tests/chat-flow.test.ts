@@ -435,6 +435,51 @@ describe('session context', () => {
     }
   })
 
+  it('uses a renamed agent identity without restarting its private session', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'saved-session' })
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const agent = db.listAgents()[0]
+      await service.sendPrivate(agent.id, '第一条')
+      db.updateAgent(agent.id, { ...agent, name: '首席研究员', role: '研究负责人' })
+
+      const messages = await service.sendPrivate(agent.id, '第二条')
+
+      expect(run.mock.calls[1][0]).toMatchObject({ name: '首席研究员', role: '研究负责人', persona: agent.persona })
+      expect(run.mock.calls[1][1]).toContain('你是 首席研究员。')
+      expect(run.mock.calls[1][1]).toContain('角色定位：研究负责人')
+      expect(run.mock.calls[1][2]).toBe('saved-session')
+      expect(messages.at(-1)?.authorName).toBe('首席研究员')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('uses a renamed agent identity without restarting its space session', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'saved-session' })
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const space = db.listSpaces()[0]
+      const agent = db.getAgent(space.memberIds[0])!
+      await service.sendSpace(space.id, `@${agent.name} 第一条`)
+      db.updateAgent(agent.id, { ...agent, name: '首席研究员', role: '研究负责人' })
+
+      const messages = await service.sendSpace(space.id, '@首席研究员 第二条')
+
+      expect(run.mock.calls[1][0]).toMatchObject({ name: '首席研究员', role: '研究负责人', persona: agent.persona })
+      expect(run.mock.calls[1][1]).toContain('你是 首席研究员。')
+      expect(run.mock.calls[1][1]).toContain('角色定位：研究负责人')
+      expect(run.mock.calls[1][2]).toBe('saved-session')
+      expect(messages.at(-1)?.authorName).toBe('首席研究员')
+    } finally {
+      db.close()
+    }
+  })
+
   it('forwards model text before the run completes', async () => {
     const db = new MindMeshDatabase(':memory:')
     const send = vi.fn()

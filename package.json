@@ -5,6 +5,7 @@
   "type": "module",
   "description": "MindMesh 多智能体创建与协作桌面平台",
   "author": "MindMesh",
+  "license": "MIT",
   "main": "out/main/index.js",
   "packageManager": "pnpm@11.7.0",
   "engines": {
@@ -17,6 +18,7 @@
     "poc:harness": "node scripts/harness-smoke.mjs",
     "poc:harness:electron": "electron scripts/harness-electron-smoke.cjs",
     "smoke:electron": "node scripts/electron-e2e-smoke.mjs",
+    "smoke:security": "pnpm build && node scripts/electron-e2e-smoke.mjs --security-only",
     "check:package-deps": "node scripts/check-packaged-deps.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

@@ -15,6 +15,49 @@ type RuntimeSessionRow = {
   lastConsumedMessageSequence: number
 }
 
+function normalizeAgentInput(input: CreateAgentInput): CreateAgentInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('智能体数据无效')
+  if (typeof input.name !== 'string' || typeof input.role !== 'string' || typeof input.persona !== 'string') {
+    throw new Error('智能体数据无效')
+  }
+  if (typeof input.provider !== 'string' || typeof input.model !== 'string') throw new Error('模型配置无效')
+  if (!Array.isArray(input.skills) || !input.skills.every((value) => typeof value === 'string')
+    || !Array.isArray(input.tools) || !input.tools.every((value) => typeof value === 'string')) {
+    throw new Error('技能和工具数据无效')
+  }
+  const normalized = {
+    ...input,
+    name: input.name.trim(),
+    role: input.role.trim(),
+    persona: input.persona.trim(),
+    provider: input.provider.trim(),
+    model: input.model.trim(),
+    skills: [...input.skills],
+    tools: [...input.tools],
+  }
+  if (!normalized.name || !normalized.persona) throw new Error('名称和身份设定不能为空')
+  if (!normalized.provider || !normalized.model) throw new Error('模型配置无效')
+  return normalized
+}
+
+function normalizeSpaceInput(input: CreateSpaceInput): CreateSpaceInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)
+    || typeof input.name !== 'string' || typeof input.description !== 'string' || typeof input.context !== 'string'
+    || !Array.isArray(input.memberIds) || !input.memberIds.every((value) => typeof value === 'string')) {
+    throw new Error('协作空间数据无效')
+  }
+  const normalized = {
+    ...input,
+    name: input.name.trim(),
+    description: input.description.trim(),
+    context: input.context.trim(),
+    memberIds: [...input.memberIds],
+  }
+  if (!normalized.name) throw new Error('空间名称不能为空')
+  if (new Set(normalized.memberIds).size !== normalized.memberIds.length) throw new Error('成员不能重复')
+  return normalized
+}
+
 const starterSkillUpgrades = {
   'starter-v2-product-manager': { previous: ['需求分析', '任务拆解'], current: [
     createSkillReference('mindmesh-builtin-user-story-writer-v1', '用户故事'),
@@ -269,7 +312,8 @@ export class MindMeshDatabase {
   }
 
   createAgent(input: CreateAgentInput, id: string = randomUUID()): Agent {
-    const agent: Agent = { ...input, id, createdAt: new Date().toISOString() }
+    const normalized = this.validateAgentInput(input)
+    const agent: Agent = { ...normalized, id, createdAt: new Date().toISOString() }
     this.db.prepare(`
       INSERT INTO agents (id, name, role, persona, provider, model, skills, tools, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -281,16 +325,10 @@ export class MindMeshDatabase {
   updateAgent(id: string, input: CreateAgentInput): Agent {
     const existing = this.getAgent(id)
     if (!existing) throw new Error('智能体不存在')
-    if (!input.name.trim() || !input.persona.trim()) throw new Error('名称和身份设定不能为空')
+    const normalized = this.validateAgentInput(input, id)
     const agent: Agent = {
       ...existing,
-      name: input.name.trim(),
-      role: input.role.trim(),
-      persona: input.persona.trim(),
-      provider: input.provider,
-      model: input.model,
-      skills: input.skills,
-      tools: input.tools,
+      ...normalized,
     }
     this.db.prepare(`
       UPDATE agents SET name = ?, role = ?, persona = ?, provider = ?, model = ?, skills = ?, tools = ?
@@ -298,6 +336,14 @@ export class MindMeshDatabase {
     `).run(agent.name, agent.role, agent.persona, agent.provider, agent.model,
       JSON.stringify(agent.skills), JSON.stringify(agent.tools), id)
     return agent
+  }
+
+  private validateAgentInput(input: CreateAgentInput, excludeId = ''): CreateAgentInput {
+    const normalized = normalizeAgentInput(input)
+    const duplicate = this.db.prepare('SELECT 1 FROM agents WHERE name = ? AND id <> ?')
+      .get(normalized.name, excludeId)
+    if (duplicate) throw new Error(`已存在名为「${normalized.name}」的智能体，请换一个名称`)
+    return normalized
   }
 
   removeAgent(id: string): void {
@@ -367,7 +413,7 @@ export class MindMeshDatabase {
   }
 
   createSpace(input: CreateSpaceInput, id: string = randomUUID()): Space {
-    const space: Space = { ...input, id, createdAt: new Date().toISOString() }
+    const space: Space = { ...normalizeSpaceInput(input), id, createdAt: new Date().toISOString() }
     this.db.exec('BEGIN')
     try {
       this.db.prepare('INSERT INTO spaces (id, name, description, context, createdAt) VALUES (?, ?, ?, ?, ?)')
@@ -384,15 +430,14 @@ export class MindMeshDatabase {
 
   updateSpace(id: string, input: CreateSpaceInput): Space {
     if (!this.getSpace(id)) throw new Error('协作空间不存在')
-    if (!input.name.trim()) throw new Error('空间名称不能为空')
-    if (new Set(input.memberIds).size !== input.memberIds.length) throw new Error('成员不能重复')
+    const normalized = normalizeSpaceInput(input)
     this.db.exec('BEGIN')
     try {
       this.db.prepare('UPDATE spaces SET name = ?, description = ?, context = ? WHERE id = ?')
-        .run(input.name.trim(), input.description.trim(), input.context.trim(), id)
+        .run(normalized.name, normalized.description, normalized.context, id)
       this.db.prepare('DELETE FROM space_members WHERE spaceId = ?').run(id)
       const addMember = this.db.prepare('INSERT INTO space_members (spaceId, agentId, position) VALUES (?, ?, ?)')
-      input.memberIds.forEach((agentId, index) => addMember.run(id, agentId, index))
+      normalized.memberIds.forEach((agentId, index) => addMember.run(id, agentId, index))
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')

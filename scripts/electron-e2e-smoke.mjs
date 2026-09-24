@@ -10,8 +10,9 @@ import electron from 'electron'
 const workspace = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const userData = mkdtempSync(join(tmpdir(), 'mindmesh-e2e-'))
 const executable = process.env.MINDMESH_E2E_EXE ?? electron
+const securityOnly = process.argv.includes('--security-only')
 const key = process.env.DEEPSEEK_API_KEY
-if (!key) throw new Error('请先设置 DEEPSEEK_API_KEY')
+if (!key && !securityOnly) throw new Error('请先设置 DEEPSEEK_API_KEY')
 
 const delay = (ms) => new Promise((done) => setTimeout(done, ms))
 async function until(task, timeoutMs = 90_000) {
@@ -88,6 +89,14 @@ async function runRound(round) {
       return reply.result.value
     }
     await until(() => evaluate('Boolean(window.mindmesh?.chat && document.querySelector(".composer textarea"))'))
+    if (securityOnly) {
+      const policy = await evaluate('document.querySelector(\'meta[http-equiv="Content-Security-Policy"]\')?.content')
+      assert.match(policy, /script-src 'self'/)
+      await evaluate('setTimeout(() => window.close(), 100)')
+      await until(() => app.exitCode !== null, 20_000)
+      console.log('Electron sandboxed preload and CSP: OK')
+      return
+    }
     assert.equal(await evaluate('window.mindmesh.runtime.status().then(x => x.state)'), 'ready')
     if (round === 2) {
       const previous = await evaluate(`(async () => {
@@ -182,7 +191,7 @@ async function runRound(round) {
     console.log(`Electron graceful exit round ${round}: OK`)
   } catch (error) {
     console.error(String(error))
-    console.error(log.replaceAll(key, '<REDACTED>').slice(-5000))
+    console.error(log.replaceAll(key ?? '__absent__', '<REDACTED>').slice(-5000))
     throw error
   } finally {
     client?.socket.close()
