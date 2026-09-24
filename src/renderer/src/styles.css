@@ -516,7 +516,12 @@ h1 { letter-spacing: -.032em; }
 .primary-nav.is-collapsed .nav-group,
 .primary-nav.is-collapsed .nav-group:last-of-type { margin-bottom: var(--nav-row-gap); }
 .primary-nav.is-collapsed .nav-bottom { justify-items: center; }
-.primary-nav.is-collapsed .runtime-card { padding: var(--sp-2); justify-items: center; }
+.primary-nav.is-collapsed .runtime-card {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  justify-items: center;
+}
 /* 折叠态开关与导航项完全同形：44px 方阵、图标居中 */
 .primary-nav.is-collapsed .nav-collapse-btn { width: 44px; padding: 0; justify-content: center; }
 
