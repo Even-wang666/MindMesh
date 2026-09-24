@@ -975,6 +975,14 @@ h1 { letter-spacing: -.032em; }
 .message.user header { flex-direction: row-reverse; }
 .message header strong { font-size: var(--fs-sm); font-weight: 650; }
 .message header time { color: var(--text-tertiary); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.stopped-badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--mm-color-warning);
+  background: var(--mm-color-warning-bg);
+  font-size: 11px;
+  font-weight: 600;
+}
 
 /* 气泡：去掉 1px 描边，圆角统一走 --r-surface（规范只允许 10/14，原先的 4px 角是越界值），
    层级改由极淡投影承载，观感更整体、更少「小框」。 */

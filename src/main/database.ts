@@ -146,6 +146,7 @@ export class MindMeshDatabase {
         content TEXT NOT NULL,
         reasoning TEXT,
         attachments TEXT NOT NULL DEFAULT '[]',
+        stopped INTEGER NOT NULL DEFAULT 0,
         sequence INTEGER NOT NULL,
         createdAt TEXT NOT NULL
       );
@@ -184,6 +185,9 @@ export class MindMeshDatabase {
     }
     if (!messageColumns.some((column) => column.name === 'attachments')) {
       this.db.exec("ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'")
+    }
+    if (!messageColumns.some((column) => column.name === 'stopped')) {
+      this.db.exec('ALTER TABLE messages ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0')
     }
   }
 
@@ -543,27 +547,29 @@ export class MindMeshDatabase {
       ...input,
       reasoning: input.reasoning ?? null,
       attachments: input.attachments ?? [],
+      stopped: input.stopped ?? false,
       id: randomUUID(),
       sequence: next.sequence,
       createdAt: new Date().toISOString(),
     }
     this.db.prepare(`
-      INSERT INTO messages (id, scope, scopeId, authorType, authorId, authorName, content, reasoning, attachments, sequence, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, scope, scopeId, authorType, authorId, authorName, content, reasoning, attachments, stopped, sequence, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(message.id, message.scope, message.scopeId, message.authorType, message.authorId ?? null,
-      message.authorName, message.content, message.reasoning ?? null, JSON.stringify(message.attachments), message.sequence, message.createdAt)
+      message.authorName, message.content, message.reasoning ?? null, JSON.stringify(message.attachments),
+      message.stopped ? 1 : 0, message.sequence, message.createdAt)
     return message
   }
 
   private hydrateMessage(row: unknown): Message {
-    const stored = row as Omit<Message, 'attachments'> & { attachments?: string }
+    const stored = row as Omit<Message, 'attachments' | 'stopped'> & { attachments?: string; stopped?: number | boolean }
     let attachments: ChatImageAttachment[] = []
     try {
       const parsed: unknown = stored.attachments ? JSON.parse(stored.attachments) : []
       if (Array.isArray(parsed)) attachments = parsed.filter(isStoredImageAttachment)
     }
     catch { /* Preserve readable messages even if an attachment payload is corrupt. */ }
-    return { ...stored, attachments }
+    return { ...stored, attachments, stopped: Boolean(stored.stopped) }
   }
 
   close(): void {

@@ -1,4 +1,11 @@
-import type { Agent } from './contracts'
+import type { Agent, Message } from './contracts'
+
+type PromptMessage = Pick<Message, 'authorName' | 'content' | 'stopped'>
+
+function formatPromptMessage(message: PromptMessage): string {
+  const status = message.stopped ? '（回复已停止，内容可能不完整）' : ''
+  return `${message.authorName}${status}：${message.content}`
+}
 
 export function parseMentions(content: string, members: Agent[]): Agent[] {
   const positions = members
@@ -17,7 +24,7 @@ export function parseMentions(content: string, members: Agent[]): Agent[] {
 }
 
 export function buildPrivatePrompt(
-  agent: Agent, content: string, history: Array<{ authorName: string; content: string }> = [],
+  agent: Agent, content: string, history: PromptMessage[] = [],
 ): string {
   return [
     `你是 ${agent.name}。`,
@@ -26,7 +33,7 @@ export function buildPrivatePrompt(
     agent.persona,
     '请始终保持上述身份，并直接回应用户。',
     '',
-    ...(history.length ? ['此前对话：', ...history.map((message) => `${message.authorName}：${message.content}`), ''] : []),
+    ...(history.length ? ['此前对话：', ...history.map(formatPromptMessage), ''] : []),
     `用户：${content}`,
   ].join('\n')
 }
@@ -34,9 +41,9 @@ export function buildPrivatePrompt(
 export function buildSpacePrompt(
   agent: Agent,
   space: { name: string; context: string },
-  messages: Array<{ authorName: string; content: string }>,
+  messages: PromptMessage[],
 ): string {
-  const transcript = messages.map((message) => `${message.authorName}：${message.content}`).join('\n')
+  const transcript = messages.map(formatPromptMessage).join('\n')
   return [
     `你是 ${agent.name}。`,
     `角色定位：${agent.role || '由用户定义的智能体'}`,

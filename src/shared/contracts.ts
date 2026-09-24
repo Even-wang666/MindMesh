@@ -48,6 +48,7 @@ export type Message = {
   content: string
   reasoning?: string | null
   attachments?: ChatImageAttachment[]
+  stopped?: boolean
   sequence: number
   createdAt: string
 }

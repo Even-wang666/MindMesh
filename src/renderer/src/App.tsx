@@ -705,7 +705,7 @@ function MessageList({ messages, profile, emptyText, progress, streamingText, st
     {messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}>
       <Avatar name={message.authorType === 'user' ? profile.name : message.authorName} image={message.authorType === 'user' ? profile.avatar : null} />
       <div>
-        <header><strong>{message.authorType === 'user' ? profile.name : message.authorName}</strong><time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header>
+        <header><strong>{message.authorType === 'user' ? profile.name : message.authorName}</strong>{message.stopped && <span className="stopped-badge">已停止 · 回复可能不完整</span>}<time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header>
         {message.reasoning && <ReasoningDetails content={message.reasoning} initiallyOpen={liveReplyIds.has(message.id)} />}
         {!!message.attachments?.length && <div className="message-attachments">{message.attachments.map((attachment, index) => <img key={`${attachment.name}-${index}`} src={`data:${attachment.mediaType};base64,${attachment.data}`} alt={attachment.name} />)}</div>}
         {message.content && <MessageBody content={message.content} animated={liveReplyIds.has(message.id)} />}

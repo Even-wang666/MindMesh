@@ -36,9 +36,68 @@ describe('chat failures', () => {
 
       expect(stop).toHaveBeenCalledWith(agent)
       expect(messages.map((message) => message.authorType)).toEqual(['user', 'agent'])
-      expect(messages.at(-1)?.content).toBe('已经输出')
+      expect(messages.at(-1)).toMatchObject({ content: '已经输出', stopped: true })
       expect(send.mock.calls.filter(([channel]) => channel === 'chat:delta'))
         .toEqual([['chat:delta', expect.objectContaining({ text: '已经输出' })]])
+    } finally { db.close() }
+  })
+
+  it('marks a stopped space reply and does not replay it as complete after runtime recovery', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    let rejectRun!: (error: Error) => void
+    let emitText!: (text: string) => void
+    const run = vi.fn()
+      .mockImplementationOnce((_agent, _prompt, _id, onText: (text: string) => void) => {
+        emitText = onText
+        return new Promise((_resolve, reject) => { rejectRun = reject })
+      })
+      .mockRejectedValueOnce(new SessionResumeUnsupportedError())
+      .mockResolvedValueOnce({ text: '第二轮完成', sessionId: 'second-session' })
+    const stop = vi.fn(async () => { rejectRun(new Error('runtime closed')); return true })
+    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const space = db.listSpaces()[0]
+      const agent = db.getAgent(space.memberIds[0])!
+      const first = service.sendSpace(space.id, `@${agent.name} 第一问`)
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      emitText('被打断的半句话')
+
+      await expect(service.stop('space', space.id)).resolves.toBe(true)
+      expect((await first).at(-1)).toMatchObject({ content: '被打断的半句话', stopped: true })
+
+      await service.sendSpace(space.id, `@${agent.name} 第二问`)
+      expect(run.mock.calls[1][1]).not.toContain('被打断的半句话')
+      expect(run.mock.calls[2][1]).toContain(`${agent.name}（回复已停止，内容可能不完整）：被打断的半句话`)
+    } finally { db.close() }
+  })
+
+  it('shows another space agent that a stopped reply is incomplete', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    let rejectRun!: (error: Error) => void
+    let emitText!: (text: string) => void
+    const run = vi.fn()
+      .mockImplementationOnce((_agent, _prompt, _id, onText: (text: string) => void) => {
+        emitText = onText
+        return new Promise((_resolve, reject) => { rejectRun = reject })
+      })
+      .mockResolvedValueOnce({ text: '已知悉', sessionId: 'other-session' })
+    const stop = vi.fn(async () => { rejectRun(new Error('runtime closed')); return true })
+    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const space = db.listSpaces()[0]
+      const firstAgent = db.getAgent(space.memberIds[0])!
+      const otherAgent = db.getAgent(space.memberIds[1])!
+      const first = service.sendSpace(space.id, `@${firstAgent.name} 第一问`)
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      emitText('被打断的半句话')
+      await service.stop('space', space.id)
+      await first
+
+      await service.sendSpace(space.id, `@${otherAgent.name} 请继续`)
+
+      expect(run.mock.calls[1][1]).toContain(`${firstAgent.name}（回复已停止，内容可能不完整）：被打断的半句话`)
     } finally { db.close() }
   })
 
@@ -376,6 +435,34 @@ describe('session context', () => {
     } finally {
       db.close()
     }
+  })
+
+  it('marks a stopped private reply as incomplete when runtime recovery replays history', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    let rejectRun!: (error: Error) => void
+    let emitText!: (text: string) => void
+    const run = vi.fn()
+      .mockImplementationOnce((_agent, _prompt, _id, onText: (text: string) => void) => {
+        emitText = onText
+        return new Promise((_resolve, reject) => { rejectRun = reject })
+      })
+      .mockRejectedValueOnce(new SessionResumeUnsupportedError())
+      .mockResolvedValueOnce({ text: '第二轮完成', sessionId: 'new-session' })
+    const stop = vi.fn(async () => { rejectRun(new Error('runtime closed')); return true })
+    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const agent = db.listAgents()[0]
+      const first = service.sendPrivate(agent.id, '第一问')
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      emitText('被打断的半句话')
+      await service.stop('private', agent.id)
+      await first
+
+      await service.sendPrivate(agent.id, '第二问')
+
+      expect(run.mock.calls[2][1]).toContain(`${agent.name}（回复已停止，内容可能不完整）：被打断的半句话`)
+    } finally { db.close() }
   })
 
   it('does not replay earlier replies when adopting a preexisting space conversation', async () => {

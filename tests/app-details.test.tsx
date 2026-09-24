@@ -51,6 +51,21 @@ function mockApi(): MindMeshApi {
 }
 
 describe('chat details', () => {
+  it('shows a persistent marker on a stopped reply loaded from history', async () => {
+    const api = mockApi()
+    api.chat.messages = vi.fn(async () => [{
+      id: 'stopped-message', scope: 'private' as const, scopeId: agent.id, authorType: 'agent' as const,
+      authorId: agent.id, authorName: agent.name, content: '被打断的半句话', stopped: true,
+      sequence: 1, createdAt: new Date().toISOString(),
+    }])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+
+    render(<App />)
+
+    expect(await screen.findByText('被打断的半句话')).toBeInTheDocument()
+    expect(screen.getByText('已停止 · 回复可能不完整')).toBeInTheDocument()
+  })
+
   it('opens the selected agent drawer from 查看详情', async () => {
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: mockApi() })
     render(<App />)

@@ -467,8 +467,8 @@ describe('runtime sessions', () => {
   })
 })
 
-describe('message reasoning', () => {
-  it('upgrades existing messages and keeps new reasoning after reopening', () => {
+describe('message metadata', () => {
+  it('upgrades existing messages and keeps reasoning, attachments, and stopped state after reopening', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-reasoning-'))
     const path = join(directory, 'mindmesh.sqlite')
     const old = new DatabaseSync(path)
@@ -482,17 +482,21 @@ describe('message reasoning', () => {
     old.close()
     try {
       const db = new MindMeshDatabase(path)
-      expect(db.listMessages('private', 'agent')[0]).toMatchObject({ content: '旧消息', reasoning: null, attachments: [] })
-      db.addMessage({ scope: 'private', scopeId: 'agent', authorType: 'agent',
-        authorName: 'Agent', content: '回答', reasoning: '先分析\n\n再回答', attachments: [{
-          type: 'image', name: 'chart.png', mediaType: 'image/png', bytes: 68,
-          data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=',
-        }] })
-      db.close()
+      try {
+        expect(db.listMessages('private', 'agent')[0]).toMatchObject({
+          content: '旧消息', reasoning: null, attachments: [], stopped: false,
+        })
+        db.addMessage({ scope: 'private', scopeId: 'agent', authorType: 'agent',
+          authorName: 'Agent', content: '回答', reasoning: '先分析\n\n再回答', stopped: true, attachments: [{
+            type: 'image', name: 'chart.png', mediaType: 'image/png', bytes: 68,
+            data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=',
+          }] })
+      } finally { db.close() }
       const reopened = new MindMeshDatabase(path)
       try {
         expect(reopened.listMessages('private', 'agent')[1]).toMatchObject({
-          content: '回答', reasoning: '先分析\n\n再回答', attachments: [{ name: 'chart.png', mediaType: 'image/png' }],
+          content: '回答', reasoning: '先分析\n\n再回答', stopped: true,
+          attachments: [{ name: 'chart.png', mediaType: 'image/png' }],
         })
       } finally { reopened.close() }
     } finally { rmSync(directory, { recursive: true, force: true }) }

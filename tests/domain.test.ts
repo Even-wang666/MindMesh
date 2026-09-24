@@ -47,4 +47,22 @@ describe('context builders', () => {
     expect(prompt).toContain('只实现核心路径')
     expect(prompt).toContain('Researcher：已有调研结论')
   })
+
+  it('labels stopped replies as incomplete in private history', () => {
+    const prompt = buildPrivatePrompt(
+      agents[0],
+      '继续',
+      [{ authorName: 'Researcher', content: '被打断的半句话', stopped: true }],
+    )
+    expect(prompt).toContain('Researcher（回复已停止，内容可能不完整）：被打断的半句话')
+  })
+
+  it('labels stopped replies as incomplete in shared space history', () => {
+    const prompt = buildSpacePrompt(
+      agents[1],
+      { name: 'MVP', context: '' },
+      [{ authorName: 'Researcher', content: '被打断的半句话', stopped: true }],
+    )
+    expect(prompt).toContain('Researcher（回复已停止，内容可能不完整）：被打断的半句话')
+  })
 })

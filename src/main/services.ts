@@ -154,7 +154,7 @@ export class MindMeshServices {
         if (error.text || error.reasoning) {
           this.db.addMessage({
             scope: 'private', scopeId: agentId, authorType: 'agent', authorId: agent.id,
-            authorName: sessionAgent.name, content: error.text, reasoning: error.reasoning || undefined,
+            authorName: sessionAgent.name, content: error.text, reasoning: error.reasoning || undefined, stopped: true,
           })
         }
         void this.refreshDeepSeekBalance()
@@ -224,10 +224,11 @@ export class MindMeshServices {
       } catch (error) {
         if (error instanceof ChatStoppedError) {
           if (error.text || error.reasoning) {
-            this.db.addMessage({
+            const reply = this.db.addMessage({
               scope: 'space', scopeId: spaceId, authorType: 'agent', authorId: agent.id,
-              authorName: sessionAgent.name, content: error.text, reasoning: error.reasoning || undefined,
+              authorName: sessionAgent.name, content: error.text, reasoning: error.reasoning || undefined, stopped: true,
             })
+            this.db.saveRuntimeSessionProgress(contextKey, session.harnessSessionId, reply.sequence)
           }
           void this.refreshDeepSeekBalance()
           break
