@@ -537,8 +537,8 @@ h1 { letter-spacing: -.032em; }
 }
 
 /* ── 分区拖拽条：用户可拖动调整三栏宽度 ─────────────────────────────────────
-   导航侧默认隐形；列表与内容之间常驻一条中性细线，明确提示右侧两区可以调宽。
-   hover / 键盘聚焦 / 拖动时统一浮出强调色。
+   默认隐藏实体线，只保留透明命中区；hover / 键盘聚焦 / 拖动时浮出强调色，
+   避免常驻线条压到右侧内容卡的圆角边缘。
    份额由 App.tsx 的 usePaneShares 写在这两个变量上（行内覆盖 .app-shell 的
    --nav-share / --list-share），不拖就一直是上面的默认值。
 
@@ -571,7 +571,6 @@ h1 { letter-spacing: -.032em; }
   background: transparent;
   transition: background var(--dur-1) var(--ease);
 }
-.pane-resizer[data-pane='list-content']::before { background: var(--nav-edge); }
 .pane-resizer:hover::before { background: var(--accent-line-strong); }
 .pane-resizer:focus-visible::before,
 .pane-resizer.is-active::before { background: var(--mm-color-iris); }
