@@ -103,6 +103,10 @@ try {
   await capture('agent-management.png')
   await openNav('技能', '.catalog-grid article')
   await capture('skill-library.png')
+  await openNav('工具', '.catalog-grid article')
+  await capture('tool-library.png')
+  await openNav('设置', '.settings-page')
+  await capture('settings.png')
 } finally {
   client?.socket.close()
   if (app.exitCode === null) {
