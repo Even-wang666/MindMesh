@@ -188,6 +188,16 @@ export class DeepSeekHarnessAdapter {
     }
   }
 
+  /** The SDK has no per-turn cancel method, so stopping a turn closes its owned runtime. */
+  async stop(agent: Agent): Promise<boolean> {
+    const key = this.runtimeKey(getAgentCapabilityHash(agent))
+    const entry = this.runtimes.get(key)
+    if (!entry) return false
+    this.runtimes.delete(key)
+    await entry.harness.close()
+    return true
+  }
+
   private packagedDshBin(): { dshBin?: string } {
     if (!process.resourcesPath) return {}
     const candidate = join(

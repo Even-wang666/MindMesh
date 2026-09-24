@@ -30,6 +30,7 @@ function mockApi(): MindMeshApi {
       messages: vi.fn(async () => []),
       sendPrivate: vi.fn(async () => []),
       sendSpace: vi.fn(async () => []),
+      stop: vi.fn(async () => false),
       onDelta: vi.fn(() => () => undefined),
       onProgress: vi.fn(() => () => undefined),
     },
@@ -576,6 +577,24 @@ describe('chat flow', () => {
     await waitFor(() => expect(screen.getByText('正在生成').tagName).toBe('STRONG'))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     await act(async () => resolveSend([]))
+  })
+
+  it('turns the send button into an enabled stop button while a reply is pending', async () => {
+    const api = mockApi()
+    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>(() => undefined))
+    const stop = vi.fn(async () => true)
+    api.chat.stop = stop
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    fireEvent.change(input, { target: { value: '请分析' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    const stopButton = await screen.findByRole('button', { name: '停止生成' })
+    expect(stopButton).toBeEnabled()
+    fireEvent.click(stopButton)
+    await waitFor(() => expect(stop).toHaveBeenCalledWith('private', agent.id))
   })
 
   it('reveals a complete model reply gradually after it arrives', async () => {

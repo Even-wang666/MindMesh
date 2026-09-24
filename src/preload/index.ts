@@ -19,6 +19,7 @@ const api: MindMeshApi = {
     messages: (scope, scopeId) => ipcRenderer.invoke('chat:messages', scope, scopeId),
     sendPrivate: (agentId, content, attachments, options) => ipcRenderer.invoke('chat:sendPrivate', agentId, content, attachments, options),
     sendSpace: (spaceId, content, attachments, options) => ipcRenderer.invoke('chat:sendSpace', spaceId, content, attachments, options),
+    stop: (scope, scopeId) => ipcRenderer.invoke('chat:stop', scope, scopeId),
     onDelta: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: ChatDelta): void => listener(payload)
       ipcRenderer.on('chat:delta', handler)

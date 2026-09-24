@@ -60,6 +60,7 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('chat:messages', (_event, scope, scopeId) => current.messages(scope, scopeId))
   ipcMain.handle('chat:sendPrivate', (_event, agentId, content, attachments, options) => current.sendPrivate(agentId, content, attachments, options))
   ipcMain.handle('chat:sendSpace', (_event, spaceId, content, attachments, options) => current.sendSpace(spaceId, content, attachments, options))
+  ipcMain.handle('chat:stop', (_event, scope, scopeId) => current.stop(scope, scopeId))
   ipcMain.handle('runtime:status', () => current.runtimeStatus())
   ipcMain.handle('settings:modelProviders', () => current.refreshModelProviders())
   ipcMain.handle('settings:workspace', () => current.harness.workspacePath)

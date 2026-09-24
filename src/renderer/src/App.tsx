@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import {
   Activity, Bot, Boxes, Check, ChevronRight, CircleHelp, Command, Eye, EyeOff, HardDrive,
   KeyRound, Library, MessageCircle, MoreHorizontal, PanelLeftClose, PanelLeftOpen,
-  Plus, Search, Send, Settings, ShieldCheck, Sparkles, Trash2, Wrench, X,
+  Plus, Search, Send, Settings, ShieldCheck, Sparkles, Square, Trash2, Wrench, X,
 } from 'lucide-react'
 import type {
   Agent, ChatImageAttachment, ChatImageMediaType, ChatPermission, ChatProgress, ChatRunOptions, CreateAgentInput, Message, ModelOption, ModelProviderId, ModelProviderStatus, RuntimeStatus,
@@ -54,6 +54,7 @@ export function App(): React.JSX.Element {
   const [streamingText, setStreamingText] = useState('')
   const [streamingReasoning, setStreamingReasoning] = useState('')
   const liveReplyIds = useRef(new Set<string>())
+  const activeRun = useRef<{ scope: Message['scope']; id: string } | null>(null)
   const appRef = useRef<HTMLElement | null>(null)
   const [shares, setShares] = usePaneShares(appRef)
 
@@ -128,11 +129,13 @@ export function App(): React.JSX.Element {
 
   async function send(content: string, attachments: ChatImageAttachment[] = [], options: ChatRunOptions = {}): Promise<boolean> {
     if ((!content.trim() && attachments.length === 0) || busy) return true
-    const scope = view === 'chats' ? 'private' : 'space'
+    const scope: Message['scope'] = view === 'chats' ? 'private' : 'space'
     const id = view === 'chats' ? selectedAgentId : selectedSpaceId
     if (!id || (view !== 'chats' && view !== 'spaces')) return false
     const requestConversation = `${scope}:${id}`
+    const requestRun = { scope, id }
     const knownIds = new Set(messages.map((message) => message.id))
+    activeRun.current = requestRun
     setBusy(true)
     setStreamingText('')
     setStreamingReasoning('')
@@ -183,9 +186,17 @@ export function App(): React.JSX.Element {
       }
       return saved || conversationRef.current !== requestConversation
     } finally {
+      if (activeRun.current === requestRun) activeRun.current = null
       setProgress(null)
       setBusy(false)
     }
+  }
+
+  async function stop(): Promise<void> {
+    const request = activeRun.current
+    if (!request) return
+    try { await window.mindmesh.chat.stop(request.scope, request.id) }
+    catch { /* The original send remains authoritative if stopping the runtime fails. */ }
   }
 
   /* 是否处于「导航 + 列表 + 内容」这个三栏形态。两栏形态（智能体/技能/工具/
@@ -220,11 +231,11 @@ export function App(): React.JSX.Element {
       <section className={hasList ? 'content has-list' : 'content'}>
         {view === 'chats' && (
           selectedAgent
-            ? <ChatPanel key={selectedAgent.id} agent={selectedAgent} models={models} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onDetail={() => setDetailAgentId(selectedAgent.id)} />
+            ? <ChatPanel key={selectedAgent.id} agent={selectedAgent} models={models} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onStop={stop} onDetail={() => setDetailAgentId(selectedAgent.id)} />
             : <EmptyState onCreate={() => setAgentWizard(true)} />
         )}
         {view === 'spaces' && (selectedSpace ? (
-          <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} models={models} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onEdit={() => setEditingSpaceId(selectedSpace.id)} onRemove={async (id) => { await window.mindmesh.spaces.remove(id); await refresh() }} onUpdateContext={async (id, context) => {
+          <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} models={models} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds.current} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onStop={stop} onEdit={() => setEditingSpaceId(selectedSpace.id)} onRemove={async (id) => { await window.mindmesh.spaces.remove(id); await refresh() }} onUpdateContext={async (id, context) => {
             const updated = await window.mindmesh.spaces.updateContext(id, context)
             setSpaces((current) => current.map((space) => space.id === id ? updated : space))
           }} />
@@ -567,9 +578,9 @@ function ObjectList(props: {
   )
 }
 
-function ChatPanel({ agent, models, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onDetail }: {
+function ChatPanel({ agent, models, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onStop, onDetail }: {
   agent: Agent; models: ModelOption[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
-  onSend: (content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions) => Promise<boolean>; onDetail: () => void
+  onSend: (content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions) => Promise<boolean>; onStop: () => Promise<void>; onDetail: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [model, setModel] = useState(agent.model)
@@ -594,14 +605,14 @@ function ChatPanel({ agent, models, messages, profile, busy, progress, streaming
         starters={['介绍一下你自己', '帮我梳理一个思路', '你能做些什么？']}
         onStarter={setDraft}
       />
-      <Composer busy={busy} canAttach={supportsImageInput(agent.provider, model)} placeholder={`给 ${agent.name} 发送消息…`} value={draft} onChange={setDraft} onSend={onSend} messages={messages} provider={agent.provider} model={model} models={availableModels} onModelChange={agent.provider === 'deepseek-official' ? setModel : undefined} />
+      <Composer busy={busy} canAttach={supportsImageInput(agent.provider, model)} placeholder={`给 ${agent.name} 发送消息…`} value={draft} onChange={setDraft} onSend={onSend} onStop={onStop} messages={messages} provider={agent.provider} model={model} models={availableModels} onModelChange={agent.provider === 'deepseek-official' ? setModel : undefined} />
     </div>
   )
 }
 
-function SpacePanel({ space, agents, models, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onEdit, onRemove, onUpdateContext }: {
+function SpacePanel({ space, agents, models, messages, profile, busy, progress, streamingText, streamingReasoning, liveReplyIds, onSend, onStop, onEdit, onRemove, onUpdateContext }: {
   space: Space; agents: Agent[]; models: ModelOption[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
-  onSend: (content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions) => Promise<boolean>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
+  onSend: (content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions) => Promise<boolean>; onStop: () => Promise<void>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
 }): React.JSX.Element {
   const members = agents.filter((agent) => space.memberIds.includes(agent.id))
   const [draft, setDraft] = useState('')
@@ -646,7 +657,7 @@ function SpacePanel({ space, agents, models, messages, profile, busy, progress, 
     <div className="page space-page">
       <header className="chat-header"><div className="chat-header-main"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p></div></div><div className="space-header-actions"><button className="ghost-button drawer-toggle" disabled={removing} aria-expanded={drawerOpen} onClick={() => setDrawerOpen((open) => !open)}>编辑空间 <ChevronRight size={15} /></button></div></header>
       <div className="space-layout">
-        <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} starters={['先让每位成员给出一版方案', '统一背景信息后再开始讨论']} onStarter={setDraft} /><Composer busy={busy} canAttach={canAttach} placeholder="@智能体 输入消息…" members={members} value={draft} onChange={setDraft} onSend={onSend} messages={messages} provider={routeAgent?.provider} model={model} models={availableModels} onModelChange={canSelectModel ? setModel : undefined} /></div>
+        <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} starters={['先让每位成员给出一版方案', '统一背景信息后再开始讨论']} onStarter={setDraft} /><Composer busy={busy} canAttach={canAttach} placeholder="@智能体 输入消息…" members={members} value={draft} onChange={setDraft} onSend={onSend} onStop={onStop} messages={messages} provider={routeAgent?.provider} model={model} models={availableModels} onModelChange={canSelectModel ? setModel : undefined} /></div>
         {drawerOpen && <aside className="context-drawer">
           <button className="secondary-button drawer-edit" disabled={busy || removing} onClick={onEdit}>编辑空间信息</button>
           <div className="drawer-section">
@@ -729,10 +740,11 @@ const PERMISSION_LABELS: Record<ChatPermission, string> = {
   full: '允许完全访问',
 }
 
-function Composer({ busy, canAttach, placeholder, members = [], value, onChange, onSend, messages, provider, model, models = [], onModelChange }: {
+function Composer({ busy, canAttach, placeholder, members = [], value, onChange, onSend, onStop, messages, provider, model, models = [], onModelChange }: {
   busy: boolean; canAttach: boolean; placeholder: string; members?: Agent[]; value: string
   onChange: React.Dispatch<React.SetStateAction<string>>
   onSend: (value: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions) => Promise<boolean>
+  onStop: () => Promise<void>
   messages: Message[]; provider?: string; model?: string; models?: ModelOption[]; onModelChange?: (model: string) => void
 }): React.JSX.Element {
   const [attachments, setAttachments] = useState<ChatImageAttachment[]>([])
@@ -848,7 +860,7 @@ function Composer({ busy, canAttach, placeholder, members = [], value, onChange,
               <button type="button" className="composer-control model" aria-label={`选择模型，当前 ${selectedModel?.name ?? '成员模型'}`} aria-expanded={openMenu === 'model'} disabled={!onModelChange} onClick={() => setOpenMenu((current) => current === 'model' ? null : 'model')}>{provider && providerLogos[provider as ModelProviderId] && <img src={providerLogos[provider as ModelProviderId]} alt="" />}{selectedModel?.name ?? '成员模型'}<ChevronRight size={13} /></button>
               {openMenu === 'model' && <div className="composer-menu model-menu">{models.map((item) => <button type="button" key={item.id} className={item.id === model ? 'selected' : ''} onClick={() => { onModelChange?.(item.id); setOpenMenu(null) }}>{item.name}</button>)}</div>}
             </div>
-            <button className="send-button" aria-label="发送" disabled={busy || (!value.trim() && attachments.length === 0) || (attachments.length > 0 && !canAttach)} onClick={() => void submit()}>{busy ? <span className="spinner" /> : <Send size={17} />}</button>
+            <button type="button" className="send-button" aria-label={busy ? '停止生成' : '发送'} disabled={!busy && ((!value.trim() && attachments.length === 0) || (attachments.length > 0 && !canAttach))} onClick={() => busy ? void onStop() : void submit()}>{busy ? <Square size={13} fill="currentColor" /> : <Send size={17} />}</button>
           </div>
         </div>
       </div>

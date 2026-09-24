@@ -12,6 +12,36 @@ const image: ChatImageAttachment = {
 }
 
 describe('chat failures', () => {
+  it('stops an active private reply without persisting a failure or later deltas', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const send = vi.fn()
+    let rejectRun!: (error: Error) => void
+    let emitText!: (text: string) => void
+    const run = vi.fn((_agent, _prompt, _id, onText: (text: string) => void) => new Promise((_resolve, reject) => {
+      rejectRun = reject
+      emitText = onText
+    }))
+    const stop = vi.fn(async () => rejectRun(new Error('runtime closed')))
+    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => ({ send }) as unknown as WebContents)
+    try {
+      const agent = db.listAgents()[0]
+      const pending = service.sendPrivate(agent.id, '请分析')
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      emitText('已经输出')
+
+      await expect(service.stop('private', agent.id)).resolves.toBe(true)
+      emitText('不应继续输出')
+      const messages = await pending
+
+      expect(stop).toHaveBeenCalledWith(agent)
+      expect(messages.map((message) => message.authorType)).toEqual(['user', 'agent'])
+      expect(messages.at(-1)?.content).toBe('已经输出')
+      expect(send.mock.calls.filter(([channel]) => channel === 'chat:delta'))
+        .toEqual([['chat:delta', expect.objectContaining({ text: '已经输出' })]])
+    } finally { db.close() }
+  })
+
   it('shows a runtime error after failure and clears it after a successful reply', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ text: '恢复', sessionId: 'session' })

@@ -118,6 +118,7 @@ export type MindMeshApi = {
     messages(scope: Message['scope'], scopeId: string): Promise<Message[]>
     sendPrivate(agentId: string, content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions): Promise<Message[]>
     sendSpace(spaceId: string, content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions): Promise<Message[]>
+    stop(scope: Message['scope'], scopeId: string): Promise<boolean>
     onDelta(listener: (event: ChatDelta) => void): () => void
     onProgress(listener: (event: ChatProgress) => void): () => void
   }

@@ -13,6 +13,7 @@ export class MindMeshServices {
   private deepSeekBalance: ModelProviderStatus['balance']
   private deepSeekBalanceError = false
   private balanceRequestGeneration = 0
+  private readonly activeStops = new Map<string, () => Promise<void>>()
   private deepSeekModelIds = new Set([
     ...MODEL_CATALOG.filter((item) => item.provider === 'deepseek-official').map((item) => item.id),
     'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp',
@@ -42,6 +43,13 @@ export class MindMeshServices {
   }
   updateSpaceContext = (id: string, context: string) => this.db.updateSpaceContext(id, context)
   messages = (scope: Message['scope'], scopeId: string) => this.db.listMessages(scope, scopeId)
+  async stop(scope: Message['scope'], scopeId: string): Promise<boolean> {
+    if ((scope !== 'private' && scope !== 'space') || typeof scopeId !== 'string') return false
+    const stop = this.activeStops.get(`${scope}:${scopeId}`)
+    if (!stop) return false
+    await stop()
+    return true
+  }
   modelProviders = () => this.providerSettings.statuses().map((provider) => provider.id === 'deepseek-official'
     ? { ...provider, balance: provider.configured ? this.deepSeekBalance : undefined,
         balanceError: provider.configured ? this.deepSeekBalanceError : undefined }
@@ -142,6 +150,16 @@ export class MindMeshServices {
         session.harnessSessionId, 'private', agentId, requestId,
         () => buildPrivatePrompt(session.agent, promptContent, history), images)
     } catch (error) {
+      if (error instanceof ChatStoppedError) {
+        if (error.text || error.reasoning) {
+          this.db.addMessage({
+            scope: 'private', scopeId: agentId, authorType: 'agent', authorId: agent.id,
+            authorName: session.agent.name, content: error.text, reasoning: error.reasoning || undefined,
+          })
+        }
+        void this.refreshDeepSeekBalance()
+        return this.db.listMessages('private', agentId)
+      }
       this.recordRuntimeError('private', agent.id, error)
       this.db.addMessage({
         scope: 'private', scopeId: agentId, authorType: 'system', authorName: 'MindMesh',
@@ -203,6 +221,16 @@ export class MindMeshServices {
           'space', spaceId, crypto.randomUUID(),
           () => buildSpacePrompt(session.agent, space, this.db.listMessages('space', spaceId)), images)
       } catch (error) {
+        if (error instanceof ChatStoppedError) {
+          if (error.text || error.reasoning) {
+            this.db.addMessage({
+              scope: 'space', scopeId: spaceId, authorType: 'agent', authorId: agent.id,
+              authorName: session.agent.name, content: error.text, reasoning: error.reasoning || undefined,
+            })
+          }
+          void this.refreshDeepSeekBalance()
+          break
+        }
         this.recordRuntimeError('space', agent.id, error)
         this.db.addMessage({
           scope: 'space', scopeId: spaceId, authorType: 'system', authorName: 'MindMesh',
@@ -278,18 +306,38 @@ export class MindMeshServices {
     attachments: ChatImageAttachment[] = [],
   ): ReturnType<DeepSeekHarnessAdapter['run']> {
     let streamed = ''
+    let streamedReasoning = ''
+    let stopped = false
+    const stopKey = `${scope}:${scopeId}`
+    const stop = async (): Promise<void> => {
+      stopped = true
+      await this.harness.stop(agent)
+    }
+    this.activeStops.set(stopKey, stop)
     const run = (input: string, id: string) => this.harness.run(agent, input, id, (text, kind) => {
-      if (kind !== 'reasoning') streamed += text
+      if (stopped) return
+      if (kind === 'reasoning') streamedReasoning += text
+      else streamed += text
       this.emitText(requestId, scope, scopeId, agent.id, text, kind)
     }, attachments)
     let result
     try {
       result = await run(prompt, sessionId)
     } catch (error) {
+      if (stopped) throw new ChatStoppedError(streamed, streamedReasoning)
       if (!(error instanceof SessionResumeUnsupportedError)) throw error
       streamed = ''
-      result = await run(recoveryPrompt(), `session-${crypto.randomUUID()}`)
+      streamedReasoning = ''
+      try {
+        result = await run(recoveryPrompt(), `session-${crypto.randomUUID()}`)
+      } catch (recoveryError) {
+        if (stopped) throw new ChatStoppedError(streamed, streamedReasoning)
+        throw recoveryError
+      }
+    } finally {
+      if (this.activeStops.get(stopKey) === stop) this.activeStops.delete(stopKey)
     }
+    if (stopped) throw new ChatStoppedError(streamed, streamedReasoning)
     if (result.text.startsWith(streamed) && result.text.length > streamed.length) {
       this.emitText(requestId, scope, scopeId, agent.id, result.text.slice(streamed.length))
     }
@@ -310,6 +358,12 @@ export class MindMeshServices {
     kind: 'text' | 'reasoning' = 'text',
   ): void {
     this.renderer()?.send('chat:delta', { requestId, scope, scopeId, agentId, text, kind })
+  }
+}
+
+class ChatStoppedError extends Error {
+  constructor(readonly text: string, readonly reasoning: string) {
+    super('模型生成已由用户停止')
   }
 }
 
