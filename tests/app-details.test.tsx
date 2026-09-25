@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent, ChatDelta, ChatProgress, Message, MindMeshApi, ModelProviderStatus, Space } from '../src/shared/contracts'
 import { createSkillReference } from '../src/shared/skill-reference'
@@ -204,6 +204,27 @@ describe('model provider balance', () => {
     await waitFor(() => expect(api.settings.saveModelProvider).toHaveBeenCalledOnce())
     await waitFor(() => expect(api.catalog.models).toHaveBeenCalledTimes(2))
   })
+
+  it('confirms removing a saved provider in the app dialog', async () => {
+    const provider: ModelProviderStatus = {
+      id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API',
+      configured: true, source: 'saved',
+    }
+    const api = mockApi()
+    api.settings.modelProviders = vi.fn(async () => [provider])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    fireEvent.click(await screen.findByRole('button', { name: '编辑' }))
+    fireEvent.click(screen.getByRole('button', { name: '移除' }))
+
+    const dialog = screen.getByRole('alertdialog')
+    expect(dialog).toHaveTextContent('移除 DeepSeek 的 API 配置？')
+    expect(api.settings.removeModelProvider).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: '移除配置' }))
+    await waitFor(() => expect(api.settings.removeModelProvider).toHaveBeenCalledWith(provider.id))
+  })
 })
 
 describe('user profile', () => {
@@ -227,51 +248,100 @@ describe('user profile', () => {
     expect(screen.getByText('小明', { selector: '.message header strong' })).toBeInTheDocument()
     expect(document.querySelector('.message.user .avatar img')).toBeInTheDocument()
   })
+
+  it('reports that the profile was saved and drops the notice once the draft changes again', async () => {
+    const api = mockApi()
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    fireEvent.change(await screen.findByRole('textbox', { name: '展示昵称' }), { target: { value: '小明' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存个人资料' }))
+    expect(await screen.findByText('个人资料已保存')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByRole('textbox', { name: '展示昵称' }), { target: { value: '小红' } })
+    expect(screen.queryByText('个人资料已保存')).not.toBeInTheDocument()
+  })
+
+  it('keeps a failed profile save visible instead of reporting success', async () => {
+    const api = mockApi()
+    api.settings.saveProfile = vi.fn(async () => { throw new Error('磁盘写入失败') })
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    fireEvent.change(await screen.findByRole('textbox', { name: '展示昵称' }), { target: { value: '小明' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存个人资料' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('磁盘写入失败')
+    expect(screen.queryByText('个人资料已保存')).not.toBeInTheDocument()
+  })
 })
 
 describe('agent deletion', () => {
-  it('requires confirmation before deleting an agent and selects a remaining agent', async () => {
+  it('confirms in an app dialog before deleting an agent and selects a remaining agent', async () => {
     const second = { ...agent, id: 'developer', name: 'Developer' }
     let current = [agent, second]
     const api = mockApi()
     api.agents.list = vi.fn(async () => current)
     api.agents.remove = vi.fn(async (id) => { current = current.filter((item) => item.id !== id) })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
-    try {
-      render(<App />)
-      fireEvent.click(await screen.findByRole('button', { name: /查看详情/ }))
-      fireEvent.click(screen.getByRole('button', { name: '删除智能体' }))
-      expect(api.agents.remove).not.toHaveBeenCalled()
-      confirm.mockReturnValue(true)
-      fireEvent.click(screen.getByRole('button', { name: '删除智能体' }))
-      await waitFor(() => expect(api.agents.remove).toHaveBeenCalledWith(agent.id))
-      expect(await screen.findByPlaceholderText('给 Developer 发送消息…')).toBeInTheDocument()
-    } finally { confirm.mockRestore() }
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /查看详情/ }))
+    fireEvent.click(screen.getByRole('button', { name: '删除智能体' }))
+
+    const dialog = screen.getByRole('alertdialog')
+    expect(dialog).toHaveTextContent('确定删除智能体「Researcher」吗？')
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+    expect(api.agents.remove).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '删除智能体' }))
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确定删除' }))
+    await waitFor(() => expect(api.agents.remove).toHaveBeenCalledWith(agent.id))
+    expect(await screen.findByPlaceholderText('给 Developer 发送消息…')).toBeInTheDocument()
+  })
+
+  it('keeps the dialog open with the reason when deleting fails', async () => {
+    const api = mockApi()
+    api.agents.remove = vi.fn(async () => { throw new Error('该智能体正在生成回复') })
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /查看详情/ }))
+    fireEvent.click(screen.getByRole('button', { name: '删除智能体' }))
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确定删除' }))
+
+    const dialog = await screen.findByRole('alertdialog')
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('该智能体正在生成回复')
+    expect(within(dialog).getByRole('button', { name: '确定删除' })).toBeEnabled()
   })
 })
 
 describe('space background', () => {
-  it('confirms Space deletion and shows an empty state after the last Space is removed', async () => {
+  it('confirms Space deletion in an app dialog and shows an empty state after the last Space is removed', async () => {
     const space: Space = { id: 'space', name: '临时空间', description: '', context: '', memberIds: [agent.id], createdAt: '' }
     let current = [space]
     const api = mockApi()
     api.spaces.list = vi.fn(async () => current)
     api.spaces.remove = vi.fn(async (id) => { current = current.filter((item) => item.id !== id) })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
-    try {
-      render(<App />)
-      fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
-      expect(screen.queryByRole('button', { name: '删除空间' })).not.toBeInTheDocument()
-      fireEvent.click(await screen.findByRole('button', { name: '编辑空间' }))
-      fireEvent.click(await screen.findByRole('button', { name: '删除空间' }))
-      expect(api.spaces.remove).not.toHaveBeenCalled()
-      confirm.mockReturnValue(true)
-      fireEvent.click(screen.getByRole('button', { name: '删除空间' }))
-      await waitFor(() => expect(api.spaces.remove).toHaveBeenCalledWith(space.id))
-      expect(await screen.findByRole('heading', { name: '还没有协作空间' })).toBeInTheDocument()
-    } finally { confirm.mockRestore() }
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
+    expect(screen.queryByRole('button', { name: '删除空间' })).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: '编辑空间' }))
+    fireEvent.click(await screen.findByRole('button', { name: '删除空间' }))
+
+    const dialog = screen.getByRole('alertdialog')
+    expect(dialog).toHaveTextContent('确定删除协作空间「临时空间」吗？')
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+    expect(api.spaces.remove).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '删除空间' }))
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确定删除' }))
+    await waitFor(() => expect(api.spaces.remove).toHaveBeenCalledWith(space.id))
+    expect(await screen.findByRole('heading', { name: '还没有协作空间' })).toBeInTheDocument()
   })
 
   it('shows one working edit action and refreshes the saved background', async () => {

@@ -56,6 +56,7 @@
   --p-danger-rgb: 168 58 58;
   --p-danger-dot-rgb: 168 58 58;
   --p-danger-bg: #fbf1f1;
+  --p-danger-press: #8a3030;
   --p-on-accent-rgb: 255 255 255;
 
   /* ── 导航图标专属色：彩虹六色，饱满鲜艳、一眼区分 ──
@@ -96,6 +97,7 @@
   --accent-line-strong: rgb(var(--p-accent-rgb) / 48%);
   --accent-shadow: rgb(var(--p-accent-rgb) / 26%);
   --iris-press: var(--p-accent-press);
+  --danger-press: var(--p-danger-press);
 
   --mm-color-success: var(--p-positive);
   /* 徽标底色用薄荷绿原值：低透明度的亮绿在浅底上是一层干净的水洗，
@@ -923,6 +925,18 @@ h1 { letter-spacing: -.032em; }
 }
 .danger-button:hover:not(:disabled) { background: var(--mm-color-danger-bg); }
 .danger-button:disabled { opacity: .45; }
+.danger-button.solid {
+  height: var(--h-control);
+  padding: 0 var(--sp-5);
+  border-color: var(--mm-color-danger);
+  color: var(--on-accent);
+  font-size: 13.5px;
+  font-weight: 640;
+  background: var(--mm-color-danger);
+  box-shadow: 0 1px 2px rgb(var(--p-danger-rgb) / 26%), 0 6px 18px rgb(var(--p-danger-rgb) / 26%);
+}
+.danger-button.solid:hover:not(:disabled) { border-color: var(--danger-press); background: var(--danger-press); }
+.danger-button.solid:disabled { box-shadow: none; }
 
 .text-button {
   height: var(--h-compact);
@@ -1645,7 +1659,7 @@ em,
 .profile-avatar:focus-within .secondary-button { outline: 2px solid var(--mm-color-iris); outline-offset: 2px; }
 .profile-avatar small { width: 100%; color: var(--text-tertiary); font-size: var(--fs-2xs); }
 .profile-form .field { max-width: 400px; }
-.profile-form .primary-button { margin-top: var(--sp-5); }
+.profile-actions { margin-top: var(--sp-5); display: flex; align-items: center; gap: var(--sp-4); }
 
 .setting-row { min-height: 96px; padding: var(--sp-5) var(--sp-6); display: flex; align-items: center; gap: var(--sp-5); }
 .setting-row > div:nth-child(2) { flex: 1; min-width: 0; }
@@ -1784,6 +1798,8 @@ em,
 .provider-actions > span { flex: 1; }
 
 .form-error { margin: -6px 0 var(--sp-3); color: var(--mm-color-danger); font-size: 12.5px; }
+.form-success { margin: 0; display: flex; align-items: center; gap: 6px; color: var(--mm-color-success); font-size: 12.5px; }
+.form-success svg { flex: 0 0 auto; }
 
 /* ── 字段 ───────────────────────────────────────────────────────────────── */
 
@@ -1832,6 +1848,34 @@ em,
   animation: backdrop-in var(--dur-2) var(--ease);
 }
 @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+
+.confirm-backdrop { z-index: 30; }
+.confirm-dialog {
+  width: min(420px, calc(100vw - 64px));
+  padding: var(--sp-7) var(--sp-7) var(--sp-6);
+  display: grid;
+  gap: var(--sp-5);
+  border-radius: var(--r-surface);
+  background: var(--surface-raised);
+  box-shadow: var(--sh-3);
+  animation: pop-in var(--dur-2) var(--ease);
+}
+.confirm-dialog > header { display: flex; align-items: flex-start; gap: var(--sp-4); }
+.confirm-dialog > header > div { flex: 1; min-width: 0; }
+.confirm-dialog h2 { margin: 0 0 var(--sp-2); font-size: var(--fs-heading); letter-spacing: -.02em; }
+.confirm-dialog p { margin: 0; color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1.7; overflow-wrap: break-word; }
+.confirm-mark {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: var(--r-control);
+  display: grid;
+  place-items: center;
+  color: var(--mm-color-danger);
+  background: var(--mm-color-danger-bg);
+}
+.confirm-dialog > footer { display: flex; justify-content: flex-end; gap: var(--sp-3); }
+.confirm-dialog .form-error { margin: 0; color: var(--mm-color-danger); }
 
 .wizard {
   width: min(880px, calc(100vw - 64px));

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
-  Activity, Bot, Boxes, Check, ChevronRight, CircleHelp, Command, Eye, EyeOff, HardDrive,
+  Activity, AlertTriangle, Bot, Boxes, Check, ChevronRight, CircleHelp, Command, Eye, EyeOff, HardDrive,
   KeyRound, Library, MessageCircle, MoreHorizontal, PanelLeftClose, PanelLeftOpen,
   Plus, Search, Send, Settings, ShieldCheck, Sparkles, Square, Trash2, Wrench, X,
 } from 'lucide-react'
@@ -34,6 +34,67 @@ const defaultAgent: CreateAgentInput = {
 }
 const defaultProfile: UserProfile = { name: '你', avatar: null }
 
+type ConfirmRequest = {
+  title: string
+  description: string
+  confirmLabel: string
+  onConfirm: () => void | Promise<void>
+}
+
+const ConfirmContext = createContext<((request: ConfirmRequest) => void) | null>(null)
+
+function useConfirm(): (request: ConfirmRequest) => void {
+  const confirm = useContext(ConfirmContext)
+  if (!confirm) throw new Error('useConfirm must be used inside ConfirmContext.Provider')
+  return confirm
+}
+
+function ConfirmDialog({ request, onClose }: { request: ConfirmRequest; onClose: () => void }): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key === 'Escape' && !busy) onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [busy, onClose])
+
+  async function approve(): Promise<void> {
+    setBusy(true)
+    setError('')
+    try {
+      await request.onConfirm()
+      onClose()
+    } catch (cause) {
+      setError(cause instanceof Error && cause.message ? cause.message : '操作失败，请重试。')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="modal-backdrop confirm-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose()
+      }}
+    >
+      <div className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description">
+        <header>
+          <span className="confirm-mark" aria-hidden="true"><AlertTriangle size={19} /></span>
+          <div><h2 id="confirm-title">{request.title}</h2><p id="confirm-description">{request.description}</p></div>
+        </header>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <footer>
+          <button className="secondary-button" autoFocus disabled={busy} onClick={onClose}>取消</button>
+          <button className="danger-button solid" disabled={busy} onClick={() => void approve()}>{busy && <span className="spinner" />}{request.confirmLabel}</button>
+        </footer>
+      </div>
+    </div>
+  )
+}
+
 export function App(): React.JSX.Element {
   const [view, setView] = useState<View>('chats')
   const [agents, setAgents] = useState<Agent[]>([])
@@ -49,6 +110,7 @@ export function App(): React.JSX.Element {
   const [editingSpaceId, setEditingSpaceId] = useState('')
   const [detailAgentId, setDetailAgentId] = useState<string>('')
   const [editingAgentId, setEditingAgentId] = useState<string>('')
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<ChatProgress | null>(null)
   const [streamingText, setStreamingText] = useState('')
@@ -214,6 +276,7 @@ export function App(): React.JSX.Element {
   const hasList = view === 'chats' || view === 'spaces'
   const resetShares = (): void => setShares(null)
   return (
+    <ConfirmContext.Provider value={setConfirmRequest}>
     <main
       className={shares ? 'app-shell has-custom-pane-shares' : 'app-shell'}
       ref={appRef}
@@ -259,7 +322,9 @@ export function App(): React.JSX.Element {
       {spaceWizard && <SpaceWizard agents={agents} onClose={() => setSpaceWizard(false)} onSaved={async () => { setSpaceWizard(false); await refresh() }} />}
       {editingSpaceId && <SpaceWizard agents={agents} initialSpace={spaces.find((item) => item.id === editingSpaceId)} onClose={() => setEditingSpaceId('')} onSaved={async () => { setEditingSpaceId(''); await refresh() }} />}
       {detailAgentId && <AgentDrawer agent={agents.find((item) => item.id === detailAgentId)} onClose={() => setDetailAgentId('')} onChat={(id) => { setSelectedAgentId(id); setView('chats'); setDetailAgentId('') }} onEdit={(id) => { setDetailAgentId(''); setEditingAgentId(id) }} onRemove={async (id) => { await window.mindmesh.agents.remove(id); setDetailAgentId(''); await refresh() }} />}
+      {confirmRequest && <ConfirmDialog request={confirmRequest} onClose={() => setConfirmRequest(null)} />}
     </main>
+    </ConfirmContext.Provider>
   )
 }
 
@@ -623,6 +688,7 @@ function SpacePanel({ space, agents, models, messages, profile, busy, progress, 
   space: Space; agents: Agent[]; models: ModelOption[]; messages: Message[]; profile: UserProfile; busy: boolean; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>
   onSend: (content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions) => Promise<boolean>; onStop: () => Promise<boolean>; onEdit: () => void; onRemove: (id: string) => Promise<void>; onUpdateContext: (id: string, context: string) => Promise<void>
 }): React.JSX.Element {
+  const confirm = useConfirm()
   const members = agents.filter((agent) => space.memberIds.includes(agent.id))
   const [draft, setDraft] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -630,8 +696,6 @@ function SpacePanel({ space, agents, models, messages, profile, busy, progress, 
   const [contextDraft, setContextDraft] = useState(space.context)
   const [savingContext, setSavingContext] = useState(false)
   const [contextError, setContextError] = useState('')
-  const [removeError, setRemoveError] = useState('')
-  const [removing, setRemoving] = useState(false)
   const attachmentTargets = parseMentions(draft, members)
   const routeTargets = attachmentTargets.length > 0 ? attachmentTargets : members.slice(0, 1)
   const routeAgent = routeTargets[0]
@@ -643,12 +707,13 @@ function SpacePanel({ space, agents, models, messages, profile, busy, progress, 
   const canAttach = attachmentTargets.length > 0
     ? attachmentTargets.every((agent) => supportsImageInput(agent.provider, canSelectModel ? model : agent.model))
     : members.some((agent) => supportsImageInput(agent.provider, agent.model))
-  async function remove(): Promise<void> {
-    if (!window.confirm(`确定删除协作空间「${space.name}」吗？空间及其聊天消息会从应用中删除。`)) return
-    setRemoving(true)
-    setRemoveError('')
-    try { await onRemove(space.id) }
-    catch { setRemoveError('删除失败，请重试。'); setRemoving(false) }
+  function requestRemove(): void {
+    confirm({
+      title: `确定删除协作空间「${space.name}」吗？`,
+      description: '空间及其聊天消息会从应用中删除，且无法恢复。',
+      confirmLabel: '确定删除',
+      onConfirm: () => onRemove(space.id),
+    })
   }
   async function saveContext(): Promise<void> {
     setSavingContext(true)
@@ -664,11 +729,11 @@ function SpacePanel({ space, agents, models, messages, profile, busy, progress, 
   }
   return (
     <div className="page space-page">
-      <header className="chat-header"><div className="chat-header-main"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p></div></div><div className="space-header-actions"><button className="ghost-button drawer-toggle" disabled={removing} aria-expanded={drawerOpen} onClick={() => setDrawerOpen((open) => !open)}>编辑空间 <ChevronRight size={15} /></button></div></header>
+      <header className="chat-header"><div className="chat-header-main"><div><h1>{space.name}</h1><p>{members.length} 个智能体 · {space.description}</p></div></div><div className="space-header-actions"><button className="ghost-button drawer-toggle" aria-expanded={drawerOpen} onClick={() => setDrawerOpen((open) => !open)}>编辑空间 <ChevronRight size={15} /></button></div></header>
       <div className="space-layout">
         <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} starters={['先让每位成员给出一版方案', '统一背景信息后再开始讨论']} onStarter={setDraft} /><Composer busy={busy} canAttach={canAttach} placeholder="@智能体 输入消息…" members={members} value={draft} onChange={setDraft} onSend={onSend} onStop={onStop} messages={messages} provider={routeAgent?.provider} model={model} models={availableModels} onModelChange={canSelectModel ? setModel : undefined} /></div>
         {drawerOpen && <aside className="context-drawer">
-          <button className="secondary-button drawer-edit" disabled={busy || removing} onClick={onEdit}>编辑空间信息</button>
+          <button className="secondary-button drawer-edit" disabled={busy} onClick={onEdit}>编辑空间信息</button>
           <div className="drawer-section">
             <span className="eyebrow">成员 · {members.length}</span>
             {members.length === 0 && <p className="form-error">这个空间还没有成员。</p>}
@@ -678,7 +743,7 @@ function SpacePanel({ space, agents, models, messages, profile, busy, progress, 
             <span className="eyebrow">背景信息</span>
             {editingContext ? <div className="context-editor"><textarea aria-label="背景信息" autoFocus value={contextDraft} onChange={(event) => setContextDraft(event.target.value)} />{contextError && <p className="form-error" role="alert">{contextError}</p>}<div><button className="secondary-button compact" disabled={savingContext} onClick={() => setEditingContext(false)}>取消</button><button className="primary-button compact" disabled={savingContext} onClick={() => void saveContext()}>保存背景</button></div></div> : <div className={space.context ? 'panel-card' : 'panel-card muted'}><p>{space.context || '暂无背景信息。'}</p><button className="text-button" onClick={() => { setContextDraft(space.context); setContextError(''); setEditingContext(true) }}>编辑背景</button></div>}
           </div>
-          <div className="drawer-danger">{removeError && <p className="form-error" role="alert">{removeError}</p>}<button className="list-create drawer-delete" disabled={busy || removing} onClick={() => void remove()}><Trash2 size={15} />删除空间</button></div>
+          <div className="drawer-danger"><button className="list-create drawer-delete" disabled={busy} onClick={requestRemove}><Trash2 size={15} />删除空间</button></div>
         </aside>}
       </div>
     </div>
@@ -984,7 +1049,18 @@ function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: 
   const [saving, setSaving] = useState(false)
   const [reading, setReading] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   useEffect(() => setDraft(profile), [profile])
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
+  function editDraft(update: (current: UserProfile) => UserProfile): void {
+    setNotice('')
+    setDraft(update)
+  }
 
   function chooseAvatar(file?: File): void {
     if (!file) return
@@ -996,7 +1072,7 @@ function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: 
     const reader = new FileReader()
     reader.onload = () => {
       const image = reader.result
-      if (typeof image === 'string') { setDraft((current) => ({ ...current, avatar: image })); setError('') }
+      if (typeof image === 'string') { editDraft((current) => ({ ...current, avatar: image })); setError('') }
       else setError('无法读取图片，请重试')
       setReading(false)
     }
@@ -1008,10 +1084,12 @@ function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: 
     if (!draft.name.trim()) { setError('请输入昵称'); return }
     setSaving(true)
     setError('')
+    setNotice('')
     try {
       const saved = await window.mindmesh.settings.saveProfile(draft)
       setDraft(saved)
       onSaved(saved)
+      setNotice('个人资料已保存')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '保存失败，请重试')
     } finally {
@@ -1019,7 +1097,7 @@ function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: 
     }
   }
 
-  return <section className="settings-section profile-section"><h2>个人资料</h2><div className="profile-form"><div className="profile-avatar"><Avatar name={draft.name} image={draft.avatar} large /><div><label className="secondary-button compact" htmlFor="profile-avatar-input">选择头像</label><input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => chooseAvatar(event.target.files?.[0])} />{draft.avatar && <button className="text-button" onClick={() => setDraft({ ...draft, avatar: null })}>移除头像</button>}<small>PNG、JPEG、WebP 或 GIF，最大 1 MB</small></div></div><label className="field"><span>展示昵称</span><input value={draft.name} maxLength={40} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button compact" disabled={saving || reading} onClick={() => void saveProfile()}>保存个人资料</button></div></section>
+  return <section className="settings-section profile-section"><h2>个人资料</h2><div className="profile-form"><div className="profile-avatar"><Avatar name={draft.name} image={draft.avatar} large /><div><label className="secondary-button compact" htmlFor="profile-avatar-input">选择头像</label><input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => chooseAvatar(event.target.files?.[0])} />{draft.avatar && <button className="text-button" onClick={() => editDraft((current) => ({ ...current, avatar: null }))}>移除头像</button>}<small>PNG、JPEG、WebP 或 GIF，最大 1 MB</small></div></div><label className="field"><span>展示昵称</span><input value={draft.name} maxLength={40} onChange={(event) => editDraft((current) => ({ ...current, name: event.target.value }))} /></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="profile-actions"><button className="primary-button compact" disabled={saving || reading} onClick={() => void saveProfile()}>保存个人资料</button>{notice && <p className="form-success" role="status"><Check size={15} />{notice}</p>}</div></div></section>
 }
 
 function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange, onProviderChange }: {
@@ -1030,6 +1108,7 @@ function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange
   onRuntimeChange: (runtime: RuntimeStatus) => void
   onProviderChange: () => Promise<void>
 }): React.JSX.Element {
+  const confirm = useConfirm()
   const [providers, setProviders] = useState<ModelProviderStatus[]>([])
   const [editing, setEditing] = useState<ModelProviderId | null>(null)
   const [form, setForm] = useState<SaveModelProviderInput>({ id: 'deepseek-official', apiKey: '' })
@@ -1081,17 +1160,17 @@ function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange
   }
 
   async function remove(provider: ModelProviderStatus): Promise<void> {
-    if (!window.confirm(`移除当前设备上保存的 ${provider.name} API 配置？`)) return
-    setSaving(true)
-    setError('')
-    try {
-      await refreshStatus(await window.mindmesh.settings.removeModelProvider(provider.id))
-      closeEditor()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '移除失败，请稍后重试')
-    } finally {
-      setSaving(false)
-    }
+    await refreshStatus(await window.mindmesh.settings.removeModelProvider(provider.id))
+    closeEditor()
+  }
+
+  function requestRemove(provider: ModelProviderStatus): void {
+    confirm({
+      title: `移除 ${provider.name} 的 API 配置？`,
+      description: '这台设备上保存的 API Key 会被清除，需要重新填写才能继续使用该模型服务。',
+      confirmLabel: '移除配置',
+      onConfirm: () => remove(provider),
+    })
   }
 
   function openEditor(provider: ModelProviderStatus | { id: 'custom' }): void {
@@ -1176,7 +1255,7 @@ function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange
         </label>
         {(validationError || error) && <p className="form-error">{validationError || error}</p>}
         <div className="provider-actions">
-          {provider?.source === 'saved' && <button className="danger-button" disabled={saving} onClick={() => void remove(provider)}><Trash2 size={15} />移除</button>}
+          {provider?.source === 'saved' && <button className="danger-button" disabled={saving} onClick={() => requestRemove(provider)}><Trash2 size={15} />移除</button>}
           <span />
           <button className="secondary-button compact" disabled={saving} onClick={closeEditor}>取消</button>
           <button className="primary-button compact" disabled={saving || !form.apiKey.trim() || validationError !== null} onClick={() => void save()}>{saving ? <span className="spinner" /> : <Check size={15} />}保存</button>
@@ -1289,17 +1368,18 @@ function SpaceWizard({ agents, initialSpace, onClose, onSaved }: { agents: Agent
 function AgentDrawer({ agent, onClose, onChat, onEdit, onRemove }: {
   agent?: Agent; onClose: () => void; onChat: (id: string) => void; onEdit: (id: string) => void; onRemove: (id: string) => Promise<void>
 }): React.JSX.Element | null {
-  const [removing, setRemoving] = useState(false)
-  const [error, setError] = useState('')
+  const confirm = useConfirm()
   if (!agent) return null
-  async function remove(): Promise<void> {
-    if (!agent || !window.confirm(`确定删除智能体「${agent.name}」吗？该操作会将其从协作空间移除。`)) return
-    setRemoving(true)
-    setError('')
-    try { await onRemove(agent.id) }
-    catch { setError('删除失败，请重试。'); setRemoving(false) }
+  const target = agent
+  function requestRemove(): void {
+    confirm({
+      title: `确定删除智能体「${target.name}」吗？`,
+      description: '该操作会将其从协作空间移除。',
+      confirmLabel: '确定删除',
+      onConfirm: () => onRemove(target.id),
+    })
   }
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="agent-drawer" onMouseDown={(event) => event.stopPropagation()}><header><Avatar name={agent.name} large /><div><h2>{agent.name}</h2><p>{agent.role}</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header><section><span className="eyebrow">身份设定</span><p>{agent.persona}</p></section><section><span className="eyebrow">模型</span><p><em>{agent.model}</em></p></section><section><span className="eyebrow">技能</span><div className="tags">{agent.skills.map((item) => <i key={item}>{skillDisplayName(item)}</i>)}</div></section><section><span className="eyebrow">工具</span><div className="tags">{agent.tools.map((item) => <i key={item}>{item}</i>)}</div></section><footer>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button" disabled={removing} onClick={() => onChat(agent.id)}>开始对话</button><button className="secondary-button" disabled={removing} onClick={() => onEdit(agent.id)}>编辑智能体</button><button className="danger-button" disabled={removing} onClick={() => void remove()}><Trash2 size={15} />删除智能体</button></footer></aside></div>
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="agent-drawer" onMouseDown={(event) => event.stopPropagation()}><header><Avatar name={agent.name} large /><div><h2>{agent.name}</h2><p>{agent.role}</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header><section><span className="eyebrow">身份设定</span><p>{agent.persona}</p></section><section><span className="eyebrow">模型</span><p><em>{agent.model}</em></p></section><section><span className="eyebrow">技能</span><div className="tags">{agent.skills.map((item) => <i key={item}>{skillDisplayName(item)}</i>)}</div></section><section><span className="eyebrow">工具</span><div className="tags">{agent.tools.map((item) => <i key={item}>{item}</i>)}</div></section><footer><button className="primary-button" onClick={() => onChat(agent.id)}>开始对话</button><button className="secondary-button" onClick={() => onEdit(agent.id)}>编辑智能体</button><button className="danger-button" onClick={requestRemove}><Trash2 size={15} />删除智能体</button></footer></aside></div>
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element { return <label className="field"><span>{label}</span>{children}</label> }
