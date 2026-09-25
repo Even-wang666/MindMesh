@@ -113,8 +113,8 @@ async function runRound(round) {
         setter.call(input, ${JSON.stringify(message)})
         input.dispatchEvent(new Event('input', { bubbles: true }))
       })()`)
-      await until(() => evaluate('!document.querySelector(".composer-actions button").disabled'))
-      await evaluate('document.querySelector(".composer-actions button").click()')
+      await until(() => evaluate('!document.querySelector(".composer-actions .send-button").disabled'))
+      await evaluate('document.querySelector(".composer-actions .send-button").click()')
     }
 
     const privateMarker = `MM_PRIVATE_${Date.now()}`
@@ -144,7 +144,9 @@ async function runRound(round) {
     console.log(`Electron Space collaboration UI round ${round}: OK`)
 
     if (round === 2 || process.env.MINDMESH_E2E_RESTART !== '1') {
-      await evaluate("document.querySelector('.space-page .chat-header button').click()")
+      await evaluate("document.querySelector('.space-page .drawer-toggle').click()")
+      await until(() => evaluate('Boolean(document.querySelector(".space-page .drawer-edit"))'))
+      await evaluate("document.querySelector('.space-page .drawer-edit').click()")
       await until(() => evaluate('Boolean(document.querySelector(".wizard.compact input"))'))
       await evaluate(`(() => {
         const input = document.querySelector('.wizard.compact input')
