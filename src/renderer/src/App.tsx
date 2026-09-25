@@ -835,6 +835,7 @@ function Composer({ busy, canAttach, placeholder, members = [], value, onChange,
   const [openMenu, setOpenMenu] = useState<'permission' | 'model' | 'context' | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const selectedModel = models.find((item) => item.id === model)
+    ?? models.find((item) => item.name === displayModelName(model ?? ''))
   const contextWindow = selectedModel?.contextWindow ?? getModelContextWindow(provider ?? '', model ?? '')
   const estimatedTokens = estimateContextTokens(messages, value)
   const contextPercent = contextWindow ? Math.min(100, estimatedTokens / contextWindow * 100) : 0
@@ -1016,7 +1017,7 @@ function modelsForProvider(provider: string | undefined, selectedModel: string, 
       available.push({ provider, id, name: displayModelName(id), contextWindow: getModelContextWindow(provider, id) })
     }
   }
-  return available
+  return available.filter((item, index) => available.findIndex((candidate) => candidate.name === item.name) === index)
 }
 
 function estimateContextTokens(messages: Message[], draft: string): number {

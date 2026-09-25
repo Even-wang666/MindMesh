@@ -440,6 +440,7 @@ describe('chat flow', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: /选择模型/ }))
+    expect(screen.getAllByRole('button', { name: 'DeepSeek V4.1 Flash' })).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: 'DeepSeek V4 Pro' }))
     fireEvent.click(screen.getByRole('button', { name: /权限：允许完全访问/ }))
     fireEvent.click(screen.getByRole('button', { name: '仅对话' }))
