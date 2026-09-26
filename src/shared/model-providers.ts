@@ -10,18 +10,43 @@ export type ModelProviderDefinition = {
   minLength: number
   maxLength: number
   prefix: string
+  baseUrl?: string
 }
 
 export const MODEL_PROVIDER_DEFINITIONS: ModelProviderDefinition[] = [
+  {
+    id: 'qwen', name: '通义千问', description: '阿里云百炼模型服务',
+    environmentKey: 'DASHSCOPE_API_KEY', apiKeyExample: 'sk-0123456789abcdef0123456789abcdef',
+    apiKeyHint: '通常以 sk- 开头，请粘贴阿里云百炼生成的完整密钥', minLength: 20, maxLength: 200, prefix: 'sk-',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  },
   {
     id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API',
     environmentKey: 'DEEPSEEK_API_KEY', apiKeyExample: 'sk-0123456789abcdefghijklmnopqrstuv',
     apiKeyHint: '以 sk- 开头，完整长度 27-67 位', minLength: 27, maxLength: 67, prefix: 'sk-',
   },
   {
+    id: 'zhipu', name: '智谱 GLM', description: '智谱 AI 开放平台',
+    environmentKey: 'ZHIPU_API_KEY', apiKeyExample: '粘贴智谱 AI 开放平台生成的 API Key',
+    apiKeyHint: '请粘贴智谱 AI 开放平台生成的完整密钥', minLength: 8, maxLength: 300, prefix: '',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+  },
+  {
     id: 'moonshotai-cn', name: 'Kimi', description: 'Moonshot AI 开放平台',
     environmentKey: 'MOONSHOT_API_KEY', apiKeyExample: 'sk-0123456789abcdef0123456789abcdef',
     apiKeyHint: '通常以 sk- 开头，请粘贴开放平台生成的完整密钥', minLength: 20, maxLength: 200, prefix: 'sk-',
+  },
+  {
+    id: 'minimax', name: 'MiniMax', description: 'MiniMax 开放平台',
+    environmentKey: 'MINIMAX_API_KEY', apiKeyExample: '粘贴 MiniMax 开放平台生成的 API Key',
+    apiKeyHint: '请粘贴 MiniMax 开放平台生成的完整密钥', minLength: 8, maxLength: 300, prefix: '',
+    baseUrl: 'https://api.minimaxi.com/v1',
+  },
+  {
+    id: 'stepfun', name: '阶跃星辰', description: '阶跃星辰开放平台',
+    environmentKey: 'STEPFUN_API_KEY', apiKeyExample: '粘贴阶跃星辰开放平台生成的 API Key',
+    apiKeyHint: '请粘贴阶跃星辰开放平台生成的完整密钥', minLength: 8, maxLength: 300, prefix: '',
+    baseUrl: 'https://api.stepfun.com/v1',
   },
   {
     id: 'openai', name: 'OpenAI', description: 'ChatGPT 模型 API',
@@ -44,6 +69,14 @@ export const MODEL_CATALOG = [
   { provider: 'openai', id: 'gpt-4.1', name: 'GPT-4.1' },
   { provider: 'anthropic', id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
   { provider: 'anthropic', id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
+  { provider: 'minimax', id: 'MiniMax-M3', name: 'MiniMax M3', contextWindow: 1_000_000 },
+  { provider: 'minimax', id: 'MiniMax-M2.7', name: 'MiniMax M2.7', contextWindow: 1_000_000 },
+  { provider: 'zhipu', id: 'glm-5', name: 'GLM-5' },
+  { provider: 'zhipu', id: 'glm-4.7', name: 'GLM-4.7' },
+  { provider: 'qwen', id: 'qwen3.8-max', name: 'Qwen3.8 Max' },
+  { provider: 'qwen', id: 'qwen3.6-plus', name: 'Qwen3.6 Plus' },
+  { provider: 'stepfun', id: 'step-5-preview', name: 'Step 5 Preview' },
+  { provider: 'stepfun', id: 'step-3.7-flash', name: 'Step 3.7 Flash' },
 ]
 
 export function getModelContextWindow(provider: string, model: string): number | undefined {
@@ -76,10 +109,10 @@ export function getModelProviderApiKeyError(id: ModelProviderId, value: string):
 
   const provider = getModelProviderDefinition(id)
   if (!provider) return '不支持的模型服务商'
-  if (!apiKey.startsWith(provider.prefix)) return `${provider.name} API Key 必须以 ${provider.prefix} 开头`
+  if (provider.prefix && !apiKey.startsWith(provider.prefix)) return `${provider.name} API Key 必须以 ${provider.prefix} 开头`
   if (apiKey.length < provider.minLength || apiKey.length > provider.maxLength) {
     return `完整长度应为 ${provider.minLength}-${provider.maxLength} 个字符，当前 ${apiKey.length} 个`
   }
-  if (!/^[A-Za-z0-9_-]+$/.test(apiKey)) return 'API Key 仅支持字母、数字、短横线和下划线'
+  if (!/^[A-Za-z0-9_.-]+$/.test(apiKey)) return 'API Key 仅支持字母、数字、点、短横线和下划线'
   return null
 }

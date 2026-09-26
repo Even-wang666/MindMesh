@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Agent, ChatDelta, ChatProgress, Message, MindMeshApi, ModelProviderStatus, Space } from '../src/shared/contracts'
+import type { Agent, ChatDelta, ChatProgress, Message, MindMeshApi, ModelProviderStatus, Space, UserProfile } from '../src/shared/contracts'
 import { createSkillReference } from '../src/shared/skill-reference'
 import { App } from '../src/renderer/src/App'
 
@@ -23,6 +23,7 @@ const agent: Agent = {
 }
 
 function mockApi(): MindMeshApi {
+  let storedProfile: UserProfile = { name: '你', avatar: null }
   return {
     agents: { list: vi.fn(async () => [agent]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
     spaces: { list: vi.fn(async () => []), create: vi.fn(), update: vi.fn(), remove: vi.fn(), updateContext: vi.fn() },
@@ -41,8 +42,8 @@ function mockApi(): MindMeshApi {
     settings: {
       workspace: vi.fn(async () => 'C:\\MindMesh'),
       chooseWorkspace: vi.fn(async () => 'C:\\My Files'),
-      profile: vi.fn(async () => ({ name: '你', avatar: null })),
-      saveProfile: vi.fn(async (profile) => profile),
+      profile: vi.fn(async () => storedProfile),
+      saveProfile: vi.fn(async (profile) => { storedProfile = profile; return profile }),
       modelProviders: vi.fn(async () => []),
       saveModelProvider: vi.fn(async () => []),
       removeModelProvider: vi.fn(async () => []),
@@ -238,7 +239,8 @@ describe('user profile', () => {
     render(<App />)
     expect(await screen.findByText('你好')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
-    fireEvent.change(screen.getByRole('textbox', { name: '展示昵称' }), { target: { value: '小明' } })
+    fireEvent.click(screen.getByRole('button', { name: '编辑资料' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '你希望智能体怎么称呼你' }), { target: { value: '小明' } })
     fireEvent.change(document.getElementById('profile-avatar-input')!, { target: { files: [new File(['image'], 'avatar.png', { type: 'image/png' })] } })
     await waitFor(() => expect(document.querySelector('.profile-avatar img')).toHaveAttribute('src', expect.stringMatching(/^data:image\/png;base64,/)))
     fireEvent.click(screen.getByRole('button', { name: '保存个人资料' }))
@@ -249,17 +251,51 @@ describe('user profile', () => {
     expect(document.querySelector('.message.user .avatar img')).toBeInTheDocument()
   })
 
-  it('reports that the profile was saved and drops the notice once the draft changes again', async () => {
+  it('switches between profile display and editing without keeping cancelled changes', async () => {
     const api = mockApi()
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
-    fireEvent.change(await screen.findByRole('textbox', { name: '展示昵称' }), { target: { value: '小明' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存个人资料' }))
-    expect(await screen.findByText('个人资料已保存')).toBeInTheDocument()
+    expect(await screen.findByText('智能体在对话中会这样称呼你')).toBeInTheDocument()
+    expect(document.querySelector('.profile-section > .profile-row')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: '你希望智能体怎么称呼你' })).not.toBeInTheDocument()
 
-    fireEvent.change(screen.getByRole('textbox', { name: '展示昵称' }), { target: { value: '小红' } })
+    fireEvent.click(screen.getByRole('button', { name: '编辑资料' }))
+    const input = screen.getByRole('textbox', { name: '你希望智能体怎么称呼你' })
+    expect(input).toHaveAccessibleDescription('这个名字会显示在对话里，智能体也会用它称呼你')
+    fireEvent.change(input, { target: { value: '小红' } })
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+
+    expect(screen.queryByRole('textbox', { name: '你希望智能体怎么称呼你' })).not.toBeInTheDocument()
+    expect(document.querySelector('.profile-name')).toHaveTextContent('你')
+    expect(api.settings.saveProfile).not.toHaveBeenCalled()
+  })
+
+  it('saves only substantive profile changes and returns to display mode', async () => {
+    const api = mockApi()
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    fireEvent.click(await screen.findByRole('button', { name: '编辑资料' }))
+    const input = screen.getByRole('textbox', { name: '你希望智能体怎么称呼你' })
+    const save = screen.getByRole('button', { name: '保存个人资料' })
+    expect(save).toBeDisabled()
+
+    fireEvent.change(input, { target: { value: ' 你 ' } })
+    expect(save).toBeDisabled()
+    fireEvent.change(input, { target: { value: ' 小明 ' } })
+    expect(save).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '保存个人资料' }))
+
+    await waitFor(() => expect(api.settings.saveProfile).toHaveBeenCalledWith({ name: '小明', avatar: null }))
+    expect(await screen.findByRole('status')).toHaveTextContent('个人资料已保存')
+    expect(screen.getByRole('status').tagName).toBe('SPAN')
+    expect(screen.queryByRole('textbox', { name: '你希望智能体怎么称呼你' })).not.toBeInTheDocument()
+    expect(document.querySelector('.profile-name')).toHaveTextContent('小明')
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑资料' }))
     expect(screen.queryByText('个人资料已保存')).not.toBeInTheDocument()
   })
 
@@ -270,11 +306,13 @@ describe('user profile', () => {
     render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
-    fireEvent.change(await screen.findByRole('textbox', { name: '展示昵称' }), { target: { value: '小明' } })
+    fireEvent.click(await screen.findByRole('button', { name: '编辑资料' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '你希望智能体怎么称呼你' }), { target: { value: '小明' } })
     fireEvent.click(screen.getByRole('button', { name: '保存个人资料' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('磁盘写入失败')
     expect(screen.queryByText('个人资料已保存')).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '你希望智能体怎么称呼你' })).toHaveValue('小明')
   })
 })
 

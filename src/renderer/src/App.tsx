@@ -19,7 +19,11 @@ import { BrandLogo } from './BrandLogo'
 import anthropicLogo from './assets/providers/anthropic.svg'
 import deepseekLogo from './assets/providers/deepseek.svg'
 import kimiLogo from './assets/providers/kimi.png'
+import minimaxLogo from './assets/providers/minimax.svg'
 import openaiLogo from './assets/providers/openai.svg'
+import qwenLogo from './assets/providers/qwen.svg'
+import stepfunLogo from './assets/providers/stepfun.svg'
+import zhipuLogo from './assets/providers/zhipu.svg'
 
 type View = 'chats' | 'spaces' | 'agents' | 'skills' | 'tools' | 'settings'
 const providerLogos: Partial<Record<ModelProviderId, string>> = {
@@ -27,6 +31,10 @@ const providerLogos: Partial<Record<ModelProviderId, string>> = {
   'moonshotai-cn': kimiLogo,
   openai: openaiLogo,
   anthropic: anthropicLogo,
+  minimax: minimaxLogo,
+  zhipu: zhipuLogo,
+  qwen: qwenLogo,
+  stepfun: stepfunLogo,
 }
 
 const defaultAgent: CreateAgentInput = {
@@ -1047,6 +1055,7 @@ function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element 
 
 function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: (profile: UserProfile) => void }): React.JSX.Element {
   const [draft, setDraft] = useState(profile)
+  const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [reading, setReading] = useState(false)
   const [error, setError] = useState('')
@@ -1057,10 +1066,24 @@ function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: 
     const timer = window.setTimeout(() => setNotice(''), 4000)
     return () => window.clearTimeout(timer)
   }, [notice])
+  const changed = draft.name.trim() !== profile.name || draft.avatar !== profile.avatar
 
   function editDraft(update: (current: UserProfile) => UserProfile): void {
     setNotice('')
     setDraft(update)
+  }
+
+  function startEditing(): void {
+    setDraft(profile)
+    setError('')
+    setNotice('')
+    setEditing(true)
+  }
+
+  function cancelEditing(): void {
+    setDraft(profile)
+    setError('')
+    setEditing(false)
   }
 
   function chooseAvatar(file?: File): void {
@@ -1083,22 +1106,31 @@ function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: 
 
   async function saveProfile(): Promise<void> {
     if (!draft.name.trim()) { setError('请输入昵称'); return }
+    if (!changed) { setEditing(false); return }
     setSaving(true)
     setError('')
     setNotice('')
     try {
-      const saved = await window.mindmesh.settings.saveProfile(draft)
+      const saved = await window.mindmesh.settings.saveProfile({ name: draft.name.trim(), avatar: draft.avatar })
       setDraft(saved)
       onSaved(saved)
       setNotice('个人资料已保存')
+      setEditing(false)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '保存失败，请重试')
+      setError(cause instanceof Error && cause.message ? cause.message : '保存失败，请重试')
     } finally {
       setSaving(false)
     }
   }
 
-  return <section className="settings-section profile-section"><h2>个人资料</h2><div className="profile-form"><div className="profile-avatar"><Avatar name={draft.name} image={draft.avatar} large /><div><label className="secondary-button compact" htmlFor="profile-avatar-input">选择头像</label><input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => chooseAvatar(event.target.files?.[0])} />{draft.avatar && <button className="text-button" onClick={() => editDraft((current) => ({ ...current, avatar: null }))}>移除头像</button>}<small>PNG、JPEG、WebP 或 GIF，最大 1 MB</small></div></div><label className="field"><span>展示昵称</span><input value={draft.name} maxLength={40} onChange={(event) => editDraft((current) => ({ ...current, name: event.target.value }))} /></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="profile-actions"><button className="primary-button compact" disabled={saving || reading} onClick={() => void saveProfile()}>保存个人资料</button>{notice && <p className="form-success" role="status"><Check size={15} />{notice}</p>}</div></div></section>
+  return <section className="settings-section profile-section"><h2>个人资料</h2>{editing
+    ? <div className="profile-form">
+        <div className="profile-avatar"><Avatar name={draft.name} image={draft.avatar} large /><div><label className="secondary-button compact" htmlFor="profile-avatar-input">选择头像</label><input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => chooseAvatar(event.target.files?.[0])} />{draft.avatar && <button className="text-button" onClick={() => editDraft((current) => ({ ...current, avatar: null }))}>移除头像</button>}<small>PNG、JPEG、WebP 或 GIF，最大 1 MB</small></div></div>
+        <div className="field"><label htmlFor="profile-name-input">你希望智能体怎么称呼你</label><input id="profile-name-input" autoFocus aria-describedby="profile-name-hint" value={draft.name} maxLength={40} placeholder="例如：小明、王工、老板" onChange={(event) => editDraft((current) => ({ ...current, name: event.target.value }))} /><small className="field-hint" id="profile-name-hint">这个名字会显示在对话里，智能体也会用它称呼你</small></div>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="profile-actions"><button className="primary-button compact" disabled={saving || reading || !changed} onClick={() => void saveProfile()}>保存个人资料</button><button className="secondary-button compact" disabled={saving} onClick={cancelEditing}>取消</button></div>
+      </div>
+    : <div className="setting-row profile-row"><Avatar name={profile.name} image={profile.avatar} large /><div><strong className="profile-name">{profile.name}</strong><p>智能体在对话中会这样称呼你</p></div>{notice && <span className="form-success" role="status"><Check size={15} />{notice}</span>}<button className="secondary-button compact" onClick={startEditing}>编辑资料</button></div>}</section>
 }
 
 function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntimeChange, onProviderChange }: {

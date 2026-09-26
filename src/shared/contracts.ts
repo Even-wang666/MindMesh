@@ -61,7 +61,16 @@ export type RuntimeStatus = {
 
 export type UserProfile = { name: string; avatar: string | null }
 
-export type ModelProviderId = 'deepseek-official' | 'moonshotai-cn' | 'openai' | 'anthropic' | 'custom'
+export type ModelProviderId =
+  | 'deepseek-official'
+  | 'moonshotai-cn'
+  | 'openai'
+  | 'anthropic'
+  | 'minimax'
+  | 'zhipu'
+  | 'qwen'
+  | 'stepfun'
+  | 'custom'
 
 export type ModelProviderStatus = {
   id: ModelProviderId

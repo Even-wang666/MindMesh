@@ -43,6 +43,21 @@ describe('model provider runtime settings', () => {
     expect(yaml).not.toContain('custom-secret')
   })
 
+  it('builds OpenAI-compatible routes for additional providers', () => {
+    const yaml = buildProviderSettingsYaml([
+      { id: 'minimax', name: 'MiniMax', apiKey: 'minimax-secret' },
+      { id: 'zhipu', name: '智谱 GLM', apiKey: 'zhipu-secret' },
+    ])
+
+    expect(yaml).toContain('minimax:')
+    expect(yaml).toContain('baseURL: "https://api.minimaxi.com/v1"')
+    expect(yaml).toContain('id: "MiniMax-M3"')
+    expect(yaml).toContain('zhipu:')
+    expect(yaml).toContain('baseURL: "https://open.bigmodel.cn/api/paas/v4"')
+    expect(yaml).not.toContain('minimax-secret')
+    expect(yaml).not.toContain('zhipu-secret')
+  })
+
   it('maps SDK assistant notifications to text callbacks', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-runtime-'))
     const run = vi.spyOn(DeepSeekHarness.prototype, 'run').mockImplementation(async (_prompt, options) => {

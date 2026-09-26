@@ -7,7 +7,9 @@ import {
   getModelProviderApiKeyError, getModelProviderDefinition, MODEL_PROVIDER_DEFINITIONS,
 } from '../shared/model-providers'
 
-const providerIdSchema = z.enum(['deepseek-official', 'moonshotai-cn', 'openai', 'anthropic', 'custom'])
+const providerIdSchema = z.enum([
+  'deepseek-official', 'moonshotai-cn', 'openai', 'anthropic', 'minimax', 'zhipu', 'qwen', 'stepfun', 'custom',
+])
 const savedProviderSchema = z.object({
   apiKey: z.string().min(1),
   name: z.string().trim().min(1).optional(),
@@ -51,7 +53,7 @@ export class ModelProviderSettings {
       }
     })
     const custom = this.canDecrypt(stored.providers.custom?.apiKey) ? stored.providers.custom : undefined
-    return custom
+    const statuses: ModelProviderStatus[] = custom
       ? [...standard, {
           id: 'custom' as const,
           name: custom.name ?? '自定义服务',
@@ -62,6 +64,13 @@ export class ModelProviderSettings {
           model: custom.model,
         }]
       : standard
+    const savedOrder = new Map(Object.keys(stored.providers).map((id, index) => [id, index]))
+    return statuses.sort((left, right) => {
+      if (left.configured !== right.configured) return left.configured ? -1 : 1
+      if (!left.configured) return 0
+      return (savedOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+        - (savedOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+    })
   }
 
   getProvider(id: string): ModelProviderRuntimeConfig | undefined {

@@ -1658,6 +1658,8 @@ em,
 .profile-avatar input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .profile-avatar:focus-within .secondary-button { outline: 2px solid var(--mm-color-iris); outline-offset: 2px; }
 .profile-avatar small { width: 100%; color: var(--text-tertiary); font-size: var(--fs-2xs); }
+.profile-row .profile-name { font-size: var(--fs-heading); font-weight: 660; line-height: 1.35; overflow-wrap: break-word; }
+.profile-row .form-success { flex: 0 0 auto; white-space: nowrap; }
 .profile-form .field { max-width: 400px; }
 .profile-actions { margin-top: var(--sp-5); display: flex; align-items: center; gap: var(--sp-4); }
 
@@ -1804,7 +1806,8 @@ em,
 /* ── 字段 ───────────────────────────────────────────────────────────────── */
 
 .field { margin-bottom: var(--sp-5); display: grid; gap: var(--sp-2); }
-.field > span { font-size: 12.5px; font-weight: 680; }
+.field > span,
+.field > label { font-size: 12.5px; font-weight: 680; }
 .field input,
 .field textarea,
 .field select {

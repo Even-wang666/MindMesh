@@ -6,6 +6,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Agent, ChatImageAttachment, RuntimeStatus } from '../shared/contracts'
 import type { ModelProviderRuntimeConfig } from './model-provider-settings'
 import { ModelProviderSettings } from './model-provider-settings'
+import { getModelProviderDefinition, MODEL_CATALOG } from '../shared/model-providers'
 import { prepareAgentCapabilities } from './capabilities'
 import { getAgentCapabilityHash } from './agent-capability'
 
@@ -233,7 +234,10 @@ function providerEnvironment(providers: ModelProviderRuntimeConfig[]): Record<st
     anthropic: 'ANTHROPIC_API_KEY',
     custom: 'MINDMESH_CUSTOM_API_KEY',
   }
-  return Object.fromEntries(providers.map((provider) => [environmentKeys[provider.id], provider.apiKey]))
+  return Object.fromEntries(providers.map((provider) => [
+    environmentKeys[provider.id] ?? getModelProviderDefinition(provider.id)?.environmentKey,
+    provider.apiKey,
+  ]).filter((entry): entry is [string, string] => Boolean(entry[0])))
 }
 
 export function buildProviderSettingsYaml(providers: ModelProviderRuntimeConfig[]): string {
@@ -259,8 +263,27 @@ export function buildProviderSettingsYaml(providers: ModelProviderRuntimeConfig[
       'moonshotai-cn': 'MOONSHOT_API_KEY',
       openai: 'OPENAI_API_KEY',
       anthropic: 'ANTHROPIC_API_KEY',
-    }[provider.id]
-    lines.push(`    ${provider.id}:`, `      apiKeyEnv: ${environmentKey}`)
+    }[provider.id as 'moonshotai-cn' | 'openai' | 'anthropic']
+    if (environmentKey) {
+      lines.push(`    ${provider.id}:`, `      apiKeyEnv: ${environmentKey}`)
+      continue
+    }
+    const definition = getModelProviderDefinition(provider.id)
+    const models = MODEL_CATALOG.filter((model) => model.provider === provider.id)
+    lines.push(
+      `    ${provider.id}:`,
+      `      displayName: ${JSON.stringify(provider.name)}`,
+      `      apiKeyEnv: ${definition?.environmentKey}`,
+      '      api: openai-completions',
+      `      baseURL: ${JSON.stringify(definition?.baseUrl)}`,
+      '      models:',
+      ...models.flatMap((model) => [
+        `        - id: ${JSON.stringify(model.id)}`,
+        `          name: ${JSON.stringify(model.name)}`,
+        `          contextWindow: ${model.contextWindow ?? 131072}`,
+        '          maxTokens: 8192',
+      ]),
+    )
   }
   if (lines.length === 2) return 'llm-pi-ai:\n  providers: {}\n'
   return `${lines.join('\n')}\n`

@@ -23,6 +23,7 @@ const keys = {
   kimi: 'sk-0123456789abcdef0123456789abcdef',
   openai: 'sk-proj-0123456789abcdef0123456789abcdef',
   anthropic: 'sk-ant-api03-0123456789abcdef0123456789abcdef',
+  zhipu: 'abc12345.def67890',
 }
 
 afterEach(() => {
@@ -54,6 +55,28 @@ describe('ModelProviderSettings', () => {
     expect(settings.getProvider('openai')?.apiKey).toBe(keys.openai)
   })
 
+  it('lists and stores the additional model providers', () => {
+    const { settings } = createSettings()
+    expect(settings.statuses().map(({ id }) => id)).toEqual([
+      'qwen', 'deepseek-official', 'zhipu', 'moonshotai-cn',
+      'minimax', 'stepfun', 'openai', 'anthropic',
+    ])
+
+    settings.save({ id: 'zhipu', apiKey: keys.zhipu })
+    expect(settings.getProvider('zhipu')).toMatchObject({ id: 'zhipu', name: '智谱 GLM', apiKey: keys.zhipu })
+  })
+
+  it('puts configured providers first in configuration order', () => {
+    const { settings } = createSettings()
+    settings.save({ id: 'anthropic', apiKey: keys.anthropic })
+    settings.save({ id: 'zhipu', apiKey: keys.zhipu })
+
+    expect(settings.statuses().map(({ id }) => id)).toEqual([
+      'anthropic', 'zhipu', 'qwen', 'deepseek-official',
+      'moonshotai-cn', 'minimax', 'stepfun', 'openai',
+    ])
+  })
+
   it('removes one saved key without affecting others and falls back to the environment', () => {
     process.env.DEEPSEEK_API_KEY = 'sk-environment-value-that-is-long-enough'
     const { settings } = createSettings()
@@ -77,7 +100,7 @@ describe('ModelProviderSettings', () => {
       apiKey: 'internal-secret-key',
     })
 
-    expect(statuses.at(-1)).toMatchObject({
+    expect(statuses.find((provider) => provider.id === 'custom')).toMatchObject({
       id: 'custom',
       name: '内部网关',
       baseUrl: 'https://llm.example.com/v1',
