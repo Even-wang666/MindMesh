@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MindMeshDatabase } from '../src/main/database'
 import { createSkillReference } from '../src/shared/skill-reference'
 import { getAgentCapabilityHash } from '../src/main/agent-capability'
@@ -172,6 +172,43 @@ describe('updateAgent', () => {
       rmSync(directory, { recursive: true, force: true })
     }
   })
+
+  it('persists and clears the reasoning effort, and rejects invalid values', () => {
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const original = db.listAgents()[0]
+      expect(original.reasoningEffort).toBeUndefined()
+
+      const editable = {
+        name: original.name, role: original.role, persona: original.persona,
+        provider: original.provider, model: original.model, skills: original.skills, tools: original.tools,
+      }
+      const withEffort = db.updateAgent(original.id, { ...editable, reasoningEffort: 'high' })
+      expect(withEffort.reasoningEffort).toBe('high')
+      expect(db.getAgent(original.id)?.reasoningEffort).toBe('high')
+      expect(db.listAgents().find((item) => item.id === original.id)?.reasoningEffort).toBe('high')
+
+      const cleared = db.updateAgent(original.id, { ...editable, reasoningEffort: undefined })
+      expect(cleared.reasoningEffort).toBeUndefined()
+      expect(db.getAgent(original.id)?.reasoningEffort).toBeUndefined()
+
+      expect(() => db.updateAgent(original.id, { ...editable, reasoningEffort: 'MAX!' })).toThrow('思考强度无效')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('changes the capability hash when the reasoning effort changes', () => {
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const original = db.listAgents()[0]
+      const base = getAgentCapabilityHash(original)
+      expect(getAgentCapabilityHash({ ...original, reasoningEffort: 'max' })).not.toBe(base)
+      expect(getAgentCapabilityHash({ ...original, reasoningEffort: undefined })).toBe(base)
+    } finally {
+      db.close()
+    }
+  })
 })
 
 describe('agent input validation', () => {
@@ -231,6 +268,20 @@ describe('updateSpaceContext', () => {
 })
 
 describe('space membership and agent deletion', () => {
+  it('reads one Space directly without listing unrelated spaces', () => {
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const expected = db.listSpaces()[0]
+      const listSpaces = vi.spyOn(db, 'listSpaces').mockImplementation(() => {
+        throw new Error('getSpace must not list every Space')
+      })
+
+      expect(db.getSpace(expected.id)).toEqual(expected)
+      expect(db.getSpace('missing-space')).toBeUndefined()
+      expect(listSpaces).not.toHaveBeenCalled()
+    } finally { db.close() }
+  })
+
   it('validates and normalizes space inputs on create and update', () => {
     const db = new MindMeshDatabase(':memory:')
     try {

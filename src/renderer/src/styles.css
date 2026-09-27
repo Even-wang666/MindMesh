@@ -211,7 +211,7 @@
         百分比 basis 是明确长度，不参与夹取，比例才精确。
 
      ⚠️ 三者必须共用这一组量，**任何媒体查询都不要单独改其中任何一个**。
-     ⚠️ 这两个份额也是**用户拖拽复位时的基准值**：App.tsx 的 usePaneShares
+     ⚠️ 这两个份额也是**用户拖拽复位时的基准值**：PaneLayout.tsx 的 usePaneShares
         通过 getComputedStyle 读它们，所以「双击分隔条恢复默认比例」不需要在
         JS 里再抄一遍数字，单一事实来源仍在这里。 */
   --nav-share: 17.5%;  /* 导航：窄索引列（17.5% 保字标在最小窗口不压坏） */
@@ -309,7 +309,7 @@ h1 { letter-spacing: -.032em; }
   flex: 0 0 var(--nav-share);
   /* 字标行兜底：flex 项默认 min-width:auto，正常窗口下 17.5% 已足够放下字标；
      这条显式下限只在极端情况（用户把导航拖得过窄）下兜住，避免字标被压坏。
-     与 App.tsx 的 PANE_LIMITS.nav 保持同值。 */
+     与 PaneLayout.tsx 的 PANE_LIMITS.nav 保持同值。 */
   min-width: 200px;
   padding: var(--sp-6) var(--sp-4) var(--sp-5);
   display: flex;
@@ -552,7 +552,7 @@ h1 { letter-spacing: -.032em; }
 /* ── 分区拖拽条：用户可拖动调整三栏宽度 ─────────────────────────────────────
    默认隐藏实体线，只保留透明命中区；hover / 键盘聚焦 / 拖动时浮出强调色，
    避免常驻线条压到右侧内容卡的圆角边缘。
-   份额由 App.tsx 的 usePaneShares 写在这两个变量上（行内覆盖 .app-shell 的
+   份额由 PaneLayout.tsx 的 usePaneShares 写在这两个变量上（行内覆盖 .app-shell 的
    --nav-share / --list-share），不拖就一直是上面的默认值。
 
    ⚠️ 用负 margin 让它在布局上**不占宽度**：flex-basis 10px 被左右各 -5px 抵消。
@@ -632,7 +632,7 @@ h1 { letter-spacing: -.032em; }
   flex: 0 0 var(--list-share);
   /* 长标题不许把这一栏顶得比份额更宽 —— flex 项的默认 min-width 是 auto，
      列表里一个长名字就能破坏比例（这条不是理论风险，是 flex 的默认行为） */
-  /* 与 App.tsx 的 PANE_LIMITS.list 双保险：JS 在拖动/缩窗时夹取，CSS 兜住
+  /* 与 PaneLayout.tsx 的 PANE_LIMITS.list 双保险：JS 在拖动/缩窗时夹取，CSS 兜住
      旧 localStorage 或布局尚未完成的首帧。 */
   min-width: 220px;
   padding: var(--sp-7) var(--sp-4) var(--sp-4);
@@ -740,6 +740,7 @@ h1 { letter-spacing: -.032em; }
 .agent-cell > span { display: grid; gap: 3px; min-width: 0; }
 .object-row strong,
 .member strong { font-size: 14.5px; font-weight: 620; }
+.member strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .object-row small,
 .member small,
 .agent-cell small {
@@ -818,7 +819,7 @@ h1 { letter-spacing: -.032em; }
    唯一一个 grow 为 1 的项，所以它的 basis 写成 0 是安全的（不存在两个
    basis 0 的项互相错位的问题，那正是令牌段里说的夹取坑）。 */
 .content {
-  /* 与 App.tsx 的 PANE_LIMITS.content 保持一致，避免右侧内容被拖成不可用窄条。 */
+  /* 与 PaneLayout.tsx 的 PANE_LIMITS.content 保持一致，避免右侧内容被拖成不可用窄条。 */
   min-width: 380px;
   flex: 1 1 0;
   display: flex;
@@ -1501,16 +1502,45 @@ kbd {
   transition: background var(--dur-1) var(--ease);
 }
 .member:hover { background: var(--mm-color-hover); }
-.member > span { flex: 1; }
-.member .dot { width: 6px; height: 6px; flex-basis: 6px; box-shadow: none; }
+/* 名字/角色列必须用具名类定位：头像也是 span，.member > span 会把 flex 伸展一起发给头像 */
+.member .member-info { flex: 1; min-width: 0; }
 
-.panel-card {
-  padding: var(--sp-5);
-  border-radius: var(--r-surface);
-  background: var(--surface-raised);
-  box-shadow: var(--sh-1);
+/* 成员头像：方形框（设计决议 2026-09-27，仅限编辑空间抽屉）。
+   全局 .avatar 是 10px 圆角矩形；这里收到 6px 并加 1px 内描边，读感更接近"方形框"。 */
+.member .avatar {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgb(var(--p-ink-rgb) / 10%);
 }
-.panel-card > p {
+
+.member-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-3); }
+.member-effort-hint { color: var(--text-tertiary); font-size: 11px; }
+
+/* 成员思考强度：紧凑下拉，走 32px 紧凑控件档 */
+.member-effort { position: relative; flex: 0 0 auto; display: inline-flex; align-items: center; }
+.member-effort select {
+  appearance: none;
+  height: 32px;
+  padding: 0 22px 0 var(--sp-2);
+  border: 1px solid var(--mm-color-border);
+  border-radius: var(--r-control);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease);
+}
+.member-effort select:hover:not(:disabled) { border-color: var(--mm-color-border-strong); color: var(--text-primary); }
+.member-effort select:focus-visible { border-color: var(--accent-line-strong); box-shadow: 0 0 0 3px var(--mm-color-focus-ring); }
+.member-effort select:disabled { opacity: .5; cursor: default; }
+.member-effort > svg { position: absolute; right: 6px; pointer-events: none; color: var(--text-tertiary); }
+
+/* 背景信息：内容直排在抽屉画布上，不再用白卡包裹（设计决议 2026-09-27） */
+.context-text {
   margin: 0;
   color: var(--text-primary);
   font-size: var(--fs-body);
@@ -1518,8 +1548,8 @@ kbd {
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
-.panel-card.muted > p { color: var(--text-secondary); }
-.panel-card .text-button { margin-top: var(--sp-3); font-size: 12.5px; }
+.context-text.muted { color: var(--text-secondary); }
+.context-edit { justify-self: start; font-size: 12.5px; }
 
 .context-editor { display: grid; gap: var(--sp-3); }
 .context-editor textarea {

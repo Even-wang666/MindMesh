@@ -6,7 +6,7 @@ import type { Agent, ChatImageAttachment, CreateAgentInput, CreateSpaceInput, Me
 import { createSkillReference } from '../shared/skill-reference'
 import { getAgentCapabilityHash } from './agent-capability'
 
-type AgentRow = Omit<Agent, 'skills' | 'tools'> & { skills: string; tools: string }
+type AgentRow = Omit<Agent, 'skills' | 'tools' | 'reasoningEffort'> & { skills: string; tools: string; reasoningEffort: string | null }
 type SpaceRow = Omit<Space, 'memberIds'>
 type RuntimeSessionRow = {
   harnessSessionId: string
@@ -34,10 +34,20 @@ function normalizeAgentInput(input: CreateAgentInput): CreateAgentInput {
     model: input.model.trim(),
     skills: [...input.skills],
     tools: [...input.tools],
+    reasoningEffort: normalizeReasoningEffort(input.reasoningEffort),
   }
   if (!normalized.name || !normalized.persona) throw new Error('名称和身份设定不能为空')
   if (!normalized.provider || !normalized.model) throw new Error('模型配置无效')
   return normalized
+}
+
+function normalizeReasoningEffort(value: string | undefined): string | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'string') throw new Error('思考强度无效')
+  const effort = value.trim()
+  if (!effort) return undefined
+  if (!/^[a-z]{1,20}$/.test(effort)) throw new Error('思考强度无效')
+  return effort
 }
 
 function normalizeSpaceInput(input: CreateSpaceInput): CreateSpaceInput {
@@ -189,6 +199,10 @@ export class MindMeshDatabase {
     if (!messageColumns.some((column) => column.name === 'stopped')) {
       this.db.exec('ALTER TABLE messages ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0')
     }
+    const agentColumns = this.db.prepare('PRAGMA table_info(agents)').all() as Array<{ name: string }>
+    if (!agentColumns.some((column) => column.name === 'reasoningEffort')) {
+      this.db.exec('ALTER TABLE agents ADD COLUMN reasoningEffort TEXT')
+    }
   }
 
   private seed(): void {
@@ -307,22 +321,32 @@ export class MindMeshDatabase {
 
   listAgents(): Agent[] {
     const rows = this.db.prepare('SELECT * FROM agents ORDER BY createdAt ASC').all() as unknown as AgentRow[]
-    return rows.map((row) => ({ ...row, skills: JSON.parse(row.skills), tools: JSON.parse(row.tools) }))
+    return rows.map((row) => this.mapAgentRow(row))
   }
 
   getAgent(id: string): Agent | undefined {
     const row = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(id) as AgentRow | undefined
-    return row ? { ...row, skills: JSON.parse(row.skills), tools: JSON.parse(row.tools) } : undefined
+    return row ? this.mapAgentRow(row) : undefined
+  }
+
+  private mapAgentRow(row: AgentRow): Agent {
+    const { skills, tools, reasoningEffort, ...agent } = row
+    return {
+      ...agent,
+      skills: JSON.parse(skills),
+      tools: JSON.parse(tools),
+      reasoningEffort: reasoningEffort ?? undefined,
+    }
   }
 
   createAgent(input: CreateAgentInput, id: string = randomUUID()): Agent {
     const normalized = this.validateAgentInput(input)
     const agent: Agent = { ...normalized, id, createdAt: new Date().toISOString() }
     this.db.prepare(`
-      INSERT INTO agents (id, name, role, persona, provider, model, skills, tools, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agents (id, name, role, persona, provider, model, skills, tools, reasoningEffort, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(agent.id, agent.name, agent.role, agent.persona, agent.provider, agent.model,
-      JSON.stringify(agent.skills), JSON.stringify(agent.tools), agent.createdAt)
+      JSON.stringify(agent.skills), JSON.stringify(agent.tools), agent.reasoningEffort ?? null, agent.createdAt)
     return agent
   }
 
@@ -335,10 +359,10 @@ export class MindMeshDatabase {
       ...normalized,
     }
     this.db.prepare(`
-      UPDATE agents SET name = ?, role = ?, persona = ?, provider = ?, model = ?, skills = ?, tools = ?
+      UPDATE agents SET name = ?, role = ?, persona = ?, provider = ?, model = ?, skills = ?, tools = ?, reasoningEffort = ?
       WHERE id = ?
     `).run(agent.name, agent.role, agent.persona, agent.provider, agent.model,
-      JSON.stringify(agent.skills), JSON.stringify(agent.tools), id)
+      JSON.stringify(agent.skills), JSON.stringify(agent.tools), agent.reasoningEffort ?? null, id)
     return agent
   }
 
@@ -373,7 +397,12 @@ export class MindMeshDatabase {
   }
 
   getSpace(id: string): Space | undefined {
-    return this.listSpaces().find((space) => space.id === id)
+    const row = this.db.prepare('SELECT * FROM spaces WHERE id = ?').get(id) as unknown as SpaceRow | undefined
+    if (!row) return undefined
+    const members = this.db.prepare(
+      'SELECT agentId FROM space_members WHERE spaceId = ? ORDER BY position ASC',
+    ).all(id) as unknown as Array<{ agentId: string }>
+    return { ...row, memberIds: members.map((item) => item.agentId) }
   }
 
   getUserProfile(): UserProfile {

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { clampShares, resizeShares } from '../src/renderer/src/App'
+import { clampShares, resizeShares } from '../src/renderer/src/PaneLayout'
 
 /* 样式表里的默认份额：导航 17.5%、列表 22%（内容吃剩余 60.5%）。
    这里写成字面量是**故意**的 —— 如果哪天有人改了样式表而没同步这个测试，
    下面「默认值在最小窗口下不被夹动」那条会先炸，正好提醒他两边对一下。 */
 const DEFAULT = { nav: 17.5, list: 22 }
 
-/* 窗口下限（src/main/index.ts 的 minWidth）与三栏下限（App.tsx 的 PANE_LIMITS） */
+/* 窗口下限（src/main/index.ts 的 minWidth）与三栏下限（PaneLayout.tsx 的 PANE_LIMITS） */
 const MIN_WINDOW = 1200
 const WIDE = 2560
 
@@ -101,4 +101,3 @@ describe('分区拖拽的份额运算', () => {
     })
   })
 })
-

@@ -5,6 +5,7 @@ release/
 .conda/
 .references/
 .runtime/
+shots/.chrome-*/
 *.log
 .env
 .env.*

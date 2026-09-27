@@ -94,6 +94,34 @@ export function supportsImageInput(provider: string, model: string): boolean {
     && ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp', 'deepseek-flash'].includes(model)
 }
 
+export type ReasoningEffortOption = { id: string; label: string }
+
+/**
+ * 各服务商可选的思考强度档位。
+ * DeepSeek 官方支持 off/low/high/max（缺省 high）；其余 OpenAI 兼容厂商经 pi-ai 适配层
+ * 发送 reasoning_effort，通用档位为 low/medium/high。不在列表内的值会在主进程被拒绝。
+ */
+export function reasoningEffortOptions(provider: string): ReasoningEffortOption[] {
+  if (provider === 'deepseek-official') {
+    return [
+      { id: 'off', label: '关闭' },
+      { id: 'low', label: '低' },
+      { id: 'high', label: '高' },
+      { id: 'max', label: '最高' },
+    ]
+  }
+  return [
+    { id: 'low', label: '低' },
+    { id: 'medium', label: '中' },
+    { id: 'high', label: '高' },
+  ]
+}
+
+export function reasoningEffortLabel(provider: string, effort?: string): string {
+  if (!effort) return '默认'
+  return reasoningEffortOptions(provider).find((option) => option.id === effort)?.label ?? effort
+}
+
 export function getModelProviderDefinition(id: string): ModelProviderDefinition | undefined {
   return MODEL_PROVIDER_DEFINITIONS.find((provider) => provider.id === id)
 }

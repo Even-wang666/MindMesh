@@ -34,7 +34,7 @@ describe('chat failures', () => {
       emitText('不应继续输出')
       const messages = await pending
 
-      expect(stop).toHaveBeenCalledWith(agent)
+      expect(stop).toHaveBeenCalledWith({ ...agent, tools: [] })
       expect(messages.map((message) => message.authorType)).toEqual(['user', 'agent'])
       expect(messages.at(-1)).toMatchObject({ content: '已经输出', stopped: true })
       expect(send.mock.calls.filter(([channel]) => channel === 'chat:delta'))
@@ -256,6 +256,110 @@ describe('session context', () => {
       })
       await service.sendPrivate(initial.id, '恢复权限', [], { model: 'deepseek-v4-pro', permission: 'full' })
       expect(run.mock.calls[1][0].tools).toEqual(['网页搜索', '文件', 'Shell'])
+    } finally { db.close() }
+  })
+
+  it('defaults every turn to chat permission without replacing an existing persona snapshot', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'session' })
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const initial = db.listAgents()[0]
+      const enabled = db.updateAgent(initial.id, { ...initial, tools: ['文件', 'Shell'] })
+      await service.sendPrivate(initial.id, '完全权限', [], { permission: 'full' })
+      db.updateAgent(initial.id, { ...enabled, persona: '不应进入既有会话的新身份' })
+      await service.sendPrivate(initial.id, '默认权限')
+      await service.sendPrivate(initial.id, '空选项', [], {})
+      await service.sendPrivate(initial.id, '只切模型', [], { model: 'deepseek-v4-pro' })
+
+      expect(run.mock.calls[0][0].tools).toEqual(['文件', 'Shell'])
+      expect(run.mock.calls[1][0]).toMatchObject({ persona: initial.persona, tools: [] })
+      expect(run.mock.calls[2][0]).toMatchObject({ persona: initial.persona, tools: [] })
+      expect(run.mock.calls[3][0]).toMatchObject({ persona: initial.persona, model: 'deepseek-v4-pro', tools: [] })
+    } finally { db.close() }
+  })
+
+  it('removes Shell from an existing Space session when the next turn omits options', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'session' })
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const space = db.listSpaces()[0]
+      const initial = db.getAgent(space.memberIds[0])!
+      db.updateAgent(initial.id, { ...initial, tools: ['文件', 'Shell'] })
+      await service.sendSpace(space.id, `@${initial.name} 完全权限`, [], { permission: 'full' })
+      await service.sendSpace(space.id, `@${initial.name} 默认权限`)
+
+      expect(run.mock.calls[0][0].tools).toEqual(['文件', 'Shell'])
+      expect(run.mock.calls[1][0].tools).toEqual([])
+    } finally { db.close() }
+  })
+
+  it('applies a reasoning effort change to an existing session on the next turn', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockImplementation((_agent, _prompt, sessionId) => Promise.resolve({ text: '完成', sessionId }))
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const initial = db.listAgents()[0]
+      await service.sendPrivate(initial.id, '第一问')
+      const firstSessionId = run.mock.calls[0][2]
+      expect(run.mock.calls[0][0].reasoningEffort).toBeUndefined()
+
+      // 模拟空间抽屉保存思考强度：走同一条 agents.update → db.updateAgent 链路
+      const withEffort = db.updateAgent(initial.id, { ...initial, reasoningEffort: 'low' })
+      await service.sendPrivate(initial.id, '第二问')
+      expect(run.mock.calls[1][0]).toMatchObject({ reasoningEffort: 'low', persona: initial.persona })
+      expect(run.mock.calls[1][2]).not.toBe(firstSessionId)
+
+      // 档位不变时不应重建会话
+      await service.sendPrivate(initial.id, '第三问')
+      expect(run.mock.calls[2][2]).toBe(run.mock.calls[1][2])
+
+      // 清除档位（跟随默认）同样触发重建
+      db.updateAgent(initial.id, { ...withEffort, reasoningEffort: undefined })
+      await service.sendPrivate(initial.id, '第四问')
+      expect(run.mock.calls[3][0].reasoningEffort).toBeUndefined()
+      expect(run.mock.calls[3][2]).not.toBe(run.mock.calls[2][2])
+    } finally { db.close() }
+  })
+
+  it('applies a reasoning effort change to an existing Space member session', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockImplementation((_agent, _prompt, sessionId) => Promise.resolve({ text: '完成', sessionId }))
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const space = db.listSpaces()[0]
+      const initial = db.getAgent(space.memberIds[0])!
+      await service.sendSpace(space.id, `@${initial.name} 第一问`)
+      const firstSessionId = run.mock.calls[0][2]
+
+      db.updateAgent(initial.id, { ...initial, reasoningEffort: 'max' })
+      await service.sendSpace(space.id, `@${initial.name} 第二问`)
+      expect(run.mock.calls[1][0]).toMatchObject({ reasoningEffort: 'max', persona: initial.persona })
+      expect(run.mock.calls[1][2]).not.toBe(firstSessionId)
+    } finally { db.close() }
+  })
+
+  it('rejects oversized user messages before creating sessions or running an Agent', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn()
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const agent = db.listAgents()[0]
+      const space = db.listSpaces()[0]
+      const oversized = '你'.repeat(21_846)
+
+      await expect(service.sendPrivate(agent.id, oversized)).rejects.toThrow('64 KiB')
+      await expect(service.sendSpace(space.id, oversized)).rejects.toThrow('64 KiB')
+      expect(run).not.toHaveBeenCalled()
+      expect(db.listMessages('private', agent.id)).toEqual([])
+      expect(db.listMessages('space', space.id)).toEqual([])
+      expect(db.referencedCapabilityHashes()).toEqual([])
     } finally { db.close() }
   })
 

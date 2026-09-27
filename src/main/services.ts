@@ -4,9 +4,12 @@ import type {
 } from '../shared/contracts'
 import { buildPrivatePrompt, buildSpacePrompt, parseMentions } from '../shared/domain'
 import { getModelContextWindow, MODEL_CATALOG, supportsImageInput } from '../shared/model-providers'
+import { validateChatContent } from '../shared/chat-content'
 import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter, getAgentCapabilityHash, SessionResumeUnsupportedError } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
+
+const SHUTDOWN_TIMEOUT_MS = 15_000
 
 export class MindMeshServices {
   private runtimeFailed = false
@@ -14,6 +17,9 @@ export class MindMeshServices {
   private deepSeekBalanceError = false
   private balanceRequestGeneration = 0
   private readonly activeStops = new Map<string, () => Promise<boolean>>()
+  private readonly activeRuns = new Set<Promise<Message[]>>()
+  private shuttingDown = false
+  private shutdownTask: Promise<void> | null = null
   private deepSeekModelIds = new Set([
     ...MODEL_CATALOG.filter((item) => item.provider === 'deepseek-official').map((item) => item.id),
     'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp',
@@ -121,7 +127,12 @@ export class MindMeshServices {
     } catch { return fallback }
   }
 
-  async sendPrivate(agentId: string, content: string, attachments: ChatImageAttachment[] = [], options?: ChatRunOptions): Promise<Message[]> {
+  sendPrivate(agentId: string, content: string, attachments: ChatImageAttachment[] = [], options?: ChatRunOptions): Promise<Message[]> {
+    return this.trackRun(() => this.sendPrivateNow(agentId, content, attachments, options))
+  }
+
+  private async sendPrivateNow(agentId: string, content: string, attachments: ChatImageAttachment[] = [], options?: ChatRunOptions): Promise<Message[]> {
+    validateChatContent(content)
     const agent = this.db.getAgent(agentId)
     if (!agent) throw new Error('智能体不存在')
     const runAgent = resolveRunAgent(agent, options, this.deepSeekModelIds)
@@ -131,11 +142,19 @@ export class MindMeshServices {
     let session = this.db.getOrCreateRuntimeSession(
       contextKey, runAgent, `private-${agentId}`, getAgentCapabilityHash(runAgent),
     )
+    // persona 保持会话快照语义；tools 与 reasoningEffort 是活能力，跟随最新 Agent 配置，
+    // 变化时经能力哈希比较触发会话重建（思考强度是 Harness 实例级参数，必须重建才生效）。
+    let sessionRunAgent = resolveRunAgent(
+      { ...session.agent, tools: agent.tools, reasoningEffort: agent.reasoningEffort }, options, this.deepSeekModelIds,
+    )
+    if (images.length > 0 && !supportsImageInput(sessionRunAgent.provider, sessionRunAgent.model)) {
+      sessionRunAgent = { ...sessionRunAgent, provider: runAgent.provider, model: runAgent.model }
+    }
     let restarted = false
-    if ((options && getAgentCapabilityHash(session.agent) !== getAgentCapabilityHash(runAgent))
+    if (getAgentCapabilityHash(session.agent) !== getAgentCapabilityHash(sessionRunAgent)
       || (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model))) {
       session = this.db.restartRuntimeSession(
-        contextKey, runAgent, `private-${agentId}-${crypto.randomUUID()}`, getAgentCapabilityHash(runAgent),
+        contextKey, sessionRunAgent, `private-${agentId}-${crypto.randomUUID()}`, getAgentCapabilityHash(sessionRunAgent),
       )
       restarted = true
     }
@@ -150,6 +169,7 @@ export class MindMeshServices {
         session.harnessSessionId, 'private', agentId, requestId,
         () => buildPrivatePrompt(sessionAgent, promptContent, history), images)
     } catch (error) {
+      if (this.shuttingDown) return []
       if (error instanceof ChatStoppedError) {
         if (error.text || error.reasoning) {
           this.db.addMessage({
@@ -167,6 +187,7 @@ export class MindMeshServices {
       })
       return this.db.listMessages('private', agentId)
     }
+    if (this.shuttingDown) return []
     this.db.addMessage({
       scope: 'private', scopeId: agentId, authorType: 'agent', authorId: agent.id,
       authorName: sessionAgent.name, content: result.text, reasoning: result.reasoning,
@@ -176,7 +197,12 @@ export class MindMeshServices {
     return this.db.listMessages('private', agentId)
   }
 
-  async sendSpace(spaceId: string, content: string, attachments: ChatImageAttachment[] = [], options?: ChatRunOptions): Promise<Message[]> {
+  sendSpace(spaceId: string, content: string, attachments: ChatImageAttachment[] = [], options?: ChatRunOptions): Promise<Message[]> {
+    return this.trackRun(() => this.sendSpaceNow(spaceId, content, attachments, options))
+  }
+
+  private async sendSpaceNow(spaceId: string, content: string, attachments: ChatImageAttachment[] = [], options?: ChatRunOptions): Promise<Message[]> {
+    validateChatContent(content)
     const space = this.db.getSpace(spaceId)
     if (!space) throw new Error('协作空间不存在')
     const members = space.memberIds.map((id) => this.db.getAgent(id)).filter((agent) => agent !== undefined)
@@ -198,17 +224,24 @@ export class MindMeshServices {
     }
 
     for (const runAgent of runAgents) {
+      if (this.shuttingDown) break
       const agent = members.find((item) => item.id === runAgent.id)!
       const contextKey = `space:${spaceId}:${agent.id}`
       let session = this.db.getOrCreateRuntimeSession(
         contextKey, runAgent, `space-${spaceId}-${agent.id}`, getAgentCapabilityHash(runAgent),
         this.db.lastAgentMessageSequence(spaceId, agent.id),
       )
-      if ((options && getAgentCapabilityHash(session.agent) !== getAgentCapabilityHash(runAgent))
+      let sessionRunAgent = resolveRunAgent(
+        { ...session.agent, tools: agent.tools, reasoningEffort: agent.reasoningEffort }, options, this.deepSeekModelIds,
+      )
+      if (images.length > 0 && !supportsImageInput(sessionRunAgent.provider, sessionRunAgent.model)) {
+        sessionRunAgent = { ...sessionRunAgent, provider: runAgent.provider, model: runAgent.model }
+      }
+      if (getAgentCapabilityHash(session.agent) !== getAgentCapabilityHash(sessionRunAgent)
         || (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model))) {
         session = this.db.restartRuntimeSession(
-          contextKey, runAgent, `space-${spaceId}-${agent.id}-${crypto.randomUUID()}`,
-          getAgentCapabilityHash(runAgent), 0,
+          contextKey, sessionRunAgent, `space-${spaceId}-${agent.id}-${crypto.randomUUID()}`,
+          getAgentCapabilityHash(sessionRunAgent), 0,
         )
       }
       const sessionAgent = { ...session.agent, name: agent.name, role: agent.role }
@@ -222,6 +255,7 @@ export class MindMeshServices {
           'space', spaceId, crypto.randomUUID(),
           () => buildSpacePrompt(sessionAgent, space, this.db.listMessages('space', spaceId)), images)
       } catch (error) {
+        if (this.shuttingDown) break
         if (error instanceof ChatStoppedError) {
           if (error.text || error.reasoning) {
             const reply = this.db.addMessage({
@@ -240,6 +274,7 @@ export class MindMeshServices {
         })
         continue
       }
+      if (this.shuttingDown) break
       const reply = this.db.addMessage({
         scope: 'space', scopeId: spaceId, authorType: 'agent', authorId: agent.id,
         authorName: sessionAgent.name, content: result.text, reasoning: result.reasoning,
@@ -247,7 +282,18 @@ export class MindMeshServices {
       this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, reply.sequence)
       void this.refreshDeepSeekBalance()
     }
-    return this.db.listMessages('space', spaceId)
+    return this.shuttingDown ? [] : this.db.listMessages('space', spaceId)
+  }
+
+  shutdown(): Promise<void> {
+    this.shuttingDown = true
+    this.shutdownTask ??= (async () => {
+      await settleWithin((async () => {
+        await this.harness.shutdownAll()
+        await Promise.allSettled([...this.activeRuns])
+      })(), SHUTDOWN_TIMEOUT_MS)
+    })()
+    return this.shutdownTask
   }
 
   private async refreshDeepSeekBalance(): Promise<void> {
@@ -297,6 +343,14 @@ export class MindMeshServices {
     this.cleanupUnusedHomes()
   }
 
+  private trackRun(start: () => Promise<Message[]>): Promise<Message[]> {
+    if (this.shuttingDown) return Promise.reject(new Error('MindMesh 正在退出，无法开始新的对话'))
+    const run = start()
+    this.activeRuns.add(run)
+    void run.then(() => this.activeRuns.delete(run), () => this.activeRuns.delete(run))
+    return run
+  }
+
   private cleanupUnusedHomes(): void {
     try { this.harness.cleanupUnusedHomes(this.db.referencedCapabilityHashes()) }
     catch { /* Cache cleanup must not replace a successful data change. */ }
@@ -344,6 +398,7 @@ export class MindMeshServices {
       result = await run(prompt, sessionId)
     } catch (error) {
       if (stopRequested) throw new ChatStoppedError(streamed, streamedReasoning)
+      if (this.shuttingDown) throw error
       if (!(error instanceof SessionResumeUnsupportedError)) throw error
       streamed = ''
       streamedReasoning = ''
@@ -389,6 +444,16 @@ class ChatStoppedError extends Error {
 const MAX_INLINE_IMAGE_BYTES = 32 * 1024 * 1024
 const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 
+function settleWithin(work: Promise<unknown>, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, timeoutMs)
+    void work.then(
+      () => { clearTimeout(timer); resolve() },
+      (error) => { clearTimeout(timer); reject(error) },
+    )
+  })
+}
+
 function validateImageAttachments(provider: string, model: string, attachments: unknown): ChatImageAttachment[] {
   if (!Array.isArray(attachments)) throw new Error('附件数据无效')
   if (attachments.length === 0) return []
@@ -429,13 +494,14 @@ function matchesImageSignature(bytes: Buffer, mediaType: ChatImageAttachment['me
 }
 
 function resolveRunAgent(agent: Agent, options: ChatRunOptions | undefined, deepSeekModelIds: ReadonlySet<string>): Agent {
-  if (options === undefined) return agent
-  if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error('对话选项无效')
-  const permission = options.permission ?? 'full'
+  if (options !== undefined && (!options || typeof options !== 'object' || Array.isArray(options))) {
+    throw new Error('对话选项无效')
+  }
+  const permission = options?.permission ?? 'chat'
   if (!['chat', 'workspace', 'full'].includes(permission)) throw new Error('权限级别无效')
-  const model = options.model ?? agent.model
+  const model = options?.model ?? agent.model
   if (typeof model !== 'string' || !/^[\w.:-]{1,100}$/.test(model)) throw new Error('模型 ID 无效')
-  if (options.model !== undefined) {
+  if (options?.model !== undefined) {
     if (agent.provider !== 'deepseek-official') throw new Error('目前仅支持切换 DeepSeek 模型')
     if (!deepSeekModelIds.has(model)) throw new Error('DeepSeek 模型不可用，请刷新模型列表')
   }

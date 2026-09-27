@@ -101,7 +101,7 @@ $env:DEEPSEEK_API_KEY = "你的 API Key"
 corepack pnpm@11.7.0 dev
 ```
 
-支持的环境变量还有 `MOONSHOT_API_KEY`、`OPENAI_API_KEY` 和 `ANTHROPIC_API_KEY`。DeepSeek 连接成功后，设置页会显示账户余额状态。
+支持的环境变量包括 `DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`MINIMAX_API_KEY`、`ZHIPU_API_KEY`、`DASHSCOPE_API_KEY` 和 `STEPFUN_API_KEY`。DeepSeek 连接成功后，设置页会显示账户余额状态；项目不会自动加载 `.env.example` 或 `.env.local`。
 
 ## 开发与验证
 

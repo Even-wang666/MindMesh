@@ -416,6 +416,57 @@ describe('space background', () => {
     expect(await screen.findByText('新的背景')).toBeInTheDocument()
   })
 
+  it('shows the background before members without a framing card', async () => {
+    const space: Space = {
+      id: 'space', name: 'AI Product Research', description: '产品研究', context: '当前目标：完成 MVP',
+      memberIds: [agent.id], createdAt: '',
+    }
+    const api = mockApi()
+    api.spaces.list = vi.fn(async () => [space])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
+    fireEvent.click(await screen.findByRole('button', { name: '编辑空间' }))
+
+    const background = await screen.findByText('当前目标：完成 MVP')
+    // 背景信息直排在抽屉画布上，不再包白卡
+    expect(background).toHaveClass('context-text')
+    expect(background.closest('.panel-card')).toBeNull()
+    // 背景信息区块排在成员区块之前
+    const contextHeading = screen.getByText('背景信息')
+    const memberHeading = screen.getByText('成员 · 1')
+    expect(contextHeading.compareDocumentPosition(memberHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('adjusts a member reasoning effort from the space drawer', async () => {
+    let current: Agent = { ...agent }
+    const space: Space = {
+      id: 'space', name: 'AI Product Research', description: '产品研究', context: '背景',
+      memberIds: [agent.id], createdAt: '',
+    }
+    const api = mockApi()
+    api.spaces.list = vi.fn(async () => [space])
+    api.agents.list = vi.fn(async () => [current])
+    const update = vi.fn(async (_id: string, input: Record<string, unknown>) => {
+      current = { ...current, ...input } as Agent
+      return current
+    })
+    api.agents.update = update
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
+    fireEvent.click(await screen.findByRole('button', { name: '编辑空间' }))
+
+    const select = await screen.findByRole('combobox', { name: 'Researcher 的思考强度' })
+    expect(select).toHaveValue('')
+    fireEvent.change(select, { target: { value: 'max' } })
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith('researcher', expect.objectContaining({ reasoningEffort: 'max' })))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Researcher 的思考强度' })).toHaveValue('max'))
+  })
+
   it('edits space details and removes and adds members', async () => {
     const second = { ...agent, id: 'developer', name: 'Developer' }
     let space: Space = { id: 'space', name: '原空间', description: '原简介', context: '原背景', memberIds: [agent.id], createdAt: '' }
@@ -480,8 +531,7 @@ describe('chat flow', () => {
     fireEvent.click(await screen.findByRole('button', { name: /选择模型/ }))
     expect(screen.getAllByRole('button', { name: 'DeepSeek V4.1 Flash' })).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: 'DeepSeek V4 Pro' }))
-    fireEvent.click(screen.getByRole('button', { name: /权限：允许完全访问/ }))
-    fireEvent.click(screen.getByRole('button', { name: '仅对话' }))
+    expect(screen.getByRole('button', { name: /权限：仅对话/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /上下文窗口/ })).toHaveAccessibleName(/1M/)
     const input = screen.getByPlaceholderText('给 Researcher 发送消息…')
     fireEvent.change(input, { target: { value: '使用新模型' } })
@@ -508,8 +558,23 @@ describe('chat flow', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
 
     await waitFor(() => expect(api.chat.sendPrivate).toHaveBeenCalledWith(
-      agent.id, '普通对话', [], { permission: 'full' },
+      agent.id, '普通对话', [], { permission: 'chat' },
     ))
+  })
+
+  it('keeps an oversized message in the composer and does not send it', async () => {
+    const api = mockApi()
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    const oversized = '你'.repeat(21_846)
+    fireEvent.change(input, { target: { value: oversized } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('64 KiB')
+    expect(input).toHaveValue(oversized)
+    expect(api.chat.sendPrivate).not.toHaveBeenCalled()
   })
 
   it('previews and sends a DeepSeek image without requiring text', async () => {
@@ -528,7 +593,7 @@ describe('chat flow', () => {
       agent.id,
       '',
       [expect.objectContaining({ type: 'image', name: 'chart.png', mediaType: 'image/png' })],
-      { model: 'deepseek-v4-flash', permission: 'full' },
+      { model: 'deepseek-v4-flash', permission: 'chat' },
     ))
   })
 
@@ -637,7 +702,7 @@ describe('chat flow', () => {
     expect(input).toHaveValue('你好 @数据分析师 ')
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(api.chat.sendSpace).toHaveBeenCalledWith(
-      'space', '你好 @数据分析师', [], { model: 'deepseek-v4-flash', permission: 'full' },
+      'space', '你好 @数据分析师', [], { model: 'deepseek-v4-flash', permission: 'chat' },
     ))
   })
 

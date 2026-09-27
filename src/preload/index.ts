@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { ChatDelta, ChatProgress, MindMeshApi } from '../shared/contracts'
+import { validateChatContent } from '../shared/chat-content'
 
 const api: MindMeshApi = {
   agents: {
@@ -17,8 +18,14 @@ const api: MindMeshApi = {
   },
   chat: {
     messages: (scope, scopeId) => ipcRenderer.invoke('chat:messages', scope, scopeId),
-    sendPrivate: (agentId, content, attachments, options) => ipcRenderer.invoke('chat:sendPrivate', agentId, content, attachments, options),
-    sendSpace: (spaceId, content, attachments, options) => ipcRenderer.invoke('chat:sendSpace', spaceId, content, attachments, options),
+    sendPrivate: (agentId, content, attachments, options) => {
+      validateChatContent(content)
+      return ipcRenderer.invoke('chat:sendPrivate', agentId, content, attachments, options)
+    },
+    sendSpace: (spaceId, content, attachments, options) => {
+      validateChatContent(content)
+      return ipcRenderer.invoke('chat:sendSpace', spaceId, content, attachments, options)
+    },
     stop: (scope, scopeId) => ipcRenderer.invoke('chat:stop', scope, scopeId),
     onDelta: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: ChatDelta): void => listener(payload)

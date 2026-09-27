@@ -11,6 +11,8 @@ import { installNavigationGuards } from './navigation'
 
 let mainWindow: BrowserWindow | null = null
 let services: MindMeshServices | null = null
+let quitReady = false
+let shutdownTask: Promise<void> | null = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -116,7 +118,18 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => {
-  void services?.harness.shutdownAll()
-  services?.db.close()
+app.on('before-quit', (event) => {
+  if (quitReady) return
+  event.preventDefault()
+  shutdownTask ??= (async () => {
+    try {
+      await services?.shutdown()
+    } finally {
+      try { services?.db.close() }
+      finally {
+        quitReady = true
+        app.quit()
+      }
+    }
+  })()
 })

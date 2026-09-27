@@ -20,6 +20,8 @@ import { DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
 describe('provider routing', () => {
   it('launches separate Harness processes with each Agent provider and model', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-route-'))
+    const previousCredential = process.env.MINDMESH_TEST_CREDENTIAL
+    process.env.MINDMESH_TEST_CREDENTIAL = 'must-not-reach-harness'
     const providers = [
       { id: 'deepseek-official', name: 'DeepSeek', apiKey: 'deepseek-secret' },
       { id: 'openai', name: 'OpenAI', apiKey: 'openai-secret' },
@@ -40,14 +42,28 @@ describe('provider routing', () => {
       ])
       expect(launches[0].dshHome).not.toBe(launches[1].dshHome)
       expect(launches.every((launch) => Array.isArray(launch.patches) && launch.patches.length === 1)).toBe(true)
+      expect(launches[0].env).toMatchObject({ DEEPSEEK_API_KEY: 'deepseek-secret' })
+      expect(launches[0].env).not.toHaveProperty('OPENAI_API_KEY')
+      expect(launches[1].env).toMatchObject({ OPENAI_API_KEY: 'openai-secret' })
+      expect(launches[1].env).not.toHaveProperty('DEEPSEEK_API_KEY')
+      expect(launches[0].env).not.toHaveProperty('MINDMESH_TEST_CREDENTIAL')
+      expect(launches[1].env).not.toHaveProperty('MINDMESH_TEST_CREDENTIAL')
+
+      await adapter.run({ ...base, provider: 'openai', model: 'gpt-4.1', tools: ['网页搜索'] }, '搜索网页')
+      expect(launches[2].env).toMatchObject({
+        OPENAI_API_KEY: 'openai-secret',
+        DEEPSEEK_API_KEY: 'deepseek-secret',
+      })
       const selected = join(directory, 'selected')
       await adapter.shutdownAll()
       adapter.setWorkspace(selected)
       await adapter.run(base, '新目录')
-      expect(launches[2]).toMatchObject({ cwd: selected, processCwd: selected })
-      expect(launches[2].dshHome).not.toBe(launches[0].dshHome)
+      expect(launches[3]).toMatchObject({ cwd: selected, processCwd: selected })
+      expect(launches[3].dshHome).not.toBe(launches[0].dshHome)
     } finally {
       await adapter.shutdownAll()
+      if (previousCredential === undefined) delete process.env.MINDMESH_TEST_CREDENTIAL
+      else process.env.MINDMESH_TEST_CREDENTIAL = previousCredential
       rmSync(directory, { recursive: true, force: true })
     }
   })

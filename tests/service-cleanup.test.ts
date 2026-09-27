@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { MindMeshDatabase } from '../src/main/database'
-import { getAgentCapabilityHash, type DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
+import { getAgentCapabilityHash, SessionResumeUnsupportedError, type DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
 import type { ModelProviderSettings } from '../src/main/model-provider-settings'
 import { MindMeshServices } from '../src/main/services'
 
@@ -52,6 +52,74 @@ describe('orphan Harness home cleanup', () => {
       expect(db.referencedCapabilityHashes()).toEqual([])
       expect(harness.setWorkspace).toHaveBeenCalledWith('C:\\next-workspace')
       expect(harness.cleanupUnusedHomes).toHaveBeenCalledWith([])
+    } finally { db.close() }
+  })
+
+  it('blocks new sends and waits for an active Space turn before shutdown completes', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    let finishRun!: (value: { text: string; sessionId: string }) => void
+    const run = vi.fn(() => new Promise<{ text: string; sessionId: string }>((resolve) => { finishRun = resolve }))
+    const harness = {
+      run,
+      shutdownAll: vi.fn(async () => undefined),
+      status: vi.fn(() => ({ state: 'ready', label: '', detail: '' })),
+    } as unknown as DeepSeekHarnessAdapter
+    const service = new MindMeshServices(db, harness, {} as ModelProviderSettings, () => undefined)
+    try {
+      const space = db.listSpaces()[0]
+      const members = space.memberIds.map((id) => db.getAgent(id)!)
+      const sending = service.sendSpace(space.id, members.map((agent) => `@${agent.name}`).join(' '))
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+
+      const shutdown = service.shutdown()
+      await expect(service.sendPrivate(members[0].id, '退出期间的新消息')).rejects.toThrow('正在退出')
+      finishRun({ text: '完成', sessionId: 'session' })
+      await Promise.all([sending, shutdown])
+
+      expect(harness.shutdownAll).toHaveBeenCalledOnce()
+      expect(run).toHaveBeenCalledOnce()
+    } finally { db.close() }
+  })
+
+  it('finishes shutdown after the grace period when an active run never settles', async () => {
+    vi.useFakeTimers()
+    const db = new MindMeshDatabase(':memory:')
+    const harness = {
+      run: vi.fn(() => new Promise(() => undefined)),
+      shutdownAll: vi.fn(async () => undefined),
+      status: vi.fn(() => ({ state: 'ready', label: '', detail: '' })),
+    } as unknown as DeepSeekHarnessAdapter
+    const service = new MindMeshServices(db, harness, {} as ModelProviderSettings, () => undefined)
+    try {
+      void service.sendPrivate(db.listAgents()[0].id, '不会结束的请求')
+      const shutdown = service.shutdown()
+      expect(service.shutdown()).toBe(shutdown)
+      await vi.advanceTimersByTimeAsync(15_000)
+      await expect(shutdown).resolves.toBeUndefined()
+      expect(harness.shutdownAll).toHaveBeenCalledOnce()
+    } finally {
+      db.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not start session recovery while shutdown is closing the Harness', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    let rejectRun!: (error: Error) => void
+    const run = vi.fn(() => new Promise((_resolve, reject) => { rejectRun = reject }))
+    const harness = {
+      run,
+      shutdownAll: vi.fn(async () => { rejectRun(new SessionResumeUnsupportedError()) }),
+      status: vi.fn(() => ({ state: 'ready', label: '', detail: '' })),
+    } as unknown as DeepSeekHarnessAdapter
+    const service = new MindMeshServices(db, harness, {} as ModelProviderSettings, () => undefined)
+    try {
+      const sending = service.sendPrivate(db.listAgents()[0].id, '退出时不要恢复会话')
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      await Promise.all([sending, service.shutdown()])
+
+      expect(run).toHaveBeenCalledOnce()
+      expect(harness.shutdownAll).toHaveBeenCalledOnce()
     } finally { db.close() }
   })
 })

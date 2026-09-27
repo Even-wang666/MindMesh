@@ -7,6 +7,8 @@ export type Agent = {
   model: string
   skills: string[]
   tools: string[]
+  /** 思考强度档位（如 off/low/medium/high/max），缺省表示跟随模型服务商默认值 */
+  reasoningEffort?: string
   createdAt: string
 }
 

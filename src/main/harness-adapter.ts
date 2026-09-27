@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { DeepSeekHarness, JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
+import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Agent, ChatImageAttachment, RuntimeStatus } from '../shared/contracts'
 import type { ModelProviderRuntimeConfig } from './model-provider-settings'
@@ -14,6 +15,11 @@ export { getAgentCapabilityHash } from './agent-capability'
 
 const MAX_IDLE_RUNTIMES = 8
 const IDLE_RUNTIME_TTL_MS = 10 * 60_000
+const HARNESS_SYSTEM_ENVIRONMENT = new Set([
+  'APPDATA', 'COMMONPROGRAMFILES', 'COMMONPROGRAMFILES(X86)', 'COMSPEC', 'HOME', 'HOMEDRIVE', 'HOMEPATH',
+  'LOCALAPPDATA', 'OS', 'PATH', 'PATHEXT', 'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)',
+  'PSMODULEPATH', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'TMP', 'USERPROFILE', 'WINDIR',
+])
 
 type RuntimeEntry = {
   harness: DeepSeekHarness
@@ -95,6 +101,11 @@ export class DeepSeekHarnessAdapter {
       const configuredProviders = this.providerSettings.configuredProviders()
       writeFileSync(join(dshHome, 'settings.yaml'), buildProviderSettingsYaml(configuredProviders))
       const capabilityPatch = prepareAgentCapabilities(agent, this.dataDirectory, dshHome)
+      const environmentProviders = [provider]
+      if (agent.tools.includes('网页搜索') && provider.id !== 'deepseek-official') {
+        const webProvider = this.providerSettings.getProvider('deepseek-official')
+        if (webProvider) environmentProviders.push(webProvider)
+      }
       entry = {
         harness: new DeepSeekHarness({
           ...this.packagedDshBin(),
@@ -106,12 +117,15 @@ export class DeepSeekHarnessAdapter {
           processCwd: this.workspace,
           dshHome,
           env: {
-            ...process.env,
-            ...providerEnvironment(configuredProviders),
+            ...systemEnvironment(),
+            ...providerEnvironment(environmentProviders),
             DSH_HOME: dshHome,
             ELECTRON_RUN_AS_NODE: '1',
           },
           maxTokens: 4096,
+          // 思考强度是 harness 实例级构造参数：档位变化会改变能力哈希，
+          // 从而落到独立的运行池条目（新 dshHome/新会话），无需额外失效逻辑。
+          ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort as ReasoningEffortId } : {}),
           initializeTimeoutMs: 30_000,
         }),
         active: 0,
@@ -227,17 +241,17 @@ export class DeepSeekHarnessAdapter {
 }
 
 function providerEnvironment(providers: ModelProviderRuntimeConfig[]): Record<string, string> {
-  const environmentKeys: Record<string, string> = {
-    'deepseek-official': 'DEEPSEEK_API_KEY',
-    'moonshotai-cn': 'MOONSHOT_API_KEY',
-    openai: 'OPENAI_API_KEY',
-    anthropic: 'ANTHROPIC_API_KEY',
-    custom: 'MINDMESH_CUSTOM_API_KEY',
-  }
   return Object.fromEntries(providers.map((provider) => [
-    environmentKeys[provider.id] ?? getModelProviderDefinition(provider.id)?.environmentKey,
+    provider.id === 'custom' ? 'MINDMESH_CUSTOM_API_KEY' : getModelProviderDefinition(provider.id)?.environmentKey,
     provider.apiKey,
   ]).filter((entry): entry is [string, string] => Boolean(entry[0])))
+}
+
+function systemEnvironment(): Record<string, string> {
+  return Object.fromEntries(Object.entries(process.env).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined
+      && HARNESS_SYSTEM_ENVIRONMENT.has(entry[0].toUpperCase()),
+  ))
 }
 
 export function buildProviderSettingsYaml(providers: ModelProviderRuntimeConfig[]): string {
