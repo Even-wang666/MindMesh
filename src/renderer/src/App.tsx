@@ -17,7 +17,7 @@ import { skillDisplayName } from '../../shared/skill-reference'
 import { getChatContentError } from '../../shared/chat-content'
 import { BrandLogo } from './BrandLogo'
 import { PaneResizer, usePaneShares } from './PaneLayout'
-import { Avatar } from './Ui'
+import { Avatar, Field } from './Ui'
 import { AgentWizard, SpaceWizard } from './Wizards'
 import { ConfirmContext, ConfirmDialog, useConfirm, type ConfirmRequest } from './ConfirmDialog'
 import { SettingsPage } from './SettingsPage'
@@ -704,6 +704,8 @@ function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element 
   const [installing, setInstalling] = useState<'local' | 'github' | null>(null)
   const [progress, setProgress] = useState<SkillInstallProgress | null>(null)
   const [notice, setNotice] = useState('')
+  const [githubDialogOpen, setGitHubDialogOpen] = useState(false)
+  const [githubUrl, setGitHubUrl] = useState('')
   useEffect(() => { void window.mindmesh.catalog[kind]().then(setItems) }, [kind])
   useEffect(() => {
     if (kind !== 'skills') return undefined
@@ -723,10 +725,12 @@ function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element 
     catch (caught) { setError(caught instanceof Error ? caught.message : '技能安装失败') }
     finally { setInstalling(null); setProgress(null) }
   }
-  async function installGitHubSkill(): Promise<void> {
+  async function installGitHubSkill(rawUrl: string): Promise<void> {
     if (installing) return
-    const url = window.prompt('输入公开 GitHub 仓库或 skill 目录 URL')?.trim()
+    const url = rawUrl.trim()
     if (!url) return
+    setGitHubDialogOpen(false)
+    setGitHubUrl('')
     setError('')
     setNotice('')
     setProgress(null)
@@ -741,7 +745,7 @@ function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element 
   const progressLabel = installing === 'local'
     ? '正在选择并导入本地技能…'
     : progress ? formatSkillInstallProgress(progress) : installing === 'github' ? '正在准备 GitHub 技能安装…' : ''
-  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div>{kind === 'skills' && <div className="space-header-actions"><button className="secondary-button compact" disabled={installing !== null} onClick={() => void installSkill()}><Plus size={17} />{installing === 'local' ? '导入中…' : '本地导入'}</button><button className="primary-button compact" disabled={installing !== null} onClick={() => void installGitHubSkill()}>{installing === 'github' ? '导入中…' : 'GitHub 导入'}</button></div>}</header>{error && <p className="form-error" role="alert">{error}</p>}{progressLabel && <div className="skill-install-progress" role="status"><span>{progressLabel}</span>{progress?.phase === 'downloading' && progress.totalBytes !== undefined && <progress aria-label="GitHub 技能下载进度" value={progress.receivedBytes ?? 0} max={progress.totalBytes} />}</div>}{notice && <p className="form-success" role="status">{notice}</p>}{items.length === 0 ? <div className="empty-state"><span className="empty-mark">{kind === 'skills' ? <Sparkles size={19} /> : <Wrench size={19} />}</span><h1>{kind === 'skills' ? '还没有可用技能' : '还没有可用工具'}</h1><p>安装后会自动出现在这里，并可绑定到智能体。</p></div> : <div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p>{item.diagnostic && <small>{item.diagnostic}</small>}{kind === 'skills' && item.source && <small>{item.integrity === 'untracked' ? '未托管来源' : '可信来源'}：{item.source}{item.license ? ` · ${item.license}${item.licenseSpdx === false ? '（非 SPDX）' : ''}` : ''}{item.integrity === 'modified' ? ' · 内容已变更' : ''}</small>}{item.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}<span className="status-tag">{item.status}</span></article>)}</div>}</div>
+  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div>{kind === 'skills' && <div className="space-header-actions"><button className="secondary-button compact" disabled={installing !== null} onClick={() => void installSkill()}><Plus size={17} />{installing === 'local' ? '导入中…' : '本地导入'}</button><button className="primary-button compact" disabled={installing !== null} onClick={() => setGitHubDialogOpen(true)}>{installing === 'github' ? '导入中…' : 'GitHub 导入'}</button></div>}</header>{error && <p className="form-error" role="alert">{error}</p>}{progressLabel && <div className="skill-install-progress" role="status"><span>{progressLabel}</span>{progress?.phase === 'downloading' && progress.totalBytes !== undefined && <progress aria-label="GitHub 技能下载进度" value={progress.receivedBytes ?? 0} max={progress.totalBytes} />}</div>}{notice && <p className="form-success" role="status">{notice}</p>}{items.length === 0 ? <div className="empty-state"><span className="empty-mark">{kind === 'skills' ? <Sparkles size={19} /> : <Wrench size={19} />}</span><h1>{kind === 'skills' ? '还没有可用技能' : '还没有可用工具'}</h1><p>安装后会自动出现在这里，并可绑定到智能体。</p></div> : <div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p>{item.diagnostic && <small>{item.diagnostic}</small>}{kind === 'skills' && item.source && <small>{item.integrity === 'untracked' ? '未托管来源' : '可信来源'}：{item.source}{item.license ? ` · ${item.license}${item.licenseSpdx === false ? '（非 SPDX）' : ''}` : ''}{item.integrity === 'modified' ? ' · 内容已变更' : ''}</small>}{item.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}<span className="status-tag">{item.status}</span></article>)}</div>}{githubDialogOpen && <div className="modal-backdrop confirm-backdrop"><form className="confirm-dialog github-import-dialog" role="dialog" aria-modal="true" aria-labelledby="github-import-title" onSubmit={(event) => { event.preventDefault(); void installGitHubSkill(githubUrl) }}><header><div><h2 id="github-import-title">从 GitHub 导入技能</h2><p>粘贴公开 GitHub 仓库或其中的 skill 目录地址。</p></div><button type="button" className="icon-button" aria-label="关闭" onClick={() => setGitHubDialogOpen(false)}><X size={18} /></button></header><Field label="GitHub 地址"><input autoFocus value={githubUrl} onChange={(event) => setGitHubUrl(event.target.value)} placeholder="https://github.com/owner/repo/tree/main/path/to/skill" /></Field><footer><button type="button" className="secondary-button" onClick={() => setGitHubDialogOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={!githubUrl.trim()}>导入</button></footer></form></div>}</div>
 }
 
 function formatSkillInstallProgress(progress: SkillInstallProgress): string {

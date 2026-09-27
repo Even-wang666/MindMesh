@@ -56,6 +56,17 @@ function mockApi(): MindMeshApi {
 }
 
 describe('chat details', () => {
+  it('opens an in-app URL form when GitHub import is clicked', async () => {
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: mockApi() })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'GitHub 导入' }))
+
+    expect(screen.getByRole('dialog', { name: '从 GitHub 导入技能' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'GitHub 地址' })).toHaveFocus()
+  })
+
   it('installs a skill from a GitHub directory URL', async () => {
     const api = mockApi()
     let finishInstall!: (items: Awaited<ReturnType<MindMeshApi['catalog']['skills']>>) => void
@@ -66,13 +77,16 @@ describe('chat details', () => {
     }])
     api.catalog.installSkillFromGitHub = vi.fn(() => new Promise<Awaited<ReturnType<MindMeshApi['catalog']['skills']>>>((resolve) => { finishInstall = resolve }))
     api.catalog.onInstallProgress = vi.fn((listener) => { emitProgress = listener; return () => undefined })
-    vi.spyOn(window, 'prompt').mockReturnValue('https://github.com/acme/skills/tree/main/sample')
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '技能' }))
     expect(await screen.findByText('可信来源：GitHub：acme/skills@aaaaaaa · MIT')).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: 'GitHub 导入' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'GitHub 地址' }), {
+      target: { value: 'https://github.com/acme/skills/tree/main/sample' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '导入' }))
 
     await waitFor(() => expect(api.catalog.installSkillFromGitHub)
       .toHaveBeenCalledWith('https://github.com/acme/skills/tree/main/sample'))

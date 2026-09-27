@@ -1920,6 +1920,8 @@ em,
 }
 .confirm-dialog > footer { display: flex; justify-content: flex-end; gap: var(--sp-3); }
 .confirm-dialog .form-error { margin: 0; color: var(--mm-color-danger); }
+.github-import-dialog { width: min(560px, calc(100vw - 64px)); }
+.github-import-dialog .field { margin: 0; }
 
 .wizard {
   width: min(880px, calc(100vw - 64px));
