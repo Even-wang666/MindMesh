@@ -35,7 +35,10 @@ function mockApi(): MindMeshApi {
       onDelta: vi.fn(() => () => undefined),
       onProgress: vi.fn(() => () => undefined),
     },
-    catalog: { skills: vi.fn(async () => []), tools: vi.fn(async () => []), models: vi.fn(async () => []) },
+    catalog: {
+      skills: vi.fn(async () => []), installSkill: vi.fn(async () => []),
+      tools: vi.fn(async () => []), models: vi.fn(async () => []),
+    },
     runtime: {
       status: vi.fn(async () => ({ state: 'ready' as const, label: '准备就绪', detail: '模型服务已连接。' })),
     },

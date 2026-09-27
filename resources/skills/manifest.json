@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": [
+    "research",
+    "report",
+    "review",
+    "mindmesh-builtin-project-planner-v1",
+    "mindmesh-builtin-user-story-writer-v1",
+    "mindmesh-builtin-study-plan-builder-v1",
+    "mindmesh-builtin-language-tutor-v1",
+    "mindmesh-builtin-workout-planner-v1",
+    "mindmesh-builtin-meal-plan-builder-v1",
+    "mindmesh-builtin-trip-planner-v1"
+  ]
+}

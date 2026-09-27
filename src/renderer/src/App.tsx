@@ -6,7 +6,7 @@ import {
   Plus, Search, Send, Settings, ShieldCheck, Sparkles, Square, Trash2, Wrench, X,
 } from 'lucide-react'
 import type {
-  Agent, ChatImageAttachment, ChatImageMediaType, ChatPermission, ChatRunOptions, Message, ModelOption, RuntimeStatus,
+  Agent, CatalogItem, ChatImageAttachment, ChatImageMediaType, ChatPermission, ChatRunOptions, Message, ModelOption, RuntimeStatus,
   Space, UserProfile,
 } from '../../shared/contracts'
 import {
@@ -699,9 +699,15 @@ function AgentsPage({ agents, onCreate, onDetail }: { agents: Agent[]; onCreate:
 }
 
 function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element {
-  const [items, setItems] = useState<Array<{ id: string; name: string; description: string; status: string }>>([])
+  const [items, setItems] = useState<CatalogItem[]>([])
+  const [error, setError] = useState('')
   useEffect(() => { void window.mindmesh.catalog[kind]().then(setItems) }, [kind])
-  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div></header>{items.length === 0 ? <div className="empty-state"><span className="empty-mark">{kind === 'skills' ? <Sparkles size={19} /> : <Wrench size={19} />}</span><h1>{kind === 'skills' ? '还没有可用技能' : '还没有可用工具'}</h1><p>安装后会自动出现在这里，并可绑定到智能体。</p></div> : <div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p><span className="status-tag">{item.status}</span></article>)}</div>}</div>
+  async function installSkill(): Promise<void> {
+    setError('')
+    try { setItems(await window.mindmesh.catalog.installSkill()) }
+    catch (caught) { setError(caught instanceof Error ? caught.message : '技能安装失败') }
+  }
+  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div>{kind === 'skills' && <button className="primary-button" onClick={() => void installSkill()}><Plus size={17} />导入技能</button>}</header>{error && <p className="form-error" role="alert">{error}</p>}{items.length === 0 ? <div className="empty-state"><span className="empty-mark">{kind === 'skills' ? <Sparkles size={19} /> : <Wrench size={19} />}</span><h1>{kind === 'skills' ? '还没有可用技能' : '还没有可用工具'}</h1><p>安装后会自动出现在这里，并可绑定到智能体。</p></div> : <div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p>{item.diagnostic && <small>{item.diagnostic}</small>}{kind === 'skills' && item.source && <small>{item.source}{item.license ? ` · ${item.license}` : ''}{item.integrity === 'modified' ? ' · 内容已变更' : ''}</small>}{item.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}<span className="status-tag">{item.status}</span></article>)}</div>}</div>
 }
 
 function AgentDrawer({ agent, onClose, onChat, onEdit, onRemove }: {

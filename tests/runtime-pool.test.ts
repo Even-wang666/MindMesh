@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -41,6 +41,47 @@ beforeEach(() => { state.launched.length = 0; state.closed.length = 0; state.rel
 afterEach(() => { state.release?.() })
 
 describe('Harness runtime pool', () => {
+  it('changes the capability hash when a selected bundle resource changes', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-pool-skills-'))
+    try {
+      const bundle = join(directory, 'skills', 'sample')
+      mkdirSync(bundle, { recursive: true })
+      writeFileSync(join(bundle, 'SKILL.md'), '---\nname: sample\ndescription: Sample\n---\n')
+      writeFileSync(join(bundle, 'REFERENCE.md'), 'first')
+      const selected = { ...agent('skills'), skills: ['skill:sample#Sample'] }
+      const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
+      const before = adapter.capabilityHash(selected)
+      writeFileSync(join(bundle, 'REFERENCE.md'), 'second')
+      expect(adapter.capabilityHash(selected)).not.toBe(before)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('stops the active runtime even when its selected skill changes mid-run', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-pool-stop-'))
+    const bundle = join(directory, 'skills', 'sample')
+    mkdirSync(bundle, { recursive: true })
+    writeFileSync(join(bundle, 'SKILL.md'), '---\nname: sample\ndescription: Sample\n---\n')
+    writeFileSync(join(bundle, 'REFERENCE.md'), 'first')
+    const selected = { ...agent('skills'), skills: ['skill:sample#Sample'] }
+    const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
+    try {
+      const held = adapter.run(selected, 'hold')
+      await vi.waitFor(() => expect(state.release).toBeTypeOf('function'))
+      writeFileSync(join(bundle, 'REFERENCE.md'), 'second')
+
+      await expect(adapter.stop(selected)).resolves.toBe(true)
+      expect(state.closed).toEqual([state.launched[0]])
+      state.release?.()
+      await held
+    } finally {
+      state.release?.()
+      await adapter.shutdownAll()
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('keeps eight recent idle runtimes and closes the least recently used', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-pool-'))
     const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)

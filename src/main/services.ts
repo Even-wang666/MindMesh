@@ -140,7 +140,7 @@ export class MindMeshServices {
     const promptContent = content.trim() || '请分析附带的图片。'
     const contextKey = `private:${agentId}`
     let session = this.db.getOrCreateRuntimeSession(
-      contextKey, runAgent, `private-${agentId}`, getAgentCapabilityHash(runAgent),
+      contextKey, runAgent, `private-${agentId}`, this.capabilityHash(runAgent),
     )
     // persona 保持会话快照语义；tools 与 reasoningEffort 是活能力，跟随最新 Agent 配置，
     // 变化时经能力哈希比较触发会话重建（思考强度是 Harness 实例级参数，必须重建才生效）。
@@ -151,10 +151,11 @@ export class MindMeshServices {
       sessionRunAgent = { ...sessionRunAgent, provider: runAgent.provider, model: runAgent.model }
     }
     let restarted = false
-    if (getAgentCapabilityHash(session.agent) !== getAgentCapabilityHash(sessionRunAgent)
+    const sessionRunCapabilityHash = this.capabilityHash(sessionRunAgent)
+    if (session.capabilityHash !== sessionRunCapabilityHash
       || (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model))) {
       session = this.db.restartRuntimeSession(
-        contextKey, sessionRunAgent, `private-${agentId}-${crypto.randomUUID()}`, getAgentCapabilityHash(sessionRunAgent),
+        contextKey, sessionRunAgent, `private-${agentId}-${crypto.randomUUID()}`, sessionRunCapabilityHash,
       )
       restarted = true
     }
@@ -228,7 +229,7 @@ export class MindMeshServices {
       const agent = members.find((item) => item.id === runAgent.id)!
       const contextKey = `space:${spaceId}:${agent.id}`
       let session = this.db.getOrCreateRuntimeSession(
-        contextKey, runAgent, `space-${spaceId}-${agent.id}`, getAgentCapabilityHash(runAgent),
+        contextKey, runAgent, `space-${spaceId}-${agent.id}`, this.capabilityHash(runAgent),
         this.db.lastAgentMessageSequence(spaceId, agent.id),
       )
       let sessionRunAgent = resolveRunAgent(
@@ -237,11 +238,12 @@ export class MindMeshServices {
       if (images.length > 0 && !supportsImageInput(sessionRunAgent.provider, sessionRunAgent.model)) {
         sessionRunAgent = { ...sessionRunAgent, provider: runAgent.provider, model: runAgent.model }
       }
-      if (getAgentCapabilityHash(session.agent) !== getAgentCapabilityHash(sessionRunAgent)
+      const sessionRunCapabilityHash = this.capabilityHash(sessionRunAgent)
+      if (session.capabilityHash !== sessionRunCapabilityHash
         || (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model))) {
         session = this.db.restartRuntimeSession(
           contextKey, sessionRunAgent, `space-${spaceId}-${agent.id}-${crypto.randomUUID()}`,
-          getAgentCapabilityHash(sessionRunAgent), 0,
+          sessionRunCapabilityHash, 0,
         )
       }
       const sessionAgent = { ...session.agent, name: agent.name, role: agent.role }
@@ -354,6 +356,12 @@ export class MindMeshServices {
   private cleanupUnusedHomes(): void {
     try { this.harness.cleanupUnusedHomes(this.db.referencedCapabilityHashes()) }
     catch { /* Cache cleanup must not replace a successful data change. */ }
+  }
+
+  private capabilityHash(agent: Agent): string {
+    return typeof this.harness.capabilityHash === 'function'
+      ? this.harness.capabilityHash(agent)
+      : getAgentCapabilityHash(agent)
   }
 
   private async runAgent(

@@ -40,6 +40,19 @@ export type ChatRunOptions = {
 
 export type ModelOption = { provider: string; id: string; name: string; contextWindow?: number }
 
+export type CatalogItem = {
+  id: string
+  name: string
+  description: string
+  status: string
+  available?: boolean
+  diagnostic?: string
+  source?: string
+  integrity?: 'verified' | 'modified' | 'untracked'
+  license?: string
+  limitations?: string[]
+}
+
 export type Message = {
   id: string
   scope: 'private' | 'space'
@@ -135,8 +148,9 @@ export type MindMeshApi = {
     onProgress(listener: (event: ChatProgress) => void): () => void
   }
   catalog: {
-    skills(): Promise<Array<{ id: string; name: string; description: string; status: string }>>
-    tools(): Promise<Array<{ id: string; name: string; description: string; status: string }>>
+    skills(): Promise<CatalogItem[]>
+    installSkill(): Promise<CatalogItem[]>
+    tools(): Promise<CatalogItem[]>
     models(): Promise<ModelOption[]>
   }
   runtime: {

@@ -64,6 +64,7 @@
     "react-dom": "^19.1.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "yaml": "2.9.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -93,6 +94,12 @@
       "out/**/*",
       "package.json",
       "THIRD_PARTY_NOTICES.md"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/skills",
+        "to": "skills"
+      }
     ],
     "asarUnpack": [
       "node_modules/**/*"

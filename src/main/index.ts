@@ -5,7 +5,7 @@ import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
 import { MindMeshServices } from './services'
-import { listSkillCatalog, playwrightBrowserAvailable, toolCatalog } from './capabilities'
+import { installSkillBundle, listSkillCatalog, playwrightBrowserAvailable, seedBundledSkills, toolCatalog } from './capabilities'
 import { appendRuntimeError } from './runtime-errors'
 import { installNavigationGuards } from './navigation'
 
@@ -80,8 +80,18 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('settings:saveModelProvider', (_event, input) => current.saveModelProvider(input))
   ipcMain.handle('settings:removeModelProvider', (_event, id) => current.removeModelProvider(id))
   ipcMain.handle('catalog:models', () => current.models())
-  ipcMain.handle('catalog:skills', () => listSkillCatalog(dataDir).map(({ id, name, description }) =>
-    ({ id, name, description, status: '已安装' })))
+  ipcMain.handle('catalog:skills', () => listSkillCatalog(dataDir).map(
+    ({ id, name, description, status, available, diagnostic, source, integrity, license, limitations }) => (
+      { id, name, description, status, available, diagnostic, source, integrity, license, limitations }),
+  ))
+  ipcMain.handle('catalog:installSkill', async () => {
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+    if (!result.canceled && result.filePaths[0]) installSkillBundle(result.filePaths[0], dataDir)
+    return listSkillCatalog(dataDir).map(
+      ({ id, name, description, status, available, diagnostic, source, integrity, license, limitations }) => (
+        { id, name, description, status, available, diagnostic, source, integrity, license, limitations }),
+    )
+  })
   ipcMain.handle('catalog:tools', () => toolCatalog.map((tool) => {
     if (tool.id === 'web') {
       return { ...tool, status: current.modelProviders().some((provider) => provider.id === 'deepseek-official' && provider.configured)
@@ -95,6 +105,8 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
 app.whenReady().then(() => {
   app.setAppUserModelId('com.mindmesh.desktop')
   const dataDir = join(app.getPath('userData'), 'mindmesh-data')
+  const bundledSkills = app.isPackaged ? join(process.resourcesPath, 'skills') : join(process.cwd(), 'resources', 'skills')
+  seedBundledSkills(bundledSkills, dataDir)
   const db = new MindMeshDatabase(join(dataDir, 'mindmesh.sqlite'))
   const providerSettings = new ModelProviderSettings(join(dataDir, 'model-services.json'))
   const savedWorkspace = db.getWorkspacePath()

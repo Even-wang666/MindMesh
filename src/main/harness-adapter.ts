@@ -10,6 +10,7 @@ import { ModelProviderSettings } from './model-provider-settings'
 import { getModelProviderDefinition, MODEL_CATALOG } from '../shared/model-providers'
 import { prepareAgentCapabilities } from './capabilities'
 import { getAgentCapabilityHash } from './agent-capability'
+import { selectedSkillsRevision } from './skills'
 
 export { getAgentCapabilityHash } from './agent-capability'
 
@@ -24,6 +25,7 @@ const HARNESS_SYSTEM_ENVIRONMENT = new Set([
 type RuntimeEntry = {
   harness: DeepSeekHarness
   active: number
+  activeAgents: Map<string, number>
   lastUsed: number
 }
 
@@ -67,8 +69,12 @@ export class DeepSeekHarnessAdapter {
   }
 
   private runtimeKey(agentKey: string): string {
-    return this.workspace === process.cwd() ? agentKey
+    return this.workspace === process.cwd() && !agentKey.includes(':') ? agentKey
       : createHash('sha256').update(agentKey).update(this.workspace).digest('hex')
+  }
+
+  capabilityHash(agent: Agent): string {
+    return getAgentCapabilityHash(agent, selectedSkillsRevision(agent.skills, this.dataDirectory))
   }
 
   status(): RuntimeStatus {
@@ -92,7 +98,7 @@ export class DeepSeekHarnessAdapter {
       return { text: this.demoResponse(agent, prompt), sessionId }
     }
 
-    const agentKey = getAgentCapabilityHash(agent)
+    const agentKey = this.capabilityHash(agent)
     const key = this.runtimeKey(agentKey)
     let entry = this.runtimes.get(key)
     if (!entry) {
@@ -129,11 +135,13 @@ export class DeepSeekHarnessAdapter {
           initializeTimeoutMs: 30_000,
         }),
         active: 0,
+        activeAgents: new Map(),
         lastUsed: Date.now(),
       }
       this.runtimes.set(key, entry)
     }
     entry.active += 1
+    entry.activeAgents.set(agent.id, (entry.activeAgents.get(agent.id) ?? 0) + 1)
     entry.lastUsed = Date.now()
     this.runtimes.delete(key)
     this.runtimes.set(key, entry)
@@ -179,6 +187,9 @@ export class DeepSeekHarnessAdapter {
       throw error
     } finally {
       entry.active -= 1
+      const agentRuns = (entry.activeAgents.get(agent.id) ?? 1) - 1
+      if (agentRuns === 0) entry.activeAgents.delete(agent.id)
+      else entry.activeAgents.set(agent.id, agentRuns)
       entry.lastUsed = Date.now()
       await this.evictIdle()
     }
@@ -205,10 +216,11 @@ export class DeepSeekHarnessAdapter {
 
   /** The SDK has no per-turn cancel method, so stopping a turn closes its owned runtime. */
   async stop(agent: Agent): Promise<boolean> {
-    const key = this.runtimeKey(getAgentCapabilityHash(agent))
-    const entry = this.runtimes.get(key)
+    const ownedRuntimes = [...this.runtimes.entries()].filter(([, candidate]) =>
+      candidate.active === 1 && candidate.activeAgents.get(agent.id) === 1)
     /* A runtime can be pooled by capability. Closing it is safe only when this is its sole turn. */
-    if (!entry || entry.active !== 1) return false
+    if (ownedRuntimes.length !== 1) return false
+    const [key, entry] = ownedRuntimes[0]
     this.runtimes.delete(key)
     await entry.harness.close()
     return true

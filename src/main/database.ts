@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { Agent, ChatImageAttachment, CreateAgentInput, CreateSpaceInput, Message, Space, UserProfile } from '../shared/contracts'
 import { createSkillReference } from '../shared/skill-reference'
-import { getAgentCapabilityHash } from './agent-capability'
+import { getAgentCapabilityBaseHash, getAgentCapabilityHash } from './agent-capability'
 
 type AgentRow = Omit<Agent, 'skills' | 'tools' | 'reasoningEffort'> & { skills: string; tools: string; reasoningEffort: string | null }
 type SpaceRow = Omit<Space, 'memberIds'>
@@ -105,6 +105,7 @@ const localizedStarterSkills = {
 
 export type RuntimeSession = {
   harnessSessionId: string
+  capabilityHash: string
   agent: Agent
   lastConsumedMessageSequence: number
 }
@@ -524,17 +525,18 @@ export class MindMeshDatabase {
     if (row) {
       const snapshot = row.agentSnapshot ? JSON.parse(row.agentSnapshot) as Agent : agent
       const snapshotHash = row.agentSnapshot ? getAgentCapabilityHash(snapshot) : capabilityHash
-      if (!row.agentSnapshot || row.capabilityHash !== snapshotHash) {
+      if (!row.agentSnapshot || getAgentCapabilityBaseHash(row.capabilityHash) !== snapshotHash) {
         this.db.prepare(`UPDATE runtime_sessions
           SET harnessSessionId = ?, provider = ?, model = ?, capabilityHash = ?, agentSnapshot = ?, updatedAt = ?
           WHERE contextKey = ?`)
           .run(sessionId, snapshot.provider, snapshot.model, snapshotHash, JSON.stringify(snapshot),
             new Date().toISOString(), contextKey)
-        return { harnessSessionId: sessionId, agent: snapshot,
+        return { harnessSessionId: sessionId, capabilityHash: snapshotHash, agent: snapshot,
           lastConsumedMessageSequence: row.lastConsumedMessageSequence }
       }
       return {
         harnessSessionId: row.harnessSessionId,
+        capabilityHash: row.capabilityHash,
         agent: snapshot,
         lastConsumedMessageSequence: row.lastConsumedMessageSequence,
       }
@@ -546,7 +548,7 @@ export class MindMeshDatabase {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(contextKey, sessionId, agent.provider, agent.model, capabilityHash,
       JSON.stringify(agent), initialSequence, new Date().toISOString())
-    return { harnessSessionId: sessionId, agent, lastConsumedMessageSequence: initialSequence }
+    return { harnessSessionId: sessionId, capabilityHash, agent, lastConsumedMessageSequence: initialSequence }
   }
 
   restartRuntimeSession(
