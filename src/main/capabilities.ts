@@ -13,6 +13,7 @@ export const toolCatalog = [
   { id: 'todo', name: '待办清单', description: '规划并跟踪多步任务。' },
   { id: 'goal', name: '目标管理', description: '在当前会话中维护长任务目标。' },
   { id: 'jobs', name: '后台任务', description: '在当前会话中查看和控制后台任务。' },
+  { id: 'subagent', name: '子代理', description: '派生子代理并行处理独立子任务，并支持多子代理编排工作流。' },
 ]
 
 export function prepareAgentCapabilities(agent: Agent, dataDirectory: string, dshHome: string): string {
@@ -41,7 +42,7 @@ export function prepareAgentCapabilities(agent: Agent, dataDirectory: string, ds
     disabled('tool-goal', !tools.has('目标管理')),
     disabled('tool-jobs', !tools.has('后台任务')),
     ...['tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent',
-      'tool-subagent-fork', 'tool-workflow'].map((id) => disabled(id, true)),
+      'tool-subagent-fork', 'tool-workflow'].map((id) => disabled(id, !tools.has('子代理'))),
   ]
   if (tools.has('浏览器')) patch.push(buildPlaywrightMcpInsert())
   const patchPath = join(dshHome, 'capabilities.cordis.patch.yml')

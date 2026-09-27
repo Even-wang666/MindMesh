@@ -68,12 +68,27 @@ describe('Harness capability binding', () => {
       expect(patch).toMatch(/id: tool-todo\n  disabled: true/)
       expect(patch).toMatch(/id: tool-goal\n  disabled: true/)
       expect(patch).toMatch(/id: tool-jobs\n  disabled: true/)
+      expect(patch).toMatch(/id: tool-subagent\n  disabled: true/)
+      expect(patch).toMatch(/id: tool-workflow\n  disabled: true/)
       expect(patch).not.toContain('mindmesh-browser')
       expect(readFileSync(join(home, 'selected-skills', 'research', 'SKILL.md'), 'utf8')).toContain('name: research')
       expect(readFileSync(join(home, 'selected-skills', 'research', 'REFERENCE.md'), 'utf8')).toBe('完整 bundle 资源')
       prepareAgentCapabilities({ ...agent, skills: [] }, directory, home)
       expect(existsSync(join(home, 'selected-skills', 'research'))).toBe(false)
       expect(() => prepareAgentCapabilities({ ...agent, skills: ['未安装技能'] }, directory, home)).toThrow('未安装')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('enables subagent tools only when explicitly selected', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-capabilities-subagent-'))
+    try {
+      const path = prepareAgentCapabilities({ ...agent, skills: [], tools: ['子代理'] }, directory, join(directory, 'harness'))
+      const patch = readFileSync(path, 'utf8')
+      for (const id of ['tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent', 'tool-subagent-fork', 'tool-workflow']) {
+        expect(patch).toMatch(new RegExp(`id: ${id}\\n  disabled: false`))
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
