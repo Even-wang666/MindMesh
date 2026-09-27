@@ -20,6 +20,7 @@ import { Readable, Transform } from 'node:stream'
 import { x as extractTar } from 'tar'
 import parseSpdxExpression from 'spdx-expression-parse'
 import { parse } from 'yaml'
+import type { SkillInstallProgress } from '../shared/contracts'
 import { parseSkillReference } from '../shared/skill-reference'
 
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -132,7 +133,12 @@ export function installSkillBundle(sourceDirectory: string, dataDirectory: strin
   return installSkillBundleWithReceipt(source, dataDirectory, { kind: 'local', path: source })
 }
 
-export async function installSkillFromGitHub(input: string, dataDirectory: string): Promise<SkillCatalogItem> {
+export async function installSkillFromGitHub(
+  input: string,
+  dataDirectory: string,
+  onProgress?: (progress: SkillInstallProgress) => void,
+): Promise<SkillCatalogItem> {
+  onProgress?.({ phase: 'resolving' })
   const github = parseGitHubSkillUrl(input)
   const resolved = await resolveGitHubLocation(github)
   const commit = resolved.commit
@@ -141,11 +147,14 @@ export async function installSkillFromGitHub(input: string, dataDirectory: strin
   const checkout = join(temporary, 'checkout')
   mkdirSync(checkout)
   try {
-    await downloadFile(`https://codeload.github.com/${github.repository}/tar.gz/${commit}`, archive)
+    onProgress?.({ phase: 'downloading' })
+    await downloadFile(`https://codeload.github.com/${github.repository}/tar.gz/${commit}`, archive,
+      (receivedBytes, totalBytes) => onProgress?.({ phase: 'downloading', receivedBytes, totalBytes }))
     let files = 0
     let bytes = 0
     let archiveEntries = 0
     let archiveExpandedBytes = 0
+    onProgress?.({ phase: 'extracting' })
     await extractTar({
       file: archive,
       cwd: checkout,
@@ -175,13 +184,16 @@ export async function installSkillFromGitHub(input: string, dataDirectory: strin
       },
     })
     const source = resolved.path ? join(checkout, ...resolved.path.split('/')) : checkout
-    return installSkillBundleWithReceipt(source, dataDirectory, {
+    onProgress?.({ phase: 'installing' })
+    const installed = installSkillBundleWithReceipt(source, dataDirectory, {
       kind: 'github',
       url: github.url,
       repository: github.repository,
       commit,
       path: resolved.path,
     })
+    onProgress?.({ phase: 'done' })
+    return installed
   } finally {
     rmSync(temporary, { recursive: true, force: true })
   }
@@ -560,19 +572,32 @@ async function githubJson(url: string): Promise<unknown> {
   return response.json()
 }
 
-async function downloadFile(url: string, destination: string): Promise<void> {
+async function downloadFile(
+  url: string,
+  destination: string,
+  onProgress?: (receivedBytes: number, totalBytes?: number) => void,
+): Promise<void> {
   const response = await fetch(url, { signal: AbortSignal.timeout(30_000) })
   if (!response.ok || !response.body) throw new Error(`GitHub 下载失败（${response.status}）`)
-  const declaredBytes = Number(response.headers.get('content-length'))
-  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_ARCHIVE_BYTES) throw new Error('GitHub 仓库归档超过 32 MiB')
+  const contentLength = response.headers.get('content-length')
+  const declaredBytes = contentLength === null ? undefined : Number(contentLength)
+  const totalBytes = declaredBytes !== undefined && Number.isFinite(declaredBytes) ? declaredBytes : undefined
+  if (totalBytes !== undefined && totalBytes > MAX_ARCHIVE_BYTES) throw new Error('GitHub 仓库归档超过 32 MiB')
   let bytes = 0
+  let reportedBytes = 0
   const limiter = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       bytes += chunk.length
-      callback(bytes > MAX_ARCHIVE_BYTES ? new Error('GitHub 仓库归档超过 32 MiB') : null, chunk)
+      if (bytes > MAX_ARCHIVE_BYTES) return callback(new Error('GitHub 仓库归档超过 32 MiB'))
+      if (bytes - reportedBytes >= 256 * 1024 || bytes === totalBytes) {
+        reportedBytes = bytes
+        onProgress?.(bytes, totalBytes)
+      }
+      callback(null, chunk)
     },
   })
   await pipeline(Readable.fromWeb(response.body as never), limiter, createWriteStream(destination))
+  if (bytes !== reportedBytes) onProgress?.(bytes, totalBytes)
 }
 
 function licenseReceipt(declared?: string): InstalledSkillReceipt['license'] {

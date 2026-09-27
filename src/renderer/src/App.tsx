@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import type {
   Agent, CatalogItem, ChatImageAttachment, ChatImageMediaType, ChatPermission, ChatRunOptions, Message, ModelOption, RuntimeStatus,
-  Space, UserProfile,
+  SkillInstallProgress, Space, UserProfile,
 } from '../../shared/contracts'
 import {
   getModelContextWindow, reasoningEffortOptions, supportsImageInput,
@@ -701,20 +701,60 @@ function AgentsPage({ agents, onCreate, onDetail }: { agents: Agent[]; onCreate:
 function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element {
   const [items, setItems] = useState<CatalogItem[]>([])
   const [error, setError] = useState('')
+  const [installing, setInstalling] = useState<'local' | 'github' | null>(null)
+  const [progress, setProgress] = useState<SkillInstallProgress | null>(null)
+  const [notice, setNotice] = useState('')
   useEffect(() => { void window.mindmesh.catalog[kind]().then(setItems) }, [kind])
+  useEffect(() => {
+    if (kind !== 'skills') return undefined
+    return window.mindmesh.catalog.onInstallProgress(setProgress)
+  }, [kind])
   async function installSkill(): Promise<void> {
+    if (installing) return
     setError('')
-    try { setItems(await window.mindmesh.catalog.installSkill()) }
+    setNotice('')
+    setInstalling('local')
+    try {
+      const installedItems = await window.mindmesh.catalog.installSkill()
+      if (!installedItems) return
+      setItems(installedItems)
+      setNotice('本地技能导入完成，技能库已刷新。')
+    }
     catch (caught) { setError(caught instanceof Error ? caught.message : '技能安装失败') }
+    finally { setInstalling(null); setProgress(null) }
   }
   async function installGitHubSkill(): Promise<void> {
+    if (installing) return
     const url = window.prompt('输入公开 GitHub 仓库或 skill 目录 URL')?.trim()
     if (!url) return
     setError('')
-    try { setItems(await window.mindmesh.catalog.installSkillFromGitHub(url)) }
+    setNotice('')
+    setProgress(null)
+    setInstalling('github')
+    try {
+      setItems(await window.mindmesh.catalog.installSkillFromGitHub(url))
+      setNotice('GitHub 技能安装完成，技能库已刷新。')
+    }
     catch (caught) { setError(caught instanceof Error ? caught.message : 'GitHub 技能安装失败') }
+    finally { setInstalling(null); setProgress(null) }
   }
-  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div>{kind === 'skills' && <div className="space-header-actions"><button className="secondary-button compact" onClick={() => void installSkill()}><Plus size={17} />本地导入</button><button className="primary-button compact" onClick={() => void installGitHubSkill()}>GitHub 导入</button></div>}</header>{error && <p className="form-error" role="alert">{error}</p>}{items.length === 0 ? <div className="empty-state"><span className="empty-mark">{kind === 'skills' ? <Sparkles size={19} /> : <Wrench size={19} />}</span><h1>{kind === 'skills' ? '还没有可用技能' : '还没有可用工具'}</h1><p>安装后会自动出现在这里，并可绑定到智能体。</p></div> : <div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p>{item.diagnostic && <small>{item.diagnostic}</small>}{kind === 'skills' && item.source && <small>{item.integrity === 'untracked' ? '未托管来源' : '可信来源'}：{item.source}{item.license ? ` · ${item.license}${item.licenseSpdx === false ? '（非 SPDX）' : ''}` : ''}{item.integrity === 'modified' ? ' · 内容已变更' : ''}</small>}{item.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}<span className="status-tag">{item.status}</span></article>)}</div>}</div>
+  const progressLabel = installing === 'local'
+    ? '正在选择并导入本地技能…'
+    : progress ? formatSkillInstallProgress(progress) : installing === 'github' ? '正在准备 GitHub 技能安装…' : ''
+  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div>{kind === 'skills' && <div className="space-header-actions"><button className="secondary-button compact" disabled={installing !== null} onClick={() => void installSkill()}><Plus size={17} />{installing === 'local' ? '导入中…' : '本地导入'}</button><button className="primary-button compact" disabled={installing !== null} onClick={() => void installGitHubSkill()}>{installing === 'github' ? '导入中…' : 'GitHub 导入'}</button></div>}</header>{error && <p className="form-error" role="alert">{error}</p>}{progressLabel && <div className="skill-install-progress" role="status"><span>{progressLabel}</span>{progress?.phase === 'downloading' && progress.totalBytes !== undefined && <progress aria-label="GitHub 技能下载进度" value={progress.receivedBytes ?? 0} max={progress.totalBytes} />}</div>}{notice && <p className="form-success" role="status">{notice}</p>}{items.length === 0 ? <div className="empty-state"><span className="empty-mark">{kind === 'skills' ? <Sparkles size={19} /> : <Wrench size={19} />}</span><h1>{kind === 'skills' ? '还没有可用技能' : '还没有可用工具'}</h1><p>安装后会自动出现在这里，并可绑定到智能体。</p></div> : <div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p>{item.diagnostic && <small>{item.diagnostic}</small>}{kind === 'skills' && item.source && <small>{item.integrity === 'untracked' ? '未托管来源' : '可信来源'}：{item.source}{item.license ? ` · ${item.license}${item.licenseSpdx === false ? '（非 SPDX）' : ''}` : ''}{item.integrity === 'modified' ? ' · 内容已变更' : ''}</small>}{item.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}<span className="status-tag">{item.status}</span></article>)}</div>}</div>
+}
+
+function formatSkillInstallProgress(progress: SkillInstallProgress): string {
+  if (progress.phase === 'resolving') return '正在解析 GitHub 地址…'
+  if (progress.phase === 'extracting') return '正在解压归档…'
+  if (progress.phase === 'installing') return '正在安装技能…'
+  if (progress.phase === 'done') return '安装完成'
+  if (progress.receivedBytes === undefined) return '下载仓库归档…'
+  const receivedKiB = Math.ceil(progress.receivedBytes / 1024)
+  const size = progress.totalBytes === undefined
+    ? `${receivedKiB} KiB`
+    : `${receivedKiB} / ${Math.ceil(progress.totalBytes / 1024)} KiB`
+  return `下载仓库归档… ${size}`
 }
 
 function AgentDrawer({ agent, onClose, onChat, onEdit, onRemove }: {

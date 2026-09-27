@@ -54,6 +54,12 @@ export type CatalogItem = {
   limitations?: string[]
 }
 
+export type SkillInstallProgress = {
+  phase: 'resolving' | 'downloading' | 'extracting' | 'installing' | 'done'
+  receivedBytes?: number
+  totalBytes?: number
+}
+
 export type Message = {
   id: string
   scope: 'private' | 'space'
@@ -150,8 +156,9 @@ export type MindMeshApi = {
   }
   catalog: {
     skills(): Promise<CatalogItem[]>
-    installSkill(): Promise<CatalogItem[]>
+    installSkill(): Promise<CatalogItem[] | null>
     installSkillFromGitHub(url: string): Promise<CatalogItem[]>
+    onInstallProgress(listener: (event: SkillInstallProgress) => void): () => void
     tools(): Promise<CatalogItem[]>
     models(): Promise<ModelOption[]>
   }

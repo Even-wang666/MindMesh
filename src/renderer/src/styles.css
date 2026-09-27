@@ -1650,6 +1650,17 @@ em,
 .online { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: var(--fs-xs); }
 .online .dot { width: 6px; height: 6px; flex-basis: 6px; box-shadow: none; }
 
+.skill-install-progress {
+  margin-bottom: var(--sp-5);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+.skill-install-progress progress { width: min(320px, 100%); accent-color: var(--mm-color-iris); }
+
 .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: var(--sp-5); }
 .catalog-grid article {
   min-height: 212px;

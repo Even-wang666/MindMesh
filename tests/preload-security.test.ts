@@ -27,4 +27,19 @@ describe('preload chat boundary', () => {
     expect(() => api.chat.sendSpace('space', 'a'.repeat(MAX_CHAT_CONTENT_BYTES + 1))).toThrow('64 KiB')
     expect(electron.invoke).not.toHaveBeenCalled()
   })
+
+  it('forwards skill install progress and removes the exact listener', () => {
+    const listener = vi.fn()
+    const unsubscribe = api.catalog.onInstallProgress(listener)
+    const subscription = electron.on.mock.calls.find(([channel]) => channel === 'catalog:installProgress')
+    expect(subscription).toBeDefined()
+
+    const handler = subscription?.[1]
+    const progress = { phase: 'downloading' as const, receivedBytes: 1024, totalBytes: 4096 }
+    handler({}, progress)
+    expect(listener).toHaveBeenCalledWith(progress)
+
+    unsubscribe()
+    expect(electron.removeListener).toHaveBeenCalledWith('catalog:installProgress', handler)
+  })
 })

@@ -158,9 +158,11 @@ describe('Harness capability binding', () => {
         }
         return new Response(archive, { status: 200, headers: { 'content-length': String(archive.length) } })
       })
+      const progress: Array<{ phase: string; receivedBytes?: number; totalBytes?: number }> = []
 
       const installed = await installSkillFromGitHub(
         'https://github.com/acme/skills/tree/main/catalog/sample', directory,
+        (event) => progress.push(event),
       )
 
       expect(installed).toMatchObject({
@@ -174,6 +176,11 @@ describe('Harness capability binding', () => {
           url: 'https://github.com/acme/skills/tree/main/catalog/sample',
         },
         license: { declared: 'MIT', spdx: 'MIT' },
+      })
+      expect(progress.map((event) => event.phase).filter((phase, index, phases) => phase !== phases[index - 1]))
+        .toEqual(['resolving', 'downloading', 'extracting', 'installing', 'done'])
+      expect(progress.filter((event) => event.phase === 'downloading').at(-1)).toMatchObject({
+        receivedBytes: archive.length, totalBytes: archive.length,
       })
       expect(fetchMock).toHaveBeenCalledTimes(2)
     } finally {

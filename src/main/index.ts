@@ -8,6 +8,7 @@ import { MindMeshServices } from './services'
 import { installSkillBundle, installSkillFromGitHub, listSkillCatalog, playwrightBrowserAvailable, seedBundledSkills, toolCatalog } from './capabilities'
 import { appendRuntimeError } from './runtime-errors'
 import { installNavigationGuards } from './navigation'
+import type { SkillInstallProgress } from '../shared/contracts'
 
 let mainWindow: BrowserWindow | null = null
 let services: MindMeshServices | null = null
@@ -87,12 +88,17 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('catalog:skills', skillCatalog)
   ipcMain.handle('catalog:installSkill', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
-    if (!result.canceled && result.filePaths[0]) installSkillBundle(result.filePaths[0], dataDir)
+    if (result.canceled || !result.filePaths[0]) return null
+    installSkillBundle(result.filePaths[0], dataDir)
     return skillCatalog()
   })
-  ipcMain.handle('catalog:installSkillFromGitHub', async (_event, url) => {
+  ipcMain.handle('catalog:installSkillFromGitHub', async (event, url) => {
     if (typeof url !== 'string' || url.length > 2_048) throw new Error('GitHub skill URL 无效')
-    await installSkillFromGitHub(url, dataDir)
+    const sender = event.sender
+    const reportProgress = (progress: SkillInstallProgress): void => {
+      if (!sender.isDestroyed()) sender.send('catalog:installProgress', progress)
+    }
+    await installSkillFromGitHub(url, dataDir, reportProgress)
     return skillCatalog()
   })
   ipcMain.handle('catalog:tools', () => toolCatalog.map((tool) => {

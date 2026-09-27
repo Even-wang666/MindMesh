@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Agent, ChatDelta, ChatProgress, Message, MindMeshApi, ModelProviderStatus, Space, UserProfile } from '../src/shared/contracts'
+import type { Agent, ChatDelta, ChatProgress, Message, MindMeshApi, ModelProviderStatus, SkillInstallProgress, Space, UserProfile } from '../src/shared/contracts'
 import { createSkillReference } from '../src/shared/skill-reference'
 import { App } from '../src/renderer/src/App'
 
@@ -37,6 +37,7 @@ function mockApi(): MindMeshApi {
     },
     catalog: {
       skills: vi.fn(async () => []), installSkill: vi.fn(async () => []), installSkillFromGitHub: vi.fn(async () => []),
+      onInstallProgress: vi.fn(() => () => undefined),
       tools: vi.fn(async () => []), models: vi.fn(async () => []),
     },
     runtime: {
@@ -57,10 +58,14 @@ function mockApi(): MindMeshApi {
 describe('chat details', () => {
   it('installs a skill from a GitHub directory URL', async () => {
     const api = mockApi()
+    let finishInstall!: (items: Awaited<ReturnType<MindMeshApi['catalog']['skills']>>) => void
+    let emitProgress: (progress: SkillInstallProgress) => void = () => undefined
     api.catalog.skills = vi.fn(async () => [{
       id: 'sample', name: 'Sample', description: 'Sample skill', status: '已安装',
       source: 'GitHub：acme/skills@aaaaaaa', integrity: 'verified' as const, license: 'MIT', licenseSpdx: true,
     }])
+    api.catalog.installSkillFromGitHub = vi.fn(() => new Promise<Awaited<ReturnType<MindMeshApi['catalog']['skills']>>>((resolve) => { finishInstall = resolve }))
+    api.catalog.onInstallProgress = vi.fn((listener) => { emitProgress = listener; return () => undefined })
     vi.spyOn(window, 'prompt').mockReturnValue('https://github.com/acme/skills/tree/main/sample')
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
@@ -71,6 +76,51 @@ describe('chat details', () => {
 
     await waitFor(() => expect(api.catalog.installSkillFromGitHub)
       .toHaveBeenCalledWith('https://github.com/acme/skills/tree/main/sample'))
+    expect(screen.getByRole('button', { name: '本地导入' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '导入中…' })).toBeDisabled()
+    act(() => emitProgress({ phase: 'downloading', receivedBytes: 1024, totalBytes: 4096 }))
+    expect(screen.getByRole('progressbar')).toHaveAttribute('value', '1024')
+    expect(screen.getByText('下载仓库归档… 1 / 4 KiB')).toBeInTheDocument()
+
+    const installedItems = await api.catalog.skills()
+    await act(async () => finishInstall(installedItems))
+    expect(await screen.findByText('GitHub 技能安装完成，技能库已刷新。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '本地导入' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'GitHub 导入' })).toBeEnabled()
+  })
+
+  it('shows local import activity and restores both import actions after failure', async () => {
+    const api = mockApi()
+    let failInstall!: (reason: Error) => void
+    api.catalog.installSkill = vi.fn(() => new Promise<Awaited<ReturnType<MindMeshApi['catalog']['skills']>>>((_, reject) => { failInstall = reject }))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    fireEvent.click(await screen.findByRole('button', { name: '本地导入' }))
+
+    expect(await screen.findByText('正在选择并导入本地技能…')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '导入中…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'GitHub 导入' })).toBeDisabled()
+
+    await act(async () => failInstall(new Error('无法读取这个技能目录')))
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法读取这个技能目录')
+    expect(screen.getByRole('button', { name: '本地导入' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'GitHub 导入' })).toBeEnabled()
+  })
+
+  it('does not report success when local skill selection is cancelled', async () => {
+    const api = mockApi()
+    api.catalog.installSkill = vi.fn(async () => null)
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    fireEvent.click(await screen.findByRole('button', { name: '本地导入' }))
+
+    await waitFor(() => expect(api.catalog.installSkill).toHaveBeenCalledOnce())
+    expect(screen.queryByText('本地技能导入完成，技能库已刷新。')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '本地导入' })).toBeEnabled()
   })
 
   it('shows a persistent marker on a stopped reply loaded from history', async () => {

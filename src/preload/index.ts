@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ChatDelta, ChatProgress, MindMeshApi } from '../shared/contracts'
+import type { ChatDelta, ChatProgress, MindMeshApi, SkillInstallProgress } from '../shared/contracts'
 import { validateChatContent } from '../shared/chat-content'
 
 const api: MindMeshApi = {
@@ -42,6 +42,11 @@ const api: MindMeshApi = {
     skills: () => ipcRenderer.invoke('catalog:skills'),
     installSkill: () => ipcRenderer.invoke('catalog:installSkill'),
     installSkillFromGitHub: (url) => ipcRenderer.invoke('catalog:installSkillFromGitHub', url),
+    onInstallProgress: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: SkillInstallProgress): void => listener(payload)
+      ipcRenderer.on('catalog:installProgress', handler)
+      return () => ipcRenderer.removeListener('catalog:installProgress', handler)
+    },
     tools: () => ipcRenderer.invoke('catalog:tools'),
     models: () => ipcRenderer.invoke('catalog:models'),
   },
