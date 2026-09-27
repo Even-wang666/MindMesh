@@ -2,11 +2,12 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, m
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { c as createTar } from 'tar'
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
 import type { Agent } from '../src/shared/contracts'
 import { createSkillReference } from '../src/shared/skill-reference'
-import { installSkillBundle, listSkillCatalog, prepareAgentCapabilities, seedBundledSkills } from '../src/main/capabilities'
+import { installSkillBundle, installSkillFromGitHub, listSkillCatalog, prepareAgentCapabilities, seedBundledSkills } from '../src/main/capabilities'
 
 const agent: Agent = {
   id: 'researcher', name: 'Researcher', role: '', persona: '研究员',
@@ -114,10 +115,10 @@ describe('Harness capability binding', () => {
     const source = join(sourceRoot, 'sample')
     try {
       mkdirSync(source)
-      writeFileSync(join(source, 'SKILL.md'), '---\nname: sample\ndescription: Sample skill\n---\n\nfirst\n')
+      writeFileSync(join(source, 'SKILL.md'), '---\nname: sample\ndescription: Sample skill\nlicense: See LICENSE.txt\n---\n\nfirst\n')
       writeFileSync(join(source, 'template.txt'), 'template')
       expect(installSkillBundle(source, directory)).toMatchObject({
-        id: 'sample', available: true, source: '本地导入：sample', integrity: 'verified',
+        id: 'sample', available: true, source: '本地导入：sample', integrity: 'verified', licenseSpdx: false,
       })
       const installed = join(directory, 'skills', 'sample')
       expect(readFileSync(join(installed, 'template.txt'), 'utf8')).toBe('template')
@@ -125,12 +126,124 @@ describe('Harness capability binding', () => {
         source: { kind: 'local', path: source },
       })
 
-      writeFileSync(join(source, 'SKILL.md'), '---\nname: sample\ndescription: Updated skill\n---\n\nsecond\n')
+      writeFileSync(join(source, 'SKILL.md'), '---\nname: sample\ndescription: Updated skill\nlicense: AGPL-3.0-only\n---\n\nsecond\n')
       installSkillBundle(source, directory)
-      expect(listSkillCatalog(directory).find((item) => item.id === 'sample')?.description).toBe('Updated skill')
+      expect(listSkillCatalog(directory).find((item) => item.id === 'sample')).toMatchObject({
+        description: 'Updated skill', licenseSpdx: true,
+      })
     } finally {
       rmSync(directory, { recursive: true, force: true })
       rmSync(sourceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('installs a GitHub skill directory at a resolved commit with trusted provenance', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-github-target-'))
+    const archiveSource = mkdtempSync(join(tmpdir(), 'mindmesh-github-archive-'))
+    const commit = 'a'.repeat(40)
+    try {
+      const skill = join(archiveSource, `skills-${commit}`, 'catalog', 'sample')
+      mkdirSync(skill, { recursive: true })
+      writeFileSync(join(skill, 'SKILL.md'), '---\nname: sample\ndescription: GitHub sample\nlicense: MIT\n---\n')
+      writeFileSync(join(skill, 'REFERENCE.md'), 'downloaded resource')
+      const archivePath = join(archiveSource, 'repository.tar.gz')
+      createTar({ cwd: archiveSource, file: archivePath, gzip: true, sync: true }, [`skills-${commit}`])
+      const archive = readFileSync(archivePath)
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input)
+        if (url.startsWith('https://api.github.com/')) {
+          return new Response(JSON.stringify({ sha: commit }), {
+            status: 200, headers: { 'content-type': 'application/json' },
+          })
+        }
+        return new Response(archive, { status: 200, headers: { 'content-length': String(archive.length) } })
+      })
+
+      const installed = await installSkillFromGitHub(
+        'https://github.com/acme/skills/tree/main/catalog/sample', directory,
+      )
+
+      expect(installed).toMatchObject({
+        id: 'sample', source: `GitHub：acme/skills@${commit.slice(0, 7)}`, integrity: 'verified',
+        license: 'MIT', licenseSpdx: true,
+      })
+      expect(readFileSync(join(directory, 'skills', 'sample', 'REFERENCE.md'), 'utf8')).toBe('downloaded resource')
+      expect(JSON.parse(readFileSync(join(directory, 'skills', 'sample', '.mindmesh-install.json'), 'utf8'))).toMatchObject({
+        source: {
+          kind: 'github', repository: 'acme/skills', commit, path: 'catalog/sample',
+          url: 'https://github.com/acme/skills/tree/main/catalog/sample',
+        },
+        license: { declared: 'MIT', spdx: 'MIT' },
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.restoreAllMocks()
+      rmSync(directory, { recursive: true, force: true })
+      rmSync(archiveSource, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects non-GitHub and non-directory GitHub URLs before downloading', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-github-invalid-'))
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    try {
+      await expect(installSkillFromGitHub('https://example.com/acme/skills', directory)).rejects.toThrow('GitHub')
+      await expect(installSkillFromGitHub('https://github.com/acme/skills/blob/main/SKILL.md', directory))
+        .rejects.toThrow('目录')
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      vi.restoreAllMocks()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves a GitHub branch containing slashes before locating the skill directory', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-github-branch-target-'))
+    const archiveSource = mkdtempSync(join(tmpdir(), 'mindmesh-github-branch-archive-'))
+    const commit = 'c'.repeat(40)
+    try {
+      const skill = join(archiveSource, `skills-${commit}`, 'catalog', 'sample')
+      mkdirSync(skill, { recursive: true })
+      writeFileSync(join(skill, 'SKILL.md'), '---\nname: sample\ndescription: Slash branch\n---\n')
+      const archivePath = join(archiveSource, 'repository.tar.gz')
+      createTar({ cwd: archiveSource, file: archivePath, gzip: true, sync: true }, [`skills-${commit}`])
+      const archive = readFileSync(archivePath)
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input)
+        if (url.endsWith('/commits/feature')) return new Response('', { status: 404 })
+        if (url.endsWith('/commits/feature%2Ffoo')) return new Response(JSON.stringify({ sha: commit }), { status: 200 })
+        return new Response(archive, { status: 200 })
+      })
+
+      await installSkillFromGitHub(
+        'https://github.com/acme/skills/tree/feature/foo/catalog/sample', directory,
+      )
+
+      expect(JSON.parse(readFileSync(join(directory, 'skills', 'sample', '.mindmesh-install.json'), 'utf8')))
+        .toMatchObject({ source: { commit, path: 'catalog/sample' } })
+    } finally {
+      vi.restoreAllMocks()
+      rmSync(directory, { recursive: true, force: true })
+      rmSync(archiveSource, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an oversized GitHub archive before extraction', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-github-large-'))
+    const commit = 'b'.repeat(40)
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).startsWith('https://api.github.com/')) {
+        return new Response(JSON.stringify({ sha: commit }), { status: 200 })
+      }
+      return new Response('', { status: 200, headers: { 'content-length': String(32 * 1024 * 1024 + 1) } })
+    })
+    try {
+      await expect(installSkillFromGitHub('https://github.com/acme/skills/tree/main/sample', directory))
+        .rejects.toThrow('32 MiB')
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.restoreAllMocks()
+      rmSync(directory, { recursive: true, force: true })
     }
   })
 

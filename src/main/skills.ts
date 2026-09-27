@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
   cpSync,
+  createWriteStream,
   existsSync,
   lstatSync,
+  mkdtempSync,
   mkdirSync,
   opendirSync,
   readFileSync,
@@ -11,7 +13,12 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { pipeline } from 'node:stream/promises'
+import { Readable, Transform } from 'node:stream'
+import { x as extractTar } from 'tar'
+import parseSpdxExpression from 'spdx-expression-parse'
 import { parse } from 'yaml'
 import { parseSkillReference } from '../shared/skill-reference'
 
@@ -19,6 +26,9 @@ const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const MAX_SKILL_FILE_BYTES = 65_536
 const MAX_BUNDLE_FILES = 512
 const MAX_BUNDLE_BYTES = 16 * 1024 * 1024
+const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
+const MAX_ARCHIVE_ENTRIES = 10_000
+const MAX_ARCHIVE_EXPANDED_BYTES = 256 * 1024 * 1024
 const DISPLAY_NAME_KEY = 'mindmesh.displayName'
 const BUNDLED_RECEIPT = '.mindmesh-bundled.json'
 const INSTALL_RECEIPT = '.mindmesh-install.json'
@@ -50,6 +60,7 @@ export type SkillCatalogItem = {
   source: string
   integrity: 'verified' | 'modified' | 'untracked'
   license?: string
+  licenseSpdx?: boolean
   limitations: string[]
   path: string
   directory: string
@@ -59,7 +70,13 @@ export type SkillCatalogItem = {
 type BundledManifest = { version: number; skills: string[] }
 
 export type InstalledSkillReceipt = {
-  source: { kind: 'local'; path: string }
+  source: { kind: 'local'; path: string } | {
+    kind: 'github'
+    url: string
+    repository: string
+    commit: string
+    path: string
+  }
   installedAt: string
   contentHash: string
   license: { declared?: string; spdx?: string }
@@ -112,6 +129,69 @@ export function listSkillCatalog(dataDirectory: string): SkillCatalogItem[] {
 
 export function installSkillBundle(sourceDirectory: string, dataDirectory: string): SkillCatalogItem {
   const source = resolve(sourceDirectory)
+  return installSkillBundleWithReceipt(source, dataDirectory, { kind: 'local', path: source })
+}
+
+export async function installSkillFromGitHub(input: string, dataDirectory: string): Promise<SkillCatalogItem> {
+  const github = parseGitHubSkillUrl(input)
+  const resolved = await resolveGitHubLocation(github)
+  const commit = resolved.commit
+  const temporary = mkdtempSync(join(tmpdir(), 'mindmesh-skill-'))
+  const archive = join(temporary, 'repository.tar.gz')
+  const checkout = join(temporary, 'checkout')
+  mkdirSync(checkout)
+  try {
+    await downloadFile(`https://codeload.github.com/${github.repository}/tar.gz/${commit}`, archive)
+    let files = 0
+    let bytes = 0
+    let archiveEntries = 0
+    let archiveExpandedBytes = 0
+    await extractTar({
+      file: archive,
+      cwd: checkout,
+      gzip: true,
+      strip: 1,
+      preservePaths: false,
+      filter: (path, entry) => {
+        archiveEntries += 1
+        archiveExpandedBytes += entry.size
+        if (archiveEntries > MAX_ARCHIVE_ENTRIES || archiveExpandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
+          throw new Error('GitHub 仓库归档解压规模过大')
+        }
+        const relativePath = path.split('/').slice(1).join('/')
+        if (resolved.path && relativePath !== resolved.path && !relativePath.startsWith(`${resolved.path}/`)) return false
+        const entryType = 'type' in entry ? entry.type
+          : entry.isFile() ? 'File' : entry.isSymbolicLink() ? 'SymbolicLink' : 'Directory'
+        if (entryType === 'SymbolicLink' || entryType === 'Link') {
+          throw new Error('GitHub skill bundle 不允许链接文件')
+        }
+        if (entryType === 'File' || entryType === 'OldFile') {
+          files += 1
+          bytes += entry.size
+          if (files > MAX_BUNDLE_FILES) throw new Error(`技能 bundle 超过 ${MAX_BUNDLE_FILES} 个文件`)
+          if (bytes > MAX_BUNDLE_BYTES) throw new Error('技能 bundle 超过 16 MiB')
+        }
+        return true
+      },
+    })
+    const source = resolved.path ? join(checkout, ...resolved.path.split('/')) : checkout
+    return installSkillBundleWithReceipt(source, dataDirectory, {
+      kind: 'github',
+      url: github.url,
+      repository: github.repository,
+      commit,
+      path: resolved.path,
+    })
+  } finally {
+    rmSync(temporary, { recursive: true, force: true })
+  }
+}
+
+function installSkillBundleWithReceipt(
+  source: string,
+  dataDirectory: string,
+  receiptSource: InstalledSkillReceipt['source'],
+): SkillCatalogItem {
   const candidate = readSkillBundle(source)
   if (!candidate.manifest) throw new Error(`无法安装技能：${candidate.diagnostic ?? 'bundle 无效'}`)
   const root = join(dataDirectory, 'skills')
@@ -128,7 +208,7 @@ export function installSkillBundle(sourceDirectory: string, dataDirectory: strin
   const temporary = join(root, `.${candidate.id}-${randomUUID()}`)
   cpSync(source, temporary, { recursive: true, errorOnExist: true })
   const receipt: InstalledSkillReceipt = {
-    source: { kind: 'local', path: source },
+    source: receiptSource,
     installedAt: new Date().toISOString(),
     contentHash: hashDirectory(source),
     license: licenseReceipt(candidate.manifest.license),
@@ -261,7 +341,7 @@ function readSkillBundle(directory: string): SkillCatalogItem {
     ...(typeof userInvocable === 'boolean' ? { userInvocable } : {}),
   }
   const disabled = invocationPolicy === 'disabled'
-  const bundledReceipt = readJsonFile<{ skills?: Array<{ name?: string; contentHash?: string }> }>(join(dirname(directory), BUNDLED_RECEIPT))
+  const bundledReceipt = readJsonFile<{ skills?: Array<{ name?: string; contentHash?: string; license?: InstalledSkillReceipt['license'] }> }>(join(dirname(directory), BUNDLED_RECEIPT))
     ?.skills?.find((item) => item.name === id)
   const installedReceipt = readInstalledReceipt(directory)
   const receipt = bundledReceipt ?? installedReceipt
@@ -275,9 +355,12 @@ function readSkillBundle(directory: string): SkillCatalogItem {
     available: !disabled,
     ...(disabled ? { diagnostic: '该技能禁止模型调用和用户调用' } : {}),
     source: bundledReceipt ? 'MindMesh 内置'
-      : installedReceipt ? `本地导入：${basename(installedReceipt.source.path)}` : '手动放入',
+      : installedReceipt?.source.kind === 'github'
+        ? `GitHub：${installedReceipt.source.repository}@${installedReceipt.source.commit.slice(0, 7)}`
+        : installedReceipt ? `本地导入：${basename(installedReceipt.source.path)}` : '手动放入',
     integrity: receipt ? receipt.contentHash === contentHash ? 'verified' : 'modified' : 'untracked',
     ...(manifest.license ? { license: manifest.license } : {}),
+    ...(manifest.license && receipt?.license ? { licenseSpdx: Boolean(receipt.license.spdx) } : {}),
     limitations,
     path,
     directory,
@@ -383,19 +466,121 @@ function writeJsonAtomically(path: string, value: unknown): void {
 
 function readInstalledReceipt(directory: string): InstalledSkillReceipt | undefined {
   const value = readJsonFile<unknown>(join(directory, INSTALL_RECEIPT))
-  if (!isRecord(value) || !isRecord(value.source) || value.source.kind !== 'local'
-    || typeof value.source.path !== 'string' || typeof value.installedAt !== 'string'
+  if (!isRecord(value) || !isInstalledSource(value.source) || typeof value.installedAt !== 'string'
     || typeof value.contentHash !== 'string' || !isRecord(value.license)) return undefined
   return value as InstalledSkillReceipt
 }
 
+function isInstalledSource(value: unknown): value is InstalledSkillReceipt['source'] {
+  if (!isRecord(value)) return false
+  if (value.kind === 'local') return typeof value.path === 'string'
+  return value.kind === 'github' && typeof value.url === 'string' && typeof value.repository === 'string'
+    && /^[a-f0-9]{40}$/.test(String(value.commit)) && typeof value.path === 'string'
+}
+
+type GitHubSkillLocation = {
+  url: string
+  repository: string
+  ref?: string
+  path: string
+}
+
+function parseGitHubSkillUrl(input: string): GitHubSkillLocation {
+  let url: URL
+  try { url = new URL(input) }
+  catch { throw new Error('请输入有效的 GitHub skill URL') }
+  if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'github.com' || url.username || url.password) {
+    throw new Error('仅支持公开的 GitHub HTTPS URL')
+  }
+  const segments = url.pathname.split('/').filter(Boolean).map((segment) => decodeURIComponent(segment))
+  if (segments.length < 2 || !segments.slice(0, 2).every((segment) => /^[A-Za-z0-9_.-]+$/.test(segment))) {
+    throw new Error('GitHub 仓库 URL 无效')
+  }
+  const repository = `${segments[0]}/${segments[1].replace(/\.git$/i, '')}`
+  let ref: string | undefined
+  let path = ''
+  if (segments.length > 2) {
+    if (segments[2] !== 'tree' || !segments[3]) throw new Error('请选择 GitHub 仓库或 skill 目录 URL')
+    ref = segments[3]
+    const pathSegments = segments.slice(4)
+    if (pathSegments.some((segment) => !segment || segment === '.' || segment === '..' || /[\\/]/.test(segment))) {
+      throw new Error('GitHub skill 目录无效')
+    }
+    path = pathSegments.join('/')
+  }
+  url.search = ''
+  url.hash = ''
+  return { url: url.toString().replace(/\/$/, ''), repository, ref, path }
+}
+
+async function githubDefaultBranch(repository: string): Promise<string> {
+  const value = await githubJson(`https://api.github.com/repos/${repository}`)
+  if (!isRecord(value) || typeof value.default_branch !== 'string') throw new Error('GitHub 仓库未返回默认分支')
+  return value.default_branch
+}
+
+async function resolveGitHubLocation(location: GitHubSkillLocation): Promise<{ commit: string; path: string }> {
+  if (!location.ref) {
+    const reference = await githubDefaultBranch(location.repository)
+    const commit = await githubCommit(location.repository, reference)
+    if (!commit) throw new Error('GitHub 默认分支不存在')
+    return { commit, path: '' }
+  }
+  const pathSegments = location.path ? location.path.split('/') : []
+  let reference = location.ref
+  for (;;) {
+    const commit = await githubCommit(location.repository, reference)
+    if (commit) return { commit, path: pathSegments.join('/') }
+    const segment = pathSegments.shift()
+    if (!segment) throw new Error('GitHub 分支、标签或 commit 不存在')
+    reference += `/${segment}`
+  }
+}
+
+async function githubCommit(repository: string, reference: string): Promise<string | undefined> {
+  const response = await fetch(`https://api.github.com/repos/${repository}/commits/${encodeURIComponent(reference)}`, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'MindMesh' },
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (response.status === 404) return undefined
+  if (!response.ok) throw new Error(`GitHub 请求失败（${response.status}）`)
+  const value: unknown = await response.json()
+  if (!isRecord(value) || typeof value.sha !== 'string' || !/^[a-f0-9]{40}$/.test(value.sha)) {
+    throw new Error('GitHub 未返回有效 commit')
+  }
+  return value.sha
+}
+
+async function githubJson(url: string): Promise<unknown> {
+  const response = await fetch(url, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'MindMesh' },
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!response.ok) throw new Error(`GitHub 请求失败（${response.status}）`)
+  return response.json()
+}
+
+async function downloadFile(url: string, destination: string): Promise<void> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+  if (!response.ok || !response.body) throw new Error(`GitHub 下载失败（${response.status}）`)
+  const declaredBytes = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_ARCHIVE_BYTES) throw new Error('GitHub 仓库归档超过 32 MiB')
+  let bytes = 0
+  const limiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.length
+      callback(bytes > MAX_ARCHIVE_BYTES ? new Error('GitHub 仓库归档超过 32 MiB') : null, chunk)
+    },
+  })
+  await pipeline(Readable.fromWeb(response.body as never), limiter, createWriteStream(destination))
+}
+
 function licenseReceipt(declared?: string): InstalledSkillReceipt['license'] {
   if (!declared) return {}
-  const commonSpdx = new Set([
-    '0BSD', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'CC0-1.0', 'GPL-2.0-only',
-    'GPL-3.0-only', 'ISC', 'LGPL-2.1-only', 'LGPL-3.0-only', 'MIT', 'MPL-2.0', 'Unlicense',
-  ])
-  return commonSpdx.has(declared) ? { declared, spdx: declared } : { declared }
+  try {
+    parseSpdxExpression(declared)
+    return { declared, spdx: declared }
+  } catch { return { declared } }
 }
 
 function isLegacyBundledSkill(directory: string, replacement: SkillManifest): boolean {

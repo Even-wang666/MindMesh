@@ -41,6 +41,7 @@ const api: MindMeshApi = {
   catalog: {
     skills: () => ipcRenderer.invoke('catalog:skills'),
     installSkill: () => ipcRenderer.invoke('catalog:installSkill'),
+    installSkillFromGitHub: (url) => ipcRenderer.invoke('catalog:installSkillFromGitHub', url),
     tools: () => ipcRenderer.invoke('catalog:tools'),
     models: () => ipcRenderer.invoke('catalog:models'),
   },

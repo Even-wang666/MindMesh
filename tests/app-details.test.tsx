@@ -36,7 +36,7 @@ function mockApi(): MindMeshApi {
       onProgress: vi.fn(() => () => undefined),
     },
     catalog: {
-      skills: vi.fn(async () => []), installSkill: vi.fn(async () => []),
+      skills: vi.fn(async () => []), installSkill: vi.fn(async () => []), installSkillFromGitHub: vi.fn(async () => []),
       tools: vi.fn(async () => []), models: vi.fn(async () => []),
     },
     runtime: {
@@ -55,6 +55,24 @@ function mockApi(): MindMeshApi {
 }
 
 describe('chat details', () => {
+  it('installs a skill from a GitHub directory URL', async () => {
+    const api = mockApi()
+    api.catalog.skills = vi.fn(async () => [{
+      id: 'sample', name: 'Sample', description: 'Sample skill', status: '已安装',
+      source: 'GitHub：acme/skills@aaaaaaa', integrity: 'verified' as const, license: 'MIT', licenseSpdx: true,
+    }])
+    vi.spyOn(window, 'prompt').mockReturnValue('https://github.com/acme/skills/tree/main/sample')
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    expect(await screen.findByText('可信来源：GitHub：acme/skills@aaaaaaa · MIT')).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'GitHub 导入' }))
+
+    await waitFor(() => expect(api.catalog.installSkillFromGitHub)
+      .toHaveBeenCalledWith('https://github.com/acme/skills/tree/main/sample'))
+  })
+
   it('shows a persistent marker on a stopped reply loaded from history', async () => {
     const api = mockApi()
     api.chat.messages = vi.fn(async () => [{

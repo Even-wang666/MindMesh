@@ -5,7 +5,7 @@ import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
 import { MindMeshServices } from './services'
-import { installSkillBundle, listSkillCatalog, playwrightBrowserAvailable, seedBundledSkills, toolCatalog } from './capabilities'
+import { installSkillBundle, installSkillFromGitHub, listSkillCatalog, playwrightBrowserAvailable, seedBundledSkills, toolCatalog } from './capabilities'
 import { appendRuntimeError } from './runtime-errors'
 import { installNavigationGuards } from './navigation'
 
@@ -80,17 +80,20 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('settings:saveModelProvider', (_event, input) => current.saveModelProvider(input))
   ipcMain.handle('settings:removeModelProvider', (_event, id) => current.removeModelProvider(id))
   ipcMain.handle('catalog:models', () => current.models())
-  ipcMain.handle('catalog:skills', () => listSkillCatalog(dataDir).map(
-    ({ id, name, description, status, available, diagnostic, source, integrity, license, limitations }) => (
-      { id, name, description, status, available, diagnostic, source, integrity, license, limitations }),
-  ))
+  const skillCatalog = () => listSkillCatalog(dataDir).map(
+    ({ id, name, description, status, available, diagnostic, source, integrity, license, licenseSpdx, limitations }) => (
+      { id, name, description, status, available, diagnostic, source, integrity, license, licenseSpdx, limitations }),
+  )
+  ipcMain.handle('catalog:skills', skillCatalog)
   ipcMain.handle('catalog:installSkill', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
     if (!result.canceled && result.filePaths[0]) installSkillBundle(result.filePaths[0], dataDir)
-    return listSkillCatalog(dataDir).map(
-      ({ id, name, description, status, available, diagnostic, source, integrity, license, limitations }) => (
-        { id, name, description, status, available, diagnostic, source, integrity, license, limitations }),
-    )
+    return skillCatalog()
+  })
+  ipcMain.handle('catalog:installSkillFromGitHub', async (_event, url) => {
+    if (typeof url !== 'string' || url.length > 2_048) throw new Error('GitHub skill URL 无效')
+    await installSkillFromGitHub(url, dataDir)
+    return skillCatalog()
   })
   ipcMain.handle('catalog:tools', () => toolCatalog.map((tool) => {
     if (tool.id === 'web') {

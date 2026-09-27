@@ -50,6 +50,7 @@ export type CatalogItem = {
   source?: string
   integrity?: 'verified' | 'modified' | 'untracked'
   license?: string
+  licenseSpdx?: boolean
   limitations?: string[]
 }
 
@@ -150,6 +151,7 @@ export type MindMeshApi = {
   catalog: {
     skills(): Promise<CatalogItem[]>
     installSkill(): Promise<CatalogItem[]>
+    installSkillFromGitHub(url: string): Promise<CatalogItem[]>
     tools(): Promise<CatalogItem[]>
     models(): Promise<ModelOption[]>
   }

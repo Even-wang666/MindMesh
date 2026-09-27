@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import type { Agent } from '../shared/contracts'
 import { copySelectedSkillBundles, listSkillCatalog, resolveSelectedSkills } from './skills'
 
-export { installSkillBundle, listSkillCatalog, seedBundledSkills } from './skills'
+export { installSkillBundle, installSkillFromGitHub, listSkillCatalog, seedBundledSkills } from './skills'
 
 export const toolCatalog = [
   { id: 'web', name: '网页搜索', description: '检索公开网页资料。' },
