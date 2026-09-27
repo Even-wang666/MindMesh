@@ -156,7 +156,8 @@ export type MindMeshApi = {
   }
   catalog: {
     skills(): Promise<CatalogItem[]>
-    installSkill(): Promise<CatalogItem[] | null>
+    pickSkillDir(): Promise<string | null>
+    installSkill(path: string): Promise<CatalogItem[]>
     installSkillFromGitHub(url: string): Promise<CatalogItem[]>
     onInstallProgress(listener: (event: SkillInstallProgress) => void): () => void
     tools(): Promise<CatalogItem[]>
@@ -167,7 +168,8 @@ export type MindMeshApi = {
   }
   settings: {
     workspace(): Promise<string>
-    chooseWorkspace(): Promise<string>
+    pickWorkspace(): Promise<string | null>
+    chooseWorkspace(path: string): Promise<string>
     profile(): Promise<UserProfile>
     saveProfile(profile: UserProfile): Promise<UserProfile>
     modelProviders(): Promise<ModelProviderStatus[]>

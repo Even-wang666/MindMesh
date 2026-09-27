@@ -42,4 +42,20 @@ describe('preload chat boundary', () => {
     unsubscribe()
     expect(electron.removeListener).toHaveBeenCalledWith('catalog:installProgress', handler)
   })
+
+  it('separates directory selection from the confirmed operation', async () => {
+    electron.invoke.mockClear()
+
+    await api.catalog.pickSkillDir()
+    await api.catalog.installSkill('C:\\Skill')
+    await api.settings.pickWorkspace()
+    await api.settings.chooseWorkspace('C:\\Workspace')
+
+    expect(electron.invoke.mock.calls).toEqual([
+      ['catalog:pickSkillDir'],
+      ['catalog:installSkill', 'C:\\Skill'],
+      ['settings:pickWorkspace'],
+      ['settings:chooseWorkspace', 'C:\\Workspace'],
+    ])
+  })
 })

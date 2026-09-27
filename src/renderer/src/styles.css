@@ -1480,9 +1480,8 @@ kbd {
   background: var(--surface-canvas);
 }
 
-.drawer-edit { width: 100%; flex: 0 0 auto; }
 .drawer-section { display: grid; gap: var(--sp-3); }
-.drawer-danger { margin-top: auto; display: grid; gap: var(--sp-2); }
+.drawer-actions { margin-top: auto; display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2); }
 .drawer-delete {
   width: 100%;
   margin-top: 0;
@@ -1696,8 +1695,6 @@ em,
 .profile-form { padding: var(--sp-6); }
 .profile-avatar { margin-bottom: var(--sp-6); display: flex; align-items: center; gap: var(--sp-5); }
 .profile-avatar > div { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); }
-.profile-avatar input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.profile-avatar:focus-within .secondary-button { outline: 2px solid var(--mm-color-iris); outline-offset: 2px; }
 .profile-avatar small { width: 100%; color: var(--text-tertiary); font-size: var(--fs-2xs); }
 .profile-row .profile-name { font-size: var(--fs-heading); font-weight: 660; line-height: 1.35; overflow-wrap: break-word; }
 .profile-row .form-success { flex: 0 0 auto; white-space: nowrap; }
@@ -1920,6 +1917,45 @@ em,
 }
 .confirm-dialog > footer { display: flex; justify-content: flex-end; gap: var(--sp-3); }
 .confirm-dialog .form-error { margin: 0; color: var(--mm-color-danger); }
+
+.picker-backdrop { z-index: 30; }
+.file-picker { width: min(500px, calc(100vw - 64px)); }
+.file-picker > header,
+.directory-confirm > header { align-items: flex-start; }
+.file-picker > header > div,
+.directory-confirm > header > div { flex: 1; min-width: 0; }
+.picker-mark { color: var(--mm-color-iris); background: var(--accent-tint); }
+.picker-dropzone {
+  width: 100%;
+  min-height: 148px;
+  padding: var(--sp-6);
+  border: 2px dashed var(--accent-line);
+  border-radius: var(--r-surface);
+  display: grid;
+  place-items: center;
+  gap: var(--sp-2);
+  color: var(--text-secondary);
+  background: var(--surface-sunken);
+  text-align: center;
+  transition: border-color var(--dur-2) var(--ease), background var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+.picker-dropzone:hover,
+.picker-dropzone.dragging { border-color: var(--accent-line-strong); color: var(--mm-color-iris); background: var(--accent-tint); }
+.picker-dropzone strong { color: var(--text-primary); font-size: var(--fs-body); }
+.picker-dropzone small { color: var(--text-tertiary); font-size: var(--fs-2xs); }
+.picker-preview { max-height: 220px; margin: 0; padding: 0; display: grid; gap: var(--sp-2); overflow-y: auto; list-style: none; }
+.picker-preview li { padding: var(--sp-2); border-radius: var(--r-control); display: flex; align-items: center; gap: var(--sp-3); background: var(--surface-sunken); }
+.picker-preview img { width: 44px; height: 44px; flex: 0 0 44px; border: 1px solid var(--mm-color-border); border-radius: var(--r-control); object-fit: cover; background: var(--surface-raised); }
+.picker-file-meta { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.picker-file-meta strong { overflow: hidden; color: var(--text-primary); font-size: var(--fs-sm); text-overflow: ellipsis; white-space: nowrap; }
+.picker-file-meta small { color: var(--text-tertiary); font-size: var(--fs-2xs); }
+.picker-preview li > button { width: var(--h-compact); height: var(--h-compact); flex: 0 0 var(--h-compact); border: 0; border-radius: var(--r-control); display: grid; place-items: center; color: var(--text-tertiary); background: transparent; }
+.picker-preview li > button:hover { color: var(--text-primary); background: var(--mm-color-hover); }
+.directory-confirm { width: min(540px, calc(100vw - 64px)); }
+.directory-path { padding: var(--sp-4); border: 1px solid var(--mm-color-border); border-radius: var(--r-control); display: flex; align-items: center; gap: var(--sp-3); background: var(--surface-sunken); }
+.directory-path svg { flex: 0 0 auto; color: var(--mm-color-iris); }
+.directory-path code { min-width: 0; flex: 1; overflow: hidden; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+.picker-reselect { justify-self: start; }
 .github-import-dialog { width: min(560px, calc(100vw - 64px)); }
 .github-import-dialog .field { margin: 0; }
 

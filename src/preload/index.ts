@@ -40,7 +40,8 @@ const api: MindMeshApi = {
   },
   catalog: {
     skills: () => ipcRenderer.invoke('catalog:skills'),
-    installSkill: () => ipcRenderer.invoke('catalog:installSkill'),
+    pickSkillDir: () => ipcRenderer.invoke('catalog:pickSkillDir'),
+    installSkill: (path) => ipcRenderer.invoke('catalog:installSkill', path),
     installSkillFromGitHub: (url) => ipcRenderer.invoke('catalog:installSkillFromGitHub', url),
     onInstallProgress: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: SkillInstallProgress): void => listener(payload)
@@ -55,7 +56,8 @@ const api: MindMeshApi = {
   },
   settings: {
     workspace: () => ipcRenderer.invoke('settings:workspace'),
-    chooseWorkspace: () => ipcRenderer.invoke('settings:chooseWorkspace'),
+    pickWorkspace: () => ipcRenderer.invoke('settings:pickWorkspace'),
+    chooseWorkspace: (path) => ipcRenderer.invoke('settings:chooseWorkspace', path),
     profile: () => ipcRenderer.invoke('settings:profile'),
     saveProfile: (profile) => ipcRenderer.invoke('settings:saveProfile', profile),
     modelProviders: () => ipcRenderer.invoke('settings:modelProviders'),

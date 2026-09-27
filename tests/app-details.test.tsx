@@ -8,7 +8,11 @@ import { createSkillReference } from '../src/shared/skill-reference'
 import { App } from '../src/renderer/src/App'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
-beforeEach(() => { Element.prototype.scrollIntoView = vi.fn() })
+beforeEach(() => {
+  Element.prototype.scrollIntoView = vi.fn()
+  URL.createObjectURL = vi.fn(() => 'blob:preview')
+  URL.revokeObjectURL = vi.fn()
+})
 
 const agent: Agent = {
   id: 'researcher',
@@ -36,7 +40,7 @@ function mockApi(): MindMeshApi {
       onProgress: vi.fn(() => () => undefined),
     },
     catalog: {
-      skills: vi.fn(async () => []), installSkill: vi.fn(async () => []), installSkillFromGitHub: vi.fn(async () => []),
+      skills: vi.fn(async () => []), pickSkillDir: vi.fn(async () => 'C:\\My Skill'), installSkill: vi.fn(async () => []), installSkillFromGitHub: vi.fn(async () => []),
       onInstallProgress: vi.fn(() => () => undefined),
       tools: vi.fn(async () => []), models: vi.fn(async () => []),
     },
@@ -45,7 +49,8 @@ function mockApi(): MindMeshApi {
     },
     settings: {
       workspace: vi.fn(async () => 'C:\\MindMesh'),
-      chooseWorkspace: vi.fn(async () => 'C:\\My Files'),
+      pickWorkspace: vi.fn(async () => 'C:\\My Files'),
+      chooseWorkspace: vi.fn(async (path) => path),
       profile: vi.fn(async () => storedProfile),
       saveProfile: vi.fn(async (profile) => { storedProfile = profile; return profile }),
       modelProviders: vi.fn(async () => []),
@@ -113,9 +118,14 @@ describe('chat details', () => {
     fireEvent.click(await screen.findByRole('button', { name: '技能' }))
     fireEvent.click(await screen.findByRole('button', { name: '本地导入' }))
 
-    expect(await screen.findByText('正在选择并导入本地技能…')).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: '导入本地技能' })).toHaveTextContent('C:\\My Skill')
+    expect(api.catalog.installSkill).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '确认导入' }))
+
+    expect(await screen.findByText('正在导入本地技能…')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '导入中…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'GitHub 导入' })).toBeDisabled()
+    expect(api.catalog.installSkill).toHaveBeenCalledWith('C:\\My Skill')
 
     await act(async () => failInstall(new Error('无法读取这个技能目录')))
     expect(await screen.findByRole('alert')).toHaveTextContent('无法读取这个技能目录')
@@ -125,16 +135,31 @@ describe('chat details', () => {
 
   it('does not report success when local skill selection is cancelled', async () => {
     const api = mockApi()
-    api.catalog.installSkill = vi.fn(async () => null)
+    api.catalog.pickSkillDir = vi.fn(async () => null)
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '技能' }))
     fireEvent.click(await screen.findByRole('button', { name: '本地导入' }))
 
-    await waitFor(() => expect(api.catalog.installSkill).toHaveBeenCalledOnce())
+    await waitFor(() => expect(api.catalog.pickSkillDir).toHaveBeenCalledOnce())
+    expect(api.catalog.installSkill).not.toHaveBeenCalled()
     expect(screen.queryByText('本地技能导入完成，技能库已刷新。')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '本地导入' })).toBeEnabled()
+  })
+
+  it('does not install a local skill before the path is confirmed', async () => {
+    const api = mockApi()
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    fireEvent.click(await screen.findByRole('button', { name: '本地导入' }))
+    const dialog = await screen.findByRole('dialog', { name: '导入本地技能' })
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+
+    expect(api.catalog.installSkill).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog', { name: '导入本地技能' })).not.toBeInTheDocument()
   })
 
   it('shows a persistent marker on a stopped reply loaded from history', async () => {
@@ -193,15 +218,19 @@ describe('chat details', () => {
 })
 
 describe('local file workspace', () => {
-  it('shows the current folder and updates it after the native picker returns', async () => {
+  it('confirms a selected workspace before switching', async () => {
     const api = mockApi()
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
     expect(await screen.findByText('C:\\MindMesh')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '选择文件夹' }))
-    expect(await screen.findByText('C:\\My Files')).toBeInTheDocument()
-    expect(api.settings.chooseWorkspace).toHaveBeenCalledOnce()
+    expect(await screen.findByRole('dialog', { name: '切换 Agent 工作目录' })).toHaveTextContent('C:\\My Files')
+    expect(api.settings.chooseWorkspace).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '确认切换' }))
+    await waitFor(() => expect(api.settings.chooseWorkspace).toHaveBeenCalledWith('C:\\My Files'))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '切换 Agent 工作目录' })).not.toBeInTheDocument())
+    expect(screen.getByText('C:\\My Files')).toBeInTheDocument()
   })
 
   it('shows the friendly name for a stable skill reference', async () => {
@@ -326,7 +355,10 @@ describe('user profile', () => {
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
     fireEvent.click(screen.getByRole('button', { name: '编辑资料' }))
     fireEvent.change(screen.getByRole('textbox', { name: '你希望智能体怎么称呼你' }), { target: { value: '小明' } })
-    fireEvent.change(document.getElementById('profile-avatar-input')!, { target: { files: [new File(['image'], 'avatar.png', { type: 'image/png' })] } })
+    fireEvent.click(screen.getByRole('button', { name: '选择头像' }))
+    fireEvent.change(screen.getByLabelText('选择头像文件'), { target: { files: [new File(['image'], 'avatar.png', { type: 'image/png' })] } })
+    expect(await screen.findByAltText('avatar.png')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '使用图片' }))
     await waitFor(() => expect(document.querySelector('.profile-avatar img')).toHaveAttribute('src', expect.stringMatching(/^data:image\/png;base64,/)))
     fireEvent.click(screen.getByRole('button', { name: '保存个人资料' }))
     await waitFor(() => expect(api.settings.saveProfile).toHaveBeenCalledWith({ name: '小明', avatar: expect.stringMatching(/^data:image\/png;base64,/) }))
@@ -571,6 +603,31 @@ describe('space background', () => {
     await waitFor(() => expect(api.spaces.update).toHaveBeenCalledWith('space', expect.objectContaining({ name: '新空间', memberIds: ['developer'] })))
     expect(await screen.findByRole('heading', { name: '新空间' })).toBeInTheDocument()
   })
+
+  it('keeps space editing available beside delete while a reply is running', async () => {
+    const space: Space = { id: 'space', name: '协作', description: '', context: '', memberIds: [agent.id], createdAt: '' }
+    const api = mockApi()
+    let finishReply!: (messages: Message[]) => void
+    api.spaces.list = vi.fn(async () => [space])
+    api.chat.sendSpace = vi.fn(() => new Promise<Message[]>((resolve) => { finishReply = resolve }))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
+    const input = await screen.findByPlaceholderText('@智能体 输入消息…')
+    fireEvent.change(input, { target: { value: '继续执行' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(api.chat.sendSpace).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: '编辑空间' }))
+
+    const edit = screen.getByRole('button', { name: '编辑空间信息' })
+    const remove = screen.getByRole('button', { name: '删除空间' })
+    expect(edit.parentElement).toBe(remove.parentElement)
+    expect(edit).toBeEnabled()
+    fireEvent.click(edit)
+    expect(await screen.findByRole('heading', { name: '编辑协作空间' })).toBeInTheDocument()
+    await act(async () => finishReply([]))
+  })
 })
 
 describe('chat flow', () => {
@@ -670,7 +727,11 @@ describe('chat flow', () => {
     const file = new File([
       Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]),
     ], 'chart.png', { type: 'image/png' })
-    fireEvent.change(await screen.findByLabelText('选择图片'), { target: { files: [file] } })
+    fireEvent.click(await screen.findByRole('button', { name: '添加图片' }))
+    fireEvent.change(await screen.findByLabelText('添加图片文件'), { target: { files: [file] } })
+    expect(await screen.findByAltText('chart.png')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '添加到消息' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '添加图片' })).not.toBeInTheDocument())
     expect(await screen.findByAltText('chart.png')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
@@ -682,11 +743,41 @@ describe('chat flow', () => {
     ))
   })
 
+  it('keeps an invalid image in the picker with an inline error', async () => {
+    const api = mockApi()
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加图片' }))
+    fireEvent.change(screen.getByLabelText('添加图片文件'), { target: { files: [new File(['not an image'], 'fake.png', { type: 'image/png' })] } })
+    fireEvent.click(screen.getByRole('button', { name: '添加到消息' }))
+
+    const dialog = await screen.findByRole('dialog', { name: '添加图片' })
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('仅支持 PNG、JPEG、WebP 或 GIF 图片')
+    expect(api.chat.sendPrivate).not.toHaveBeenCalled()
+  })
+
+  it('keeps a mixed valid and invalid image selection atomic', async () => {
+    const api = mockApi()
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+    const valid = new File([Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])], 'valid.png')
+    const invalid = new File(['not an image'], 'invalid.png', { type: 'image/png' })
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加图片' }))
+    fireEvent.change(screen.getByLabelText('添加图片文件'), { target: { files: [valid, invalid] } })
+    fireEvent.click(screen.getByRole('button', { name: '添加到消息' }))
+
+    const dialog = await screen.findByRole('dialog', { name: '添加图片' })
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('仅支持 PNG、JPEG、WebP 或 GIF 图片')
+    expect(document.querySelector('.attachment-strip')).not.toBeInTheDocument()
+  })
+
   it('adds an image dropped anywhere in the active chat to the composer', async () => {
     const api = mockApi()
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
-    await screen.findByLabelText('选择图片')
+    await screen.findByRole('button', { name: '添加图片' })
     const file = new File([Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])], 'dropped.png')
     const dataTransfer = { types: ['Files'], files: [file], dropEffect: 'none' }
 

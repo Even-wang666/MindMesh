@@ -67,10 +67,10 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('runtime:status', () => current.runtimeStatus())
   ipcMain.handle('settings:modelProviders', () => current.refreshModelProviders())
   ipcMain.handle('settings:workspace', () => current.harness.workspacePath)
-  ipcMain.handle('settings:chooseWorkspace', async () => {
-    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
-    if (result.canceled || !result.filePaths[0]) return current.harness.workspacePath
-    const path = realpathSync(result.filePaths[0])
+  ipcMain.handle('settings:pickWorkspace', pickDirectory)
+  ipcMain.handle('settings:chooseWorkspace', async (_event, selectedPath) => {
+    if (typeof selectedPath !== 'string' || !selectedPath) throw new Error('请选择文件夹')
+    const path = realpathSync(selectedPath)
     if (!statSync(path).isDirectory()) throw new Error('请选择文件夹')
     if (path === current.harness.workspacePath) return path
     await current.changeWorkspace(path)
@@ -86,10 +86,10 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
       { id, name, description, status, available, diagnostic, source, integrity, license, licenseSpdx, limitations }),
   )
   ipcMain.handle('catalog:skills', skillCatalog)
-  ipcMain.handle('catalog:installSkill', async () => {
-    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
-    if (result.canceled || !result.filePaths[0]) return null
-    installSkillBundle(result.filePaths[0], dataDir)
+  ipcMain.handle('catalog:pickSkillDir', pickDirectory)
+  ipcMain.handle('catalog:installSkill', (_event, selectedPath) => {
+    if (typeof selectedPath !== 'string' || !selectedPath) throw new Error('请选择技能目录')
+    installSkillBundle(selectedPath, dataDir)
     return skillCatalog()
   })
   ipcMain.handle('catalog:installSkillFromGitHub', async (event, url) => {
@@ -109,6 +109,11 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
     if (tool.id === 'browser') return { ...tool, status: playwrightBrowserAvailable() ? '可用' : '未安装' }
     return { ...tool, status: '可用' }
   }))
+}
+
+async function pickDirectory(): Promise<string | null> {
+  const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+  return result.canceled || !result.filePaths[0] ? null : result.filePaths[0]
 }
 
 app.whenReady().then(() => {

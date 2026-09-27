@@ -23,6 +23,7 @@ import { ConfirmContext, ConfirmDialog, useConfirm, type ConfirmRequest } from '
 import { SettingsPage } from './SettingsPage'
 import { getProviderLogo } from './ProviderLogos'
 import { useChatController } from './useChatController'
+import { DirectoryConfirm, ImagePicker } from './FilePicker'
 
 type View = 'chats' | 'spaces' | 'agents' | 'skills' | 'tools' | 'settings'
 const defaultProfile: UserProfile = { name: '你', avatar: null }
@@ -364,7 +365,6 @@ function SpacePanel({ space, agents, models, messages, profile, busy, progress, 
       <div className="space-layout">
         <div className="space-chat"><MessageList messages={messages} profile={profile} emptyText="使用 @智能体 开始协作" progress={progress} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} starters={['先让每位成员给出一版方案', '统一背景信息后再开始讨论']} onStarter={setDraft} /><Composer busy={busy} canAttach={canAttach} placeholder="@智能体 输入消息…" members={members} value={draft} onChange={setDraft} onSend={onSend} onStop={onStop} messages={messages} provider={routeAgent?.provider} model={model} models={availableModels} onModelChange={canSelectModel ? setModel : undefined} /></div>
         {drawerOpen && <aside className="context-drawer">
-          <button className="secondary-button drawer-edit" disabled={busy} onClick={onEdit}>编辑空间信息</button>
           <div className="drawer-section context-section">
             <span className="eyebrow">背景信息</span>
             {editingContext ? <div className="context-editor"><textarea aria-label="背景信息" autoFocus value={contextDraft} onChange={(event) => setContextDraft(event.target.value)} />{contextError && <p className="form-error" role="alert">{contextError}</p>}<div><button className="secondary-button compact" disabled={savingContext} onClick={() => setEditingContext(false)}>取消</button><button className="primary-button compact" disabled={savingContext} onClick={() => void saveContext()}>保存背景</button></div></div> : <>
@@ -397,7 +397,7 @@ function SpacePanel({ space, agents, models, messages, profile, busy, progress, 
             ))}
             {effortError && <p className="form-error" role="alert">{effortError}</p>}
           </div>
-          <div className="drawer-danger"><button className="list-create drawer-delete" disabled={busy} onClick={requestRemove}><Trash2 size={15} />删除空间</button></div>
+          <div className="drawer-actions"><button className="secondary-button drawer-edit" onClick={onEdit}>编辑空间信息</button><button className="list-create drawer-delete" disabled={busy} onClick={requestRemove}><Trash2 size={15} />删除空间</button></div>
         </aside>}
       </div>
     </div>
@@ -487,8 +487,8 @@ function Composer({ busy, canAttach, placeholder, members = [], value, onChange,
   const [dragging, setDragging] = useState(false)
   const [permission, setPermission] = useState<ChatPermission>('chat')
   const [sendError, setSendError] = useState('')
+  const [pickerOpen, setPickerOpen] = useState(false)
   const [openMenu, setOpenMenu] = useState<'permission' | 'model' | 'context' | null>(null)
-  const input = useRef<HTMLInputElement>(null)
   const selectedModel = models.find((item) => item.id === model)
     ?? models.find((item) => item.name === displayModelName(model ?? ''))
   const contextWindow = selectedModel?.contextWindow ?? getModelContextWindow(provider ?? '', model ?? '')
@@ -496,28 +496,31 @@ function Composer({ busy, canAttach, placeholder, members = [], value, onChange,
   const contextPercent = contextWindow ? Math.min(100, estimatedTokens / contextWindow * 100) : 0
   const mention = /@([\p{L}\p{N}_-]*)$/u.exec(value)
   const matchingMembers = mention ? members.filter((agent) => agent.name.toLowerCase().startsWith(mention[1].toLowerCase())) : []
-  const addFiles = useCallback(async (files: FileList | File[]): Promise<void> => {
-    if (!canAttach) { setAttachmentError('目前仅 DeepSeek Flash 支持图片输入'); return }
+  const addFiles = useCallback(async (files: FileList | File[]): Promise<string | null> => {
+    if (!canAttach) { const error = '目前仅 DeepSeek Flash 支持图片输入'; setAttachmentError(error); return error }
     setAttachmentError('')
     const next: ChatImageAttachment[] = []
+    let error = ''
     let totalBytes = attachments.reduce((sum, attachment) => sum + attachment.bytes, 0)
     for (const file of Array.from(files)) {
       const mediaType = await detectImageMediaType(file)
       if (!mediaType) {
-        setAttachmentError('仅支持 PNG、JPEG、WebP 或 GIF 图片')
+        error = '仅支持 PNG、JPEG、WebP 或 GIF 图片'
         continue
       }
-      if (file.size > MAX_IMAGE_BYTES) { setAttachmentError('单张图片不能超过 32 MiB'); continue }
+      if (file.size > MAX_IMAGE_BYTES) { error = '单张图片不能超过 32 MiB'; continue }
       totalBytes += file.size
-      if (totalBytes > MAX_IMAGE_BYTES) { setAttachmentError('图片总大小不能超过 32 MiB'); break }
+      if (totalBytes > MAX_IMAGE_BYTES) { error = '图片总大小不能超过 32 MiB'; break }
       try {
         const dataUrl = await readFileAsDataUrl(file)
         next.push({ type: 'image', name: file.name, mediaType, data: dataUrl.split(',')[1] ?? '', bytes: file.size })
       } catch {
-        setAttachmentError(`无法读取 ${file.name}`)
+        error = `无法读取 ${file.name}`
       }
     }
+    if (error) { setAttachmentError(error); return error }
     if (next.length > 0) setAttachments((current) => [...current, ...next])
+    return next.length > 0 ? null : '请选择图片'
   }, [attachments, canAttach])
   useEffect(() => {
     let dragDepth = 0
@@ -609,8 +612,7 @@ function Composer({ busy, canAttach, placeholder, members = [], value, onChange,
         {stopError && <p className="composer-error" role="alert">{stopError}</p>}
         <div className="composer-actions">
           <div className="composer-tools">
-            <input ref={input} className="visually-hidden" aria-label="选择图片" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => { if (event.target.files) void addFiles(event.target.files); event.target.value = '' }} />
-            <button type="button" className="composer-add" aria-label="添加图片" title={canAttach ? '添加图片' : '目前仅 DeepSeek Flash 支持图片输入'} disabled={busy || !canAttach} onClick={() => input.current?.click()}><Plus size={19} /></button>
+            <button type="button" className="composer-add" aria-label="添加图片" title={canAttach ? '添加图片' : '目前仅 DeepSeek Flash 支持图片输入'} disabled={busy || !canAttach} onClick={() => setPickerOpen(true)}><Plus size={19} /></button>
             <div className="composer-control-wrap">
               <button type="button" className={`composer-control permission ${permission !== 'full' ? 'limited' : ''}`} aria-label={`权限：${PERMISSION_LABELS[permission]}`} aria-expanded={openMenu === 'permission'} onClick={() => setOpenMenu((current) => current === 'permission' ? null : 'permission')}><ShieldCheck size={15} />{PERMISSION_LABELS[permission]}<ChevronRight size={13} /></button>
               {openMenu === 'permission' && <div className="composer-menu permission-menu">{(Object.keys(PERMISSION_LABELS) as ChatPermission[]).map((item) => <button type="button" key={item} aria-label={PERMISSION_LABELS[item]} className={item === permission ? 'selected' : ''} onClick={() => { setPermission(item); setOpenMenu(null) }}><strong>{PERMISSION_LABELS[item]}</strong><small>{item === 'chat' ? '不使用本地工具' : item === 'workspace' ? '允许文件和网页，不运行 Shell' : '使用智能体已配置的全部工具'}</small></button>)}</div>}
@@ -629,6 +631,7 @@ function Composer({ busy, canAttach, placeholder, members = [], value, onChange,
           </div>
         </div>
       </div>
+      {pickerOpen && <ImagePicker title="添加图片" hint="先预览并确认，再添加到当前消息。" multiple confirmLabel="添加到消息" onPick={addFiles} onClose={() => setPickerOpen(false)} />}
     </div>
   )
 }
@@ -706,24 +709,34 @@ function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element 
   const [notice, setNotice] = useState('')
   const [githubDialogOpen, setGitHubDialogOpen] = useState(false)
   const [githubUrl, setGitHubUrl] = useState('')
+  const [pendingDir, setPendingDir] = useState<string | null>(null)
   useEffect(() => { void window.mindmesh.catalog[kind]().then(setItems) }, [kind])
   useEffect(() => {
     if (kind !== 'skills') return undefined
     return window.mindmesh.catalog.onInstallProgress(setProgress)
   }, [kind])
-  async function installSkill(): Promise<void> {
+  async function pickSkillDir(): Promise<void> {
+    if (installing) return
+    setError('')
+    setNotice('')
+    try {
+      const selected = await window.mindmesh.catalog.pickSkillDir()
+      if (selected) setPendingDir(selected)
+    }
+    catch (caught) { setError(caught instanceof Error ? caught.message : '无法选择技能目录') }
+  }
+  async function installSkill(path: string): Promise<void> {
     if (installing) return
     setError('')
     setNotice('')
     setInstalling('local')
     try {
-      const installedItems = await window.mindmesh.catalog.installSkill()
-      if (!installedItems) return
-      setItems(installedItems)
+      setItems(await window.mindmesh.catalog.installSkill(path))
       setNotice('本地技能导入完成，技能库已刷新。')
-    }
-    catch (caught) { setError(caught instanceof Error ? caught.message : '技能安装失败') }
-    finally { setInstalling(null); setProgress(null) }
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : '技能安装失败'
+      throw new Error(message)
+    } finally { setInstalling(null); setProgress(null) }
   }
   async function installGitHubSkill(rawUrl: string): Promise<void> {
     if (installing) return
@@ -743,9 +756,9 @@ function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element 
     finally { setInstalling(null); setProgress(null) }
   }
   const progressLabel = installing === 'local'
-    ? '正在选择并导入本地技能…'
+    ? '正在导入本地技能…'
     : progress ? formatSkillInstallProgress(progress) : installing === 'github' ? '正在准备 GitHub 技能安装…' : ''
-  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div>{kind === 'skills' && <div className="space-header-actions"><button className="secondary-button compact" disabled={installing !== null} onClick={() => void installSkill()}><Plus size={17} />{installing === 'local' ? '导入中…' : '本地导入'}</button><button className="primary-button compact" disabled={installing !== null} onClick={() => setGitHubDialogOpen(true)}>{installing === 'github' ? '导入中…' : 'GitHub 导入'}</button></div>}</header>{error && <p className="form-error" role="alert">{error}</p>}{progressLabel && <div className="skill-install-progress" role="status"><span>{progressLabel}</span>{progress?.phase === 'downloading' && progress.totalBytes !== undefined && <progress aria-label="GitHub 技能下载进度" value={progress.receivedBytes ?? 0} max={progress.totalBytes} />}</div>}{notice && <p className="form-success" role="status">{notice}</p>}{items.length === 0 ? <div className="empty-state"><span className="empty-mark">{kind === 'skills' ? <Sparkles size={19} /> : <Wrench size={19} />}</span><h1>{kind === 'skills' ? '还没有可用技能' : '还没有可用工具'}</h1><p>安装后会自动出现在这里，并可绑定到智能体。</p></div> : <div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p>{item.diagnostic && <small>{item.diagnostic}</small>}{kind === 'skills' && item.source && <small>{item.integrity === 'untracked' ? '未托管来源' : '可信来源'}：{item.source}{item.license ? ` · ${item.license}${item.licenseSpdx === false ? '（非 SPDX）' : ''}` : ''}{item.integrity === 'modified' ? ' · 内容已变更' : ''}</small>}{item.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}<span className="status-tag">{item.status}</span></article>)}</div>}{githubDialogOpen && <div className="modal-backdrop confirm-backdrop"><form className="confirm-dialog github-import-dialog" role="dialog" aria-modal="true" aria-labelledby="github-import-title" onSubmit={(event) => { event.preventDefault(); void installGitHubSkill(githubUrl) }}><header><div><h2 id="github-import-title">从 GitHub 导入技能</h2><p>粘贴公开 GitHub 仓库或其中的 skill 目录地址。</p></div><button type="button" className="icon-button" aria-label="关闭" onClick={() => setGitHubDialogOpen(false)}><X size={18} /></button></header><Field label="GitHub 地址"><input autoFocus value={githubUrl} onChange={(event) => setGitHubUrl(event.target.value)} placeholder="https://github.com/owner/repo/tree/main/path/to/skill" /></Field><footer><button type="button" className="secondary-button" onClick={() => setGitHubDialogOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={!githubUrl.trim()}>导入</button></footer></form></div>}</div>
+  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div>{kind === 'skills' && <div className="space-header-actions"><button className="secondary-button compact" disabled={installing !== null} onClick={() => void pickSkillDir()}><Plus size={17} />{installing === 'local' ? '导入中…' : '本地导入'}</button><button className="primary-button compact" disabled={installing !== null} onClick={() => setGitHubDialogOpen(true)}>{installing === 'github' ? '导入中…' : 'GitHub 导入'}</button></div>}</header>{error && <p className="form-error" role="alert">{error}</p>}{progressLabel && <div className="skill-install-progress" role="status"><span>{progressLabel}</span>{progress?.phase === 'downloading' && progress.totalBytes !== undefined && <progress aria-label="GitHub 技能下载进度" value={progress.receivedBytes ?? 0} max={progress.totalBytes} />}</div>}{notice && <p className="form-success" role="status">{notice}</p>}{items.length === 0 ? <div className="empty-state"><span className="empty-mark">{kind === 'skills' ? <Sparkles size={19} /> : <Wrench size={19} />}</span><h1>{kind === 'skills' ? '还没有可用技能' : '还没有可用工具'}</h1><p>安装后会自动出现在这里，并可绑定到智能体。</p></div> : <div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p>{item.diagnostic && <small>{item.diagnostic}</small>}{kind === 'skills' && item.source && <small>{item.integrity === 'untracked' ? '未托管来源' : '可信来源'}：{item.source}{item.license ? ` · ${item.license}${item.licenseSpdx === false ? '（非 SPDX）' : ''}` : ''}{item.integrity === 'modified' ? ' · 内容已变更' : ''}</small>}{item.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}<span className="status-tag">{item.status}</span></article>)}</div>}{pendingDir && <DirectoryConfirm key={pendingDir} title="导入本地技能" path={pendingDir} confirmLabel="确认导入" onReselect={pickSkillDir} onConfirm={() => installSkill(pendingDir)} onClose={() => setPendingDir(null)} />}{githubDialogOpen && <div className="modal-backdrop confirm-backdrop"><form className="confirm-dialog github-import-dialog" role="dialog" aria-modal="true" aria-labelledby="github-import-title" onSubmit={(event) => { event.preventDefault(); void installGitHubSkill(githubUrl) }}><header><div><h2 id="github-import-title">从 GitHub 导入技能</h2><p>粘贴公开 GitHub 仓库或其中的 skill 目录地址。</p></div><button type="button" className="icon-button" aria-label="关闭" onClick={() => setGitHubDialogOpen(false)}><X size={18} /></button></header><Field label="GitHub 地址"><input autoFocus value={githubUrl} onChange={(event) => setGitHubUrl(event.target.value)} placeholder="https://github.com/owner/repo/tree/main/path/to/skill" /></Field><footer><button type="button" className="secondary-button" onClick={() => setGitHubDialogOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={!githubUrl.trim()}>导入</button></footer></form></div>}</div>
 }
 
 function formatSkillInstallProgress(progress: SkillInstallProgress): string {

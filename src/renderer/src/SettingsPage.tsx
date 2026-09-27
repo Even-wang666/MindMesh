@@ -3,6 +3,7 @@ import { Activity, Check, ChevronRight, Eye, EyeOff, HardDrive, KeyRound, Plus, 
 import type { ModelProviderId, ModelProviderStatus, RuntimeStatus, SaveModelProviderInput, UserProfile } from '../../shared/contracts'
 import { getModelProviderApiKeyError, getModelProviderDefinition } from '../../shared/model-providers'
 import { useConfirm } from './ConfirmDialog'
+import { DirectoryConfirm, ImagePicker } from './FilePicker'
 import { Avatar, Field } from './Ui'
 import { getProviderLogo } from './ProviderLogos'
 
@@ -11,6 +12,7 @@ function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: 
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [reading, setReading] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   useEffect(() => setDraft(profile), [profile])
@@ -39,22 +41,25 @@ function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: 
     setEditing(false)
   }
 
-  function chooseAvatar(file?: File): void {
-    if (!file) return
+  function chooseAvatar(file?: File): Promise<string | null> {
+    if (!file) return Promise.resolve('请选择一张图片')
     if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 1_000_000) {
-      setError('请选择不超过 1 MB 的 PNG、JPEG、WebP 或 GIF 图片')
-      return
+      const message = '请选择不超过 1 MB 的 PNG、JPEG、WebP 或 GIF 图片'
+      setError(message)
+      return Promise.resolve(message)
     }
     setReading(true)
-    const reader = new FileReader()
-    reader.onload = () => {
-      const image = reader.result
-      if (typeof image === 'string') { editDraft((current) => ({ ...current, avatar: image })); setError('') }
-      else setError('无法读取图片，请重试')
-      setReading(false)
-    }
-    reader.onerror = () => { setError('无法读取图片，请重试'); setReading(false) }
-    reader.readAsDataURL(file)
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const image = reader.result
+        if (typeof image === 'string') { editDraft((current) => ({ ...current, avatar: image })); setError(''); resolve(null) }
+        else { setError('无法读取图片，请重试'); resolve('无法读取图片，请重试') }
+        setReading(false)
+      }
+      reader.onerror = () => { setError('无法读取图片，请重试'); setReading(false); resolve('无法读取图片，请重试') }
+      reader.readAsDataURL(file)
+    })
   }
 
   async function saveProfile(): Promise<void> {
@@ -77,12 +82,12 @@ function ProfileSettings({ profile, onSaved }: { profile: UserProfile; onSaved: 
   }
 
   return <section className="settings-section profile-section"><h2>个人资料</h2>{editing
-    ? <div className="profile-form">
-        <div className="profile-avatar"><Avatar name={draft.name} image={draft.avatar} large /><div><label className="secondary-button compact" htmlFor="profile-avatar-input">选择头像</label><input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => chooseAvatar(event.target.files?.[0])} />{draft.avatar && <button className="text-button" onClick={() => editDraft((current) => ({ ...current, avatar: null }))}>移除头像</button>}<small>PNG、JPEG、WebP 或 GIF，最大 1 MB</small></div></div>
+    ? <><div className="profile-form">
+        <div className="profile-avatar"><Avatar name={draft.name} image={draft.avatar} large /><div><button className="secondary-button compact" onClick={() => setPickerOpen(true)}>选择头像</button>{draft.avatar && <button className="text-button" onClick={() => editDraft((current) => ({ ...current, avatar: null }))}>移除头像</button>}<small>PNG、JPEG、WebP 或 GIF，最大 1 MB</small></div></div>
         <div className="field"><label htmlFor="profile-name-input">你希望智能体怎么称呼你</label><input id="profile-name-input" autoFocus aria-describedby="profile-name-hint" value={draft.name} maxLength={40} placeholder="例如：小明、王工、老板" onChange={(event) => editDraft((current) => ({ ...current, name: event.target.value }))} /><small className="field-hint" id="profile-name-hint">这个名字会显示在对话里，智能体也会用它称呼你</small></div>
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="profile-actions"><button className="primary-button compact" disabled={saving || reading || !changed} onClick={() => void saveProfile()}>保存个人资料</button><button className="secondary-button compact" disabled={saving} onClick={cancelEditing}>取消</button></div>
-      </div>
+      </div>{pickerOpen && <ImagePicker title="选择头像" hint="PNG、JPEG、WebP 或 GIF，最大 1 MB" multiple={false} confirmLabel="使用图片" onPick={(files) => chooseAvatar(files[0])} onClose={() => setPickerOpen(false)} />}</>
     : <div className="setting-row profile-row"><Avatar name={profile.name} image={profile.avatar} large /><div><strong className="profile-name">{profile.name}</strong><p>智能体在对话中会这样称呼你</p></div>{notice && <span className="form-success" role="status"><Check size={15} />{notice}</span>}<button className="secondary-button compact" onClick={startEditing}>编辑资料</button></div>}</section>
 }
 
@@ -104,18 +109,35 @@ export function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntim
   const [workspace, setWorkspace] = useState('')
   const [workspaceError, setWorkspaceError] = useState('')
   const [choosingWorkspace, setChoosingWorkspace] = useState(false)
+  const [pendingWorkspace, setPendingWorkspace] = useState<string | null>(null)
 
   useEffect(() => { void window.mindmesh.settings.modelProviders().then(setProviders) }, [])
   useEffect(() => { void window.mindmesh.settings.workspace().then(setWorkspace) }, [])
 
-  async function chooseWorkspace(): Promise<void> {
+  async function pickWorkspace(): Promise<void> {
     setChoosingWorkspace(true)
     setWorkspaceError('')
     try {
-      setWorkspace(await window.mindmesh.settings.chooseWorkspace())
-      onRuntimeChange(await window.mindmesh.runtime.status())
+      const selected = await window.mindmesh.settings.pickWorkspace()
+      if (selected && selected !== workspace) setPendingWorkspace(selected)
     } catch {
-      setWorkspaceError('无法切换工作目录，请重试。')
+      setWorkspaceError('无法选择工作目录，请重试。')
+    } finally {
+      setChoosingWorkspace(false)
+    }
+  }
+
+  async function confirmWorkspace(): Promise<void> {
+    if (!pendingWorkspace) return
+    setChoosingWorkspace(true)
+    setWorkspaceError('')
+    try {
+      setWorkspace(await window.mindmesh.settings.chooseWorkspace(pendingWorkspace))
+      onRuntimeChange(await window.mindmesh.runtime.status())
+    } catch (cause) {
+      const message = cause instanceof Error && cause.message ? cause.message : '无法切换工作目录，请重试。'
+      setWorkspaceError(message)
+      throw new Error(message)
     } finally {
       setChoosingWorkspace(false)
     }
@@ -214,9 +236,10 @@ export function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntim
         )}
         {editing === 'custom' && !customConfigured && renderProviderForm()}
       </section>
-      <section className="settings-section"><h2>本地文件</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>Agent 工作目录</strong><p className="workspace-path">{workspace || '读取中…'}</p><small>在 Agent 编辑页启用“文件”工具后即可使用。文件写入限制在此目录；切换后模型会话重新开始，聊天消息仍保留。</small>{workspaceError && <p className="form-error" role="alert">{workspaceError}</p>}</div><button className="secondary-button compact" disabled={busy || choosingWorkspace} onClick={() => void chooseWorkspace()}>选择文件夹</button></div></section>
+      <section className="settings-section"><h2>本地文件</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>Agent 工作目录</strong><p className="workspace-path">{workspace || '读取中…'}</p><small>在 Agent 编辑页启用“文件”工具后即可使用。文件写入限制在此目录；切换后模型会话重新开始，聊天消息仍保留。</small>{workspaceError && <p className="form-error" role="alert">{workspaceError}</p>}</div><button className="secondary-button compact" disabled={busy || choosingWorkspace} onClick={() => void pickWorkspace()}>选择文件夹</button></div></section>
       <section className="settings-section"><h2>运行状态</h2><div className="setting-row"><div className="runtime-icon"><Activity size={19} /></div><div><strong>{runtime?.label ?? '检查中'}</strong><p>{runtime?.detail}</p></div><span className={`state-badge ${runtime?.state === 'demo' ? 'warn' : ''}`}>{runtime?.state === 'demo' ? '等待连接' : '正常'}</span></div></section>
       <section className="settings-section"><h2>本地数据</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>保存在这台设备上</strong><p>智能体、协作空间和消息不会自动上传到云端。</p></div></div></section>
+      {pendingWorkspace && <DirectoryConfirm key={pendingWorkspace} title="切换 Agent 工作目录" path={pendingWorkspace} confirmLabel="确认切换" onReselect={pickWorkspace} onConfirm={confirmWorkspace} onClose={() => setPendingWorkspace(null)} />}
     </div>
   )
 
