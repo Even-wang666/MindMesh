@@ -1,6 +1,6 @@
 # MindMesh 实施状态
 
-更新日期：2026-09-27
+更新日期：2026-09-28
 
 ## 已完成
 
@@ -38,7 +38,7 @@
 - 新增脱敏运行错误 JSONL 日志，仅记录时间、范围、Agent ID、已知错误类型和安全代码，不记录提示词、原始错误消息或密钥。
 - 新增跨 Space／私聊隔离、双 Provider 启动路由、能力补丁与删除范围测试。真实 DeepSeek SDK 已使用选中的“文件”工具读取随机标记，并从 Skill Registry 加载自定义技能返回技能正文中的隐藏标记；Windows unpacked 包的真实对话及 Space 删除界面通过，运行依赖检查缺失 0 项。
 - 设置页可通过系统文件夹选择器指定 Agent 工作目录，路径保存于 SQLite；切换目录会关闭旧 Harness 进程并重建运行会话，聊天消息保留。真实 DeepSeek 文件工具已在指定临时目录完成读取、创建和写入；选中的 Shell 工具也通过 PowerShell 读取了随机标记文件。Electron 界面冒烟覆盖设置入口。
-- 模型服务设置支持 DeepSeek、Kimi、OpenAI、Anthropic、MiniMax、智谱、通义千问和阶跃星辰八家预置服务，以及一个 OpenAI 兼容自定义服务；确定性测试覆盖路由和配置，真实 API 请求目前只完成 DeepSeek 验收。
+- 模型服务设置支持 DeepSeek、Kimi、OpenAI、Anthropic、MiniMax、智谱、通义千问和阶跃星辰八家预置服务，以及一个 OpenAI 兼容自定义服务；确定性测试覆盖路由和配置。DeepSeek 与 Kimi 已完成真实 API 请求验收，Kimi 目录更新为当前可用的 K3 与 K2.6；Electron 双轮重启测试覆盖 Kimi 私聊及 Kimi → DeepSeek 的 Space 顺序协作。
 - DeepSeek Flash 对话支持 PNG、JPEG、WebP、GIF 图片输入，主进程会校验格式、签名及 32 MiB 总大小；设置页支持查询 DeepSeek 余额。
 - 工具目录现支持网页搜索、文件、Shell、浏览器、待办清单、目标管理和后台任务七项能力，实际启用范围由 Agent 配置与当轮权限共同限制。
 - Harness 子进程环境按系统变量白名单和当前 Provider 最小化注入；对话默认使用仅对话权限，用户消息限制为 64 KiB UTF-8；退出时等待当前发送和 Harness 回收后再关闭数据库。
@@ -47,7 +47,6 @@
 ## 下一阶段
 
 - 扩展 Windows 发布检查中的真实 Provider 对话覆盖；当前 CI 已纳入无密钥安全冒烟，带密钥的模型请求仍由发布前人工验收。NSIS 安装版首轮真实请求曾返回一次通用失败提示，随后单轮及连续两轮重启测试均通过；如再次发生，先读取 `mindmesh-data/runtime-errors.jsonl` 的脱敏错误代码定位来源。
-- 使用第二个真实模型服务的凭据完成跨 Provider 请求验收；当前只配置了 DeepSeek Key，双 Provider 的配置路由已有确定性测试覆盖。
 - SDK 暂无可供桌面应用直接列举工具 Registry 的接口；工具页当前展示受 MindMesh 支持的七项工具，实际启用状态由 Harness 补丁控制。
 - Space 删除目前清理 MindMesh SQLite 记录；Harness SDK 的底层会话文件没有删除接口，后续需在 SDK 提供安全删除能力时补上物理清理。
 - 当前 SDK 只在完整 `assistant/message` 事件中提供文本；token 级流式输出需等待 SDK 协议支持，跨进程继续原 Harness Session 也需 SDK 提供恢复入口。

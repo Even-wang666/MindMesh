@@ -63,8 +63,8 @@ export const MODEL_PROVIDER_DEFINITIONS: ModelProviderDefinition[] = [
 export const MODEL_CATALOG = [
   { provider: 'deepseek-official', id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1_000_000 },
   { provider: 'deepseek-official', id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1_000_000 },
-  { provider: 'moonshotai-cn', id: 'kimi-k2.5', name: 'Kimi K2.5' },
-  { provider: 'moonshotai-cn', id: 'kimi-k2-thinking', name: 'Kimi K2 Thinking' },
+  { provider: 'moonshotai-cn', id: 'kimi-k3', name: 'Kimi K3', contextWindow: 1_048_576 },
+  { provider: 'moonshotai-cn', id: 'kimi-k2.6', name: 'Kimi K2.6', contextWindow: 262_144 },
   { provider: 'openai', id: 'gpt-5.2', name: 'GPT-5.2' },
   { provider: 'openai', id: 'gpt-4.1', name: 'GPT-4.1' },
   { provider: 'anthropic', id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },

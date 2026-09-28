@@ -12,7 +12,12 @@ const userData = mkdtempSync(join(tmpdir(), 'mindmesh-e2e-'))
 const executable = process.env.MINDMESH_E2E_EXE ?? electron
 const securityOnly = process.argv.includes('--security-only')
 const key = process.env.DEEPSEEK_API_KEY
+const providerOverride = process.env.MINDMESH_E2E_PROVIDER
+const modelOverride = process.env.MINDMESH_E2E_MODEL
 if (!key && !securityOnly) throw new Error('请先设置 DEEPSEEK_API_KEY')
+if (Boolean(providerOverride) !== Boolean(modelOverride)) {
+  throw new Error('MINDMESH_E2E_PROVIDER 与 MINDMESH_E2E_MODEL 必须同时设置')
+}
 
 const delay = (ms) => new Promise((done) => setTimeout(done, ms))
 async function until(task, timeoutMs = 90_000) {
@@ -98,6 +103,22 @@ async function runRound(round) {
       return
     }
     assert.equal(await evaluate('window.mindmesh.runtime.status().then(x => x.state)'), 'ready')
+    if (round === 1 && providerOverride && modelOverride) {
+      const route = await evaluate(`(async () => {
+        const agent = (await window.mindmesh.agents.list())[0]
+        const updated = await window.mindmesh.agents.update(agent.id, {
+          name: agent.name, role: agent.role, persona: agent.persona,
+          provider: ${JSON.stringify(providerOverride)}, model: ${JSON.stringify(modelOverride)},
+          skills: agent.skills, tools: agent.tools, reasoningEffort: agent.reasoningEffort,
+        })
+        return { provider: updated.provider, model: updated.model }
+      })()`)
+      assert.deepEqual(route, { provider: providerOverride, model: modelOverride })
+      await client.call('Page.reload')
+      await delay(500)
+      await until(() => evaluate('Boolean(window.mindmesh?.chat && document.querySelector(".composer textarea"))'))
+      console.log(`Electron provider override ${providerOverride}/${modelOverride}: OK`)
+    }
     if (round === 2) {
       const previous = await evaluate(`(async () => {
         const agent = (await window.mindmesh.agents.list())[0]
@@ -147,15 +168,15 @@ async function runRound(round) {
       await evaluate("document.querySelector('.space-page .drawer-toggle').click()")
       await until(() => evaluate('Boolean(document.querySelector(".space-page .drawer-edit"))'))
       await evaluate("document.querySelector('.space-page .drawer-edit').click()")
-      await until(() => evaluate('Boolean(document.querySelector(".wizard.compact input"))'))
+      await until(() => evaluate('Boolean(document.querySelector(".wizard.space-wizard input"))'))
       await evaluate(`(() => {
-        const input = document.querySelector('.wizard.compact input')
+        const input = document.querySelector('.wizard.space-wizard input')
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'E2E 编辑空间')
         input.dispatchEvent(new Event('input', { bubbles: true }))
       })()`)
       await evaluate('document.querySelector(\'.member-choices button[aria-label="Developer"]\').click()')
       await until(() => evaluate('document.querySelector(\'.member-choices button[aria-label="Developer"]\')?.getAttribute("aria-pressed") === "false"'))
-      await evaluate("document.querySelector('.wizard.compact footer .primary-button').click()")
+      await evaluate("document.querySelector('.wizard.space-wizard footer .primary-button').click()")
       await until(() => evaluate('document.querySelector(".space-page h1")?.textContent === "E2E 编辑空间"'))
       const edited = await evaluate(`(async () => {
         const space = (await window.mindmesh.spaces.list())[0]
