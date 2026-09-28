@@ -1678,6 +1678,9 @@ em,
 .catalog-grid h3 { margin: var(--sp-6) 0 var(--sp-3); font-size: 16.5px; }
 .catalog-grid p { flex: 1; min-height: 46px; margin: 0 0 var(--sp-5); color: var(--text-secondary); font-size: 13.5px; line-height: 1.7; }
 .status-tag { color: var(--mm-color-jade); background: var(--mm-color-success-bg); }
+.skill-invoke-hint { margin-top: var(--sp-3); color: var(--text-secondary); font-size: 12.5px; line-height: 1.6; }
+.skill-invoke-hint code { padding: 1px 6px; border-radius: var(--r-control); color: var(--mm-color-iris); background: var(--mm-color-selected); font-size: 12px; }
+.skill-menu-mark { width: 34px; height: 34px; flex-basis: 34px; display: grid; place-items: center; border-radius: var(--r-control); color: var(--mm-color-iris); background: var(--mm-color-selected); }
 
 /* ── 设置页 ─────────────────────────────────────────────────────────────── */
 

@@ -248,6 +248,51 @@ describe('local file workspace', () => {
     expect(screen.queryByText(/mindmesh-builtin-workout-planner-v1/)).not.toBeInTheDocument()
   })
 
+  it('shows how to invoke manual-only skills in the catalog', async () => {
+    const api = mockApi()
+    api.catalog.skills = vi.fn(async () => [{
+      id: 'manual-report', name: '报告生成', description: '生成结构化报告', status: '仅手动调用',
+    }])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+
+    expect((await screen.findByText('/manual-report')).closest('.skill-invoke-hint'))
+      .toHaveTextContent('在对话中键入 /manual-report 手动触发')
+  })
+
+  it('completes manual-only skills selected by the current agent', async () => {
+    const api = mockApi()
+    api.agents.list = vi.fn(async () => [{
+      ...agent,
+      skills: [createSkillReference('manual-report', '报告生成')],
+    }])
+    api.catalog.skills = vi.fn(async () => [
+      { id: 'manual-report', name: '报告生成', description: '生成结构化报告', status: '仅手动调用' },
+      { id: 'manual-review', name: '评审', description: '评审内容', status: '仅手动调用' },
+      { id: 'automatic-study', name: '学习计划', description: '生成学习计划', status: '已安装' },
+    ])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const composer = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    fireEvent.change(composer, { target: { value: '/man' } })
+
+    expect(await screen.findByText('手动触发技能')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /\/manual-report/ })).toBeInTheDocument()
+    expect(screen.queryByText('/manual-review')).not.toBeInTheDocument()
+    expect(composer).toHaveAttribute('aria-controls', 'skill-invoke-menu')
+    expect(composer).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(composer).toHaveValue('/manual-report ')
+    expect(api.chat.sendPrivate).not.toHaveBeenCalled()
+
+    fireEvent.change(composer, { target: { value: '/man' } })
+    fireEvent.click(screen.getByRole('button', { name: /\/manual-report/ }))
+    expect(composer).toHaveValue('/manual-report ')
+  })
+
   it('requires an exact choice when a legacy skill name has multiple matches', async () => {
     let currentAgent = { ...agent, skills: ['训练计划'] }
     const api = mockApi()
