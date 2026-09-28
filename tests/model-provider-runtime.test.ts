@@ -109,6 +109,31 @@ describe('model provider runtime settings', () => {
     }
   })
 
+  it('rejects a completed provider response without answer text', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-runtime-empty-'))
+    const run = vi.spyOn(DeepSeekHarness.prototype, 'run').mockResolvedValue({
+      finalResponse: '', sessionId: 'session', events: [], notifications: [],
+    })
+    const close = vi.spyOn(DeepSeekHarness.prototype, 'close').mockResolvedValue()
+    const providerSettings = {
+      getProvider: () => ({ id: 'moonshotai-cn', name: 'Kimi', apiKey: 'test-secret' }),
+      configuredProviders: () => [{ id: 'moonshotai-cn', name: 'Kimi', apiKey: 'test-secret' }],
+    } as unknown as ModelProviderSettings
+    const agent: Agent = {
+      id: 'agent', name: 'Agent', role: '', persona: '助手', provider: 'moonshotai-cn',
+      model: 'kimi-k3', skills: [], tools: [], createdAt: '',
+    }
+    const adapter = new DeepSeekHarnessAdapter(directory, directory, providerSettings)
+    try {
+      await expect(adapter.run(agent, '你好', 'session')).rejects.toThrow('模型未返回正文')
+    } finally {
+      await adapter.shutdownAll()
+      run.mockRestore()
+      close.mockRestore()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('passes image attachments to the SDK as prompt content blocks', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-runtime-image-'))
     const run = vi.spyOn(DeepSeekHarness.prototype, 'run').mockResolvedValue({

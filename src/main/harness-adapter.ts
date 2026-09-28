@@ -128,7 +128,7 @@ export class DeepSeekHarnessAdapter {
             DSH_HOME: dshHome,
             ELECTRON_RUN_AS_NODE: '1',
           },
-          maxTokens: 4096,
+          maxTokens: 8192,
           // 思考强度是 harness 实例级构造参数：档位变化会改变能力哈希，
           // 从而落到独立的运行池条目（新 dshHome/新会话），无需额外失效逻辑。
           ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort as ReasoningEffortId } : {}),
@@ -196,8 +196,10 @@ export class DeepSeekHarnessAdapter {
     // DSH may emit intermediate assistant text before the final reply. Persist the last text
     // segment as the answer and keep every earlier segment in the reasoning trace. This pairs
     // with services.ts, which streams callbacks first and only appends an unstreamed final suffix.
+    const text = assistantTexts.at(-1) ?? result.finalResponse
+    if (!text.trim()) throw new Error('模型未返回正文')
     return {
-      text: assistantTexts.at(-1) ?? result.finalResponse,
+      text,
       reasoning: (assistantTexts.length ? trace.slice(0, -1) : trace).join('\n\n') || undefined,
       sessionId: result.sessionId,
     }

@@ -11,6 +11,7 @@ const workspace = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const userData = mkdtempSync(join(tmpdir(), 'mindmesh-e2e-'))
 const executable = process.env.MINDMESH_E2E_EXE ?? electron
 const securityOnly = process.argv.includes('--security-only')
+const keepUserData = process.env.MINDMESH_E2E_KEEP_USER_DATA === '1'
 const key = process.env.DEEPSEEK_API_KEY
 const providerOverride = process.env.MINDMESH_E2E_PROVIDER
 const modelOverride = process.env.MINDMESH_E2E_MODEL
@@ -155,11 +156,19 @@ async function runRound(round) {
 
     await evaluate(`Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '协作空间').click()`)
     await until(() => evaluate('Boolean(document.querySelector(".space-page .composer textarea"))'))
-    if (round === 2) await until(() => evaluate('document.querySelectorAll(".space-page .message.agent").length >= 2'))
-    const existingSpaceReplies = await evaluate('document.querySelectorAll(".space-page .message.agent").length')
+    if (round === 2) await until(() => evaluate('document.querySelectorAll(".space-page .message.agent > div > .message-body").length >= 2'))
+    const existingSpaceReplies = await evaluate('document.querySelectorAll(".space-page .message.agent > div > .message-body").length')
     const spaceMarker = `MM_SPACE_${Date.now()}`
     await sendFromComposer(`@Researcher @Developer 请分别只回复 ${spaceMarker}`)
-    await until(() => evaluate(`document.querySelectorAll(".space-page .message.agent:has(header time)").length === ${existingSpaceReplies + 2}`), 180_000)
+    try {
+      await until(() => evaluate(`document.querySelectorAll(".space-page .message.agent > div > .message-body").length === ${existingSpaceReplies + 2}`), 180_000)
+    } catch (error) {
+      console.error('Space agent messages:', await evaluate(`Array.from(document.querySelectorAll('.space-page .message.agent:has(header time)')).map(item => ({
+        author: item.querySelector('header strong')?.textContent,
+        content: item.querySelector('.message-body')?.textContent?.slice(0, 240) ?? '',
+      }))`))
+      throw error
+    }
     const spaceMessages = await evaluate('Array.from(document.querySelectorAll(".space-page .message.agent > div > .message-body")).map(x => x.textContent)')
     assert.equal(spaceMessages.length, existingSpaceReplies + 2, 'Space 双 Agent 回复失败')
     console.log(`Electron Space collaboration UI round ${round}: OK`)
@@ -234,5 +243,6 @@ try {
   if (process.env.MINDMESH_E2E_RESTART === '1') await runRound(2)
 } finally {
   const tempRoot = resolve(tmpdir()) + sep
-  if (resolve(userData).startsWith(tempRoot)) rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
+  if (keepUserData) console.error(`Electron user data preserved: ${userData}`)
+  else if (resolve(userData).startsWith(tempRoot)) rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
 }
