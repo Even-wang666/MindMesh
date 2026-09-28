@@ -1481,15 +1481,8 @@ kbd {
 }
 
 .drawer-section { display: grid; gap: var(--sp-3); }
-.drawer-actions { margin-top: auto; display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2); }
-.drawer-delete {
-  width: 100%;
-  margin-top: 0;
-  color: var(--mm-color-danger);
-  background: var(--mm-color-danger-bg);
-}
-.drawer-delete:hover:not(:disabled) { background: rgb(var(--p-danger-rgb) / 12%); }
-.drawer-delete:disabled { opacity: .45; }
+.drawer-actions { margin-top: auto; display: grid; gap: var(--sp-3); }
+.drawer-actions > button { width: 100%; height: var(--h-control); }
 
 .member {
   margin: 0 calc(var(--sp-3) * -1);
@@ -1970,7 +1963,7 @@ em,
   box-shadow: var(--sh-3);
   animation: pop-in var(--dur-2) var(--ease);
 }
-.wizard.compact { width: min(740px, calc(100vw - 64px)); }
+.wizard.space-wizard { width: min(740px, calc(100vw - 64px)); }
 @keyframes pop-in {
   from { opacity: 0; transform: translateY(8px) scale(.98); }
   to { opacity: 1; transform: none; }

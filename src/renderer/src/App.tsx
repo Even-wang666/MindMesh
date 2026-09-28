@@ -397,7 +397,7 @@ function SpacePanel({ space, agents, models, messages, profile, busy, progress, 
             ))}
             {effortError && <p className="form-error" role="alert">{effortError}</p>}
           </div>
-          <div className="drawer-actions"><button className="secondary-button drawer-edit" onClick={onEdit}>编辑空间信息</button><button className="list-create drawer-delete" disabled={busy} onClick={requestRemove}><Trash2 size={15} />删除空间</button></div>
+          <div className="drawer-actions"><button className="secondary-button drawer-edit" onClick={onEdit}>编辑空间信息</button><button className="danger-button drawer-delete" disabled={busy} onClick={requestRemove}><Trash2 size={15} />删除空间</button></div>
         </aside>}
       </div>
     </div>
