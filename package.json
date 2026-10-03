@@ -117,9 +117,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
       "language": "2052",
-      "license": "LICENSE",
       "include": "build/installer.nsh",
       "installerIcon": "resources/icon.ico",
       "uninstallerIcon": "resources/icon.ico",
