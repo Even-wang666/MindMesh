@@ -32,6 +32,9 @@ export function prepareAgentCapabilities(agent: Agent, dataDirectory: string, ds
     '    customSkillDirs:',
     `      - ${JSON.stringify(selectedRoot)}`,
     '    watch: false',
+    // Plugin management and autonomous loop tools are outside MindMesh's tool catalog.
+    disabled('tool-plugin-manager', true),
+    disabled('tool-ralph', true),
     disabled('tool-skill', selected.length === 0),
     disabled('tool-fs', !tools.has('文件')),
     disabled('tool-fs-search', !tools.has('文件')),

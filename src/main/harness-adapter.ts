@@ -11,6 +11,7 @@ import { getModelProviderDefinition, MODEL_CATALOG } from '../shared/model-provi
 import { prepareAgentCapabilities } from './capabilities'
 import { getAgentCapabilityHash } from './agent-capability'
 import { selectedSkillsRevision } from './skills'
+import { getDshRuntimeInfo } from './dsh-runtime'
 
 export { getAgentCapabilityHash } from './agent-capability'
 
@@ -78,15 +79,18 @@ export class DeepSeekHarnessAdapter {
   }
 
   status(): RuntimeStatus {
+    const dshVersion = getDshRuntimeInfo().version
     if (this.providerSettings.configuredProviders().length === 0) {
       return {
         state: 'demo',
+        dshVersion,
         label: '等待配置',
         detail: '连接模型服务后即可开始真实对话。',
       }
     }
     return {
       state: this.runtimes.size > 0 ? 'running' : 'ready',
+      dshVersion,
       label: this.runtimes.size > 0 ? '正常运行' : '准备就绪',
       detail: this.runtimes.size > 0 ? '模型服务正在响应对话。' : '模型服务已连接，可以开始对话。',
     }
@@ -114,7 +118,7 @@ export class DeepSeekHarnessAdapter {
       }
       entry = {
         harness: new DeepSeekHarness({
-          ...this.packagedDshBin(),
+          dshBin: getDshRuntimeInfo().dshBin,
           profile: 'sdk',
           patches: [capabilityPatch],
           provider: agent.provider,
@@ -226,20 +230,6 @@ export class DeepSeekHarnessAdapter {
     this.runtimes.delete(key)
     await entry.harness.close()
     return true
-  }
-
-  private packagedDshBin(): { dshBin?: string } {
-    if (!process.resourcesPath) return {}
-    const candidate = join(
-      process.resourcesPath,
-      'app.asar.unpacked',
-      'node_modules',
-      '@deepseek-ai',
-      'dsh',
-      'lib',
-      'bin.js',
-    )
-    return existsSync(candidate) ? { dshBin: candidate } : {}
   }
 
   private demoResponse(agent: Agent, prompt: string): string {

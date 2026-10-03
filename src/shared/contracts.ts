@@ -76,6 +76,7 @@ export type Message = {
 }
 
 export type RuntimeStatus = {
+  dshVersion?: string
   state: 'demo' | 'ready' | 'running' | 'error'
   label: string
   detail: string

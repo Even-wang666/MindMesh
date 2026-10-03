@@ -1,44 +1,30 @@
-import { readFileSync, realpathSync, existsSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { dshDirectDependencies, inspectRuntimeDependencies, resolvePackageManifest } from './runtime-dependencies.mjs'
 
-const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
+const root = resolve(import.meta.dirname, '..')
 const packaged = join(root, 'release', 'win-unpacked', 'resources', 'app.asar.unpacked', 'node_modules')
-const queue = [realpathSync(join(root, 'node_modules', '@deepseek-ai', 'dsh'))]
-const seen = new Map()
-const unresolved = new Set()
-
-function packageRoot(file) {
-  let directory = dirname(file)
-  while (directory !== dirname(directory)) {
-    if (existsSync(join(directory, 'package.json'))) return directory
-    directory = dirname(directory)
-  }
-  throw new Error(`无法定位 package.json: ${file}`)
+const project = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+const roots = []
+const installedRoots = []
+const failures = []
+// Browser MCP is inserted by MindMesh, so it is outside DSH's own dependency tree.
+for (const [name, expected] of [...dshDirectDependencies(project), ['@playwright/mcp', project.dependencies['@playwright/mcp']]]) {
+  const manifestPath = resolvePackageManifest(name, join(packaged, '__check__.cjs'), packaged)
+  if (!manifestPath) { failures.push(`Missing packaged direct dependency: ${name}@${expected}`); continue }
+  const installedPath = resolvePackageManifest(name, join(root, 'package.json'))
+  if (installedPath) installedRoots.push(installedPath)
+  const bundledVersion = JSON.parse(readFileSync(manifestPath, 'utf8')).version
+  const installedVersion = installedPath && JSON.parse(readFileSync(installedPath, 'utf8')).version
+  if (bundledVersion !== installedVersion) failures.push(`${name}: packaged ${bundledVersion}, installed ${installedVersion}`)
+  roots.push(manifestPath)
 }
-
-while (queue.length) {
-  const directory = queue.pop()
-  const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'))
-  if (!manifest.name) { unresolved.add(`unnamed package: ${directory}`); continue }
-  if (seen.has(manifest.name)) continue
-  seen.set(manifest.name, directory)
-  const requireFromPackage = createRequire(join(directory, 'package.json'))
-  for (const name of new Set([...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})])) {
-    try {
-      let file
-      try { file = requireFromPackage.resolve(`${name}/package.json`) }
-      catch { file = requireFromPackage.resolve(name) }
-      queue.push(realpathSync(packageRoot(file)))
-    } catch {
-      unresolved.add(`${manifest.name} -> ${name}`)
-    }
-  }
-}
-
-const missing = [...seen.keys()].filter((name) => !existsSync(join(packaged, name, 'package.json')))
-console.log(`Runtime packages: ${seen.size}; missing from unpacked app: ${missing.length}`)
-missing.forEach((name) => console.log(`${name}@${JSON.parse(readFileSync(join(seen.get(name), 'package.json'), 'utf8')).version}`))
-if (unresolved.size) console.log(`Unresolved locally: ${[...unresolved].join(', ')}`)
-if (missing.length) process.exitCode = 1
+// Native payloads are npm-optional across platforms but required on this machine.
+const installedGraph = inspectRuntimeDependencies(installedRoots)
+failures.push(...installedGraph.errors)
+const graph = inspectRuntimeDependencies(roots, packaged, installedGraph.installedOptional)
+failures.push(...graph.errors)
+console.log(`Packaged runtime instances: ${graph.packages.size}; required failures: ${failures.length}; absent optional dependencies: ${graph.optionalMissing.length}`)
+failures.forEach((failure) => console.error(failure))
+graph.optionalMissing.forEach((dependency) => console.log(`Optional, not shipped: ${dependency}`))
+if (failures.length) process.exitCode = 1

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -104,6 +104,8 @@ async function runRound(round) {
       return
     }
     assert.equal(await evaluate('window.mindmesh.runtime.status().then(x => x.state)'), 'ready')
+    assert.equal(await evaluate('window.mindmesh.runtime.status().then(x => x.dshVersion)'),
+      JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')).dependencies['@deepseek-ai/dsh'])
     if (round === 1 && providerOverride && modelOverride) {
       const route = await evaluate(`(async () => {
         const agent = (await window.mindmesh.agents.list())[0]

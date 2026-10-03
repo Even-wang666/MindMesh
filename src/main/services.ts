@@ -66,7 +66,7 @@ export class MindMeshServices {
   runtimeStatus = (): RuntimeStatus => {
     const status = this.harness.status()
     return this.runtimeFailed && status.state !== 'demo'
-      ? { state: 'error', label: '运行异常', detail: '上次模型回复失败，请检查模型服务配置或网络。' }
+      ? { ...status, state: 'error', label: '运行异常', detail: '上次模型回复失败，请检查模型服务配置或网络。' }
       : status
   }
   resetRuntimeFailure = (): void => { this.runtimeFailed = false }
