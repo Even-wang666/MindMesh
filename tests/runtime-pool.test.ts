@@ -27,6 +27,7 @@ vi.mock('@deepseek-ai/dsh-sdk-client', () => ({
 }))
 
 import { DeepSeekHarnessAdapter, getAgentCapabilityHash } from '../src/main/harness-adapter'
+import { getAgentCapabilityBaseHash } from '../src/main/agent-capability'
 
 const settings = {
   getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }),
@@ -41,6 +42,83 @@ beforeEach(() => { state.launched.length = 0; state.closed.length = 0; state.rel
 afterEach(() => { state.release?.() })
 
 describe('Harness runtime pool', () => {
+  it('keeps capability identity stable across display edits and separates skill revisions', () => {
+    const original = agent('identity')
+    const base = getAgentCapabilityHash(original)
+    expect(getAgentCapabilityHash({ ...original })).toBe(base)
+    expect(getAgentCapabilityHash({ ...original, id: 'other', name: 'Renamed', role: 'New role', createdAt: 'later' })).toBe(base)
+    const effective = getAgentCapabilityHash(original, 'skill-revision')
+    expect(effective).not.toBe(base)
+    expect(getAgentCapabilityBaseHash(effective)).toBe(base)
+    expect(getAgentCapabilityHash(original, 'changed-skill-revision')).not.toBe(effective)
+  })
+
+  it.each([
+    { persona: 'changed' }, { tools: ['文件'] }, { skills: ['sample'] },
+    { provider: 'openai' }, { model: 'other-model' },
+  ])('changes capability identity for configuration %j', (change) => {
+    const original = agent('identity')
+    expect(getAgentCapabilityHash({ ...original, ...change })).not.toBe(getAgentCapabilityHash(original))
+  })
+
+  it('reuses a runtime for the same capability and isolates a different workspace', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-pool-baseline-'))
+    const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
+    try {
+      await adapter.run(agent('a'), 'first')
+      await adapter.run({ ...agent('a'), id: 'renamed', name: 'Renamed' }, 'second')
+      expect(state.launched).toHaveLength(1)
+      adapter.setWorkspace(join(directory, 'other'))
+      await adapter.run(agent('a'), 'other workspace')
+      expect(state.launched).toHaveLength(2)
+      expect(state.launched[0]).not.toBe(state.launched[1])
+      await adapter.shutdownAll()
+      expect(state.closed).toEqual(state.launched)
+    } finally {
+      await adapter.shutdownAll()
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('stops only the owned active runtime and leaves another runtime usable', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-pool-baseline-'))
+    const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
+    try {
+      const held = adapter.run(agent('a'), 'hold')
+      await vi.waitFor(() => expect(state.release).toBeTypeOf('function'))
+      await adapter.run(agent('b'), 'first')
+      await expect(adapter.stop(agent('a'))).resolves.toBe(true)
+      expect(state.closed).toEqual([state.launched[0]])
+      await adapter.run(agent('b'), 'second')
+      expect(state.launched).toHaveLength(2)
+      state.release?.()
+      await held
+    } finally {
+      state.release?.()
+      await adapter.shutdownAll()
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses to stop a runtime shared by another active Agent', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mindmesh-pool-baseline-'))
+    const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
+    try {
+      const held = adapter.run(agent('a'), 'hold')
+      await vi.waitFor(() => expect(state.release).toBeTypeOf('function'))
+      const other = adapter.run({ ...agent('a'), id: 'other' }, 'second')
+      await expect(adapter.stop(agent('a'))).resolves.toBe(false)
+      expect(state.closed).toEqual([])
+      await other
+      state.release?.()
+      await held
+    } finally {
+      state.release?.()
+      await adapter.shutdownAll()
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('changes the capability hash when a selected bundle resource changes', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-pool-skills-'))
     try {

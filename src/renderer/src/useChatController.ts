@@ -28,6 +28,7 @@ export function useChatController(
   const [streamingReasoning, setStreamingReasoning] = useState('')
   const liveReplyIds = useRef(new Set<string>())
   const activeRun = useRef<{ scope: Message['scope']; id: string; stopRequested: boolean } | null>(null)
+  const sendRevision = useRef(0)
   const conversation = target ? `${target.scope}:${target.id}` : ''
   const conversationRef = useRef(conversation)
   conversationRef.current = conversation
@@ -66,17 +67,22 @@ export function useChatController(
   useEffect(() => {
     if (!target) return
     let active = true
+    const revision = sendRevision.current
     setMessages([])
     setStreamingText('')
     setStreamingReasoning('')
     liveReplyIds.current.clear()
-    void window.mindmesh.chat.messages(target.scope, target.id).then((next) => { if (active) setMessages(next) })
+    void window.mindmesh.chat.messages(target.scope, target.id).then((next) => {
+      // A history read started before a send must not overwrite its pending message or result.
+      if (active && revision === sendRevision.current) setMessages(next)
+    })
     return () => { active = false }
   }, [target?.scope, target?.id])
 
   async function send(content: string, attachments: ChatImageAttachment[] = [], options: ChatRunOptions = {}): Promise<boolean> {
     if ((!content.trim() && attachments.length === 0) || busy) return true
     if (!target) return false
+    sendRevision.current += 1
     const { scope, id } = target
     const requestConversation = `${scope}:${id}`
     const requestRun = { scope, id, stopRequested: false }

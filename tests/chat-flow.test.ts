@@ -297,6 +297,23 @@ describe('session context', () => {
     } finally { db.close() }
   })
 
+  it.each([
+    ['chat', []], ['workspace', ['网页搜索', '文件']], ['full', ['网页搜索', '文件', 'Shell']],
+  ] as const)('applies the %s permission ceiling to every mentioned Space member', async (permission, tools) => {
+    const db = new MindMeshDatabase(':memory:')
+    const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'session' })
+    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
+      {} as ModelProviderSettings, () => undefined)
+    try {
+      const space = db.listSpaces()[0]
+      const members = space.memberIds.map((id) => db.getAgent(id)!)
+      for (const member of members) db.updateAgent(member.id, { ...member, tools: ['网页搜索', '文件', 'Shell'] })
+      await service.sendSpace(space.id, members.map((member) => `@${member.name}`).join(' '), [], { permission })
+      expect(run).toHaveBeenCalledTimes(members.length)
+      expect(run.mock.calls.map(([member]) => member.tools)).toEqual(members.map(() => [...tools]))
+    } finally { db.close() }
+  })
+
   it('applies a reasoning effort change to an existing session on the next turn', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockImplementation((_agent, _prompt, sessionId) => Promise.resolve({ text: '完成', sessionId }))

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Agent, ChatDelta, ChatProgress, Message, MindMeshApi, ModelProviderStatus, SkillInstallProgress, Space, UserProfile } from '../src/shared/contracts'
 import { createSkillReference } from '../src/shared/skill-reference'
 import { App } from '../src/renderer/src/App'
+import { useChatController } from '../src/renderer/src/useChatController'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 beforeEach(() => {
@@ -889,6 +890,48 @@ describe('chat flow', () => {
 
     expect(await screen.findByText('发送状态未确认，请检查会话后再重试。')).toBeInTheDocument()
     expect(document.querySelector('.message.user')).toHaveTextContent('状态未知')
+  })
+
+  it.each([
+    ['private', 'during'], ['space', 'during'], ['private', 'after'], ['space', 'after'],
+  ] as const)('keeps a pending %s message when the initial history read finishes %s a failed send', async (scope, timing) => {
+    const api = mockApi()
+    let finishHistory!: (messages: Message[]) => void
+    let failSend!: (error: Error) => void
+    api.chat.messages = vi.fn()
+      .mockImplementationOnce(() => new Promise<Message[]>((resolve) => { finishHistory = resolve }))
+      .mockRejectedValueOnce(new Error('read failed'))
+    const sending = vi.fn(() => new Promise<Message[]>((_resolve, reject) => { failSend = reject }))
+    api.chat.sendPrivate = sending
+    api.chat.sendSpace = sending
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    const { result } = renderHook(() => useChatController({ scope, id: agent.id, agent }, '你', vi.fn()))
+    let send!: Promise<boolean>
+    act(() => { send = result.current.send('状态未知') })
+    if (timing === 'during') await act(async () => finishHistory([]))
+    await act(async () => { failSend(new Error('send failed')); await send })
+    if (timing === 'after') await act(async () => finishHistory([]))
+
+    expect(result.current.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ authorType: 'user', content: '状态未知' }),
+      expect.objectContaining({ authorType: 'system', content: '发送状态未确认，请检查会话后再重试。' }),
+    ]))
+  })
+
+  it.each(['private', 'space'] as const)('keeps the completed %s reply when initial history arrives after a send', async (scope) => {
+    const api = mockApi()
+    let finishHistory!: (messages: Message[]) => void
+    api.chat.messages = vi.fn(() => new Promise<Message[]>((resolve) => { finishHistory = resolve }))
+    const reply: Message = { id: 'reply', scope, scopeId: agent.id, authorType: 'agent',
+      authorName: agent.name, content: '已完成', sequence: 2, createdAt: '' }
+    api.chat.sendPrivate = vi.fn(async () => [reply])
+    api.chat.sendSpace = vi.fn(async () => [reply])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    const { result } = renderHook(() => useChatController({ scope, id: agent.id, agent }, '你', vi.fn()))
+    await act(async () => { await result.current.send('问题') })
+    await act(async () => finishHistory([]))
+
+    expect(result.current.messages).toEqual([reply])
   })
 
   it('does not show a failed send in another conversation', async () => {
