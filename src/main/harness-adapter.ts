@@ -1,19 +1,18 @@
-import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
 import { DeepSeekHarness, JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
 import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type { Agent, ChatImageAttachment, RuntimeStatus } from '../shared/contracts'
+import type { Agent, ChatImageAttachment, ChatPermission, RuntimeStatus } from '../shared/contracts'
 import type { ModelProviderRuntimeConfig } from './model-provider-settings'
 import { ModelProviderSettings } from './model-provider-settings'
-import { getModelProviderDefinition, MODEL_CATALOG } from '../shared/model-providers'
-import { prepareAgentCapabilities } from './capabilities'
+import { getModelProviderDefinition } from '../shared/model-providers'
 import { getAgentCapabilityHash } from './agent-capability'
-import { selectedSkillsRevision } from './skills'
+import { resolveSelectedSkills, skillBundlesRevision } from './skills'
 import { getDshRuntimeInfo } from './dsh-runtime'
+import { getRuntimeIdentity, providerRuntimeRevision, type RuntimeRequest } from './runtime-revision'
+import { RuntimeHomeMaterializer } from './runtime-home-materializer'
 
 export { getAgentCapabilityHash } from './agent-capability'
+export { buildProviderSettingsYaml } from './runtime-home-materializer'
 
 const MAX_IDLE_RUNTIMES = 8
 const IDLE_RUNTIME_TTL_MS = 10 * 60_000
@@ -28,6 +27,7 @@ type RuntimeEntry = {
   active: number
   activeAgents: Map<string, number>
   lastUsed: number
+  sessions: Set<string>
 }
 
 export class SessionResumeUnsupportedError extends Error {
@@ -38,44 +38,44 @@ export class SessionResumeUnsupportedError extends Error {
 
 export class DeepSeekHarnessAdapter {
   private readonly runtimes = new Map<string, RuntimeEntry>()
+  private readonly homes: RuntimeHomeMaterializer
 
   constructor(
     private workspace: string,
     private readonly dataDirectory: string,
     private readonly providerSettings: ModelProviderSettings,
-  ) {}
+  ) { this.homes = new RuntimeHomeMaterializer(dataDirectory) }
 
   get workspacePath(): string { return this.workspace }
 
   setWorkspace(path: string): void { this.workspace = path }
 
   cleanupUnusedHomes(capabilityHashes: string[]): void {
-    const root = join(this.dataDirectory, 'harness')
-    if (!existsSync(root)) return
-    const rootPath = realpathSync(root)
-    const protectedNames = new Set([
-      ...capabilityHashes.map((hash) => this.runtimeKey(hash).slice(0, 12)),
-      ...[...this.runtimes.keys()].map((key) => key.slice(0, 12)),
-    ])
-    for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
-      if (!entry.isDirectory() || !/^[a-f0-9]{12}$/.test(entry.name) || protectedNames.has(entry.name)) continue
-      const target = resolve(rootPath, entry.name)
-      try {
-        if (dirname(target) !== rootPath || dirname(realpathSync(target)) !== rootPath) continue
-        if (!existsSync(join(target, 'settings.yaml')) || !existsSync(join(target, 'capabilities.cordis.patch.yml'))) continue
-        rmSync(target, { recursive: true, force: true })
-      }
-      catch { /* Failed cleanup must not prevent the app from starting. */ }
+    this.homes.cleanupExpired(capabilityHashes, [...this.runtimes.keys()])
+  }
+
+  prepareRun(agent: Agent, permission: ChatPermission): RuntimeRequest {
+    const effective = { ...agent, skills: [...agent.skills], tools: permission === 'chat' ? []
+      : permission === 'workspace' ? agent.tools.filter((tool) => tool !== 'Shell') : [...agent.tools] }
+    Object.freeze(effective.skills)
+    Object.freeze(effective.tools)
+    const provider = this.providerSettings.getProvider(effective.provider)
+    const providers = provider ? [{ ...provider }] : []
+    if (effective.tools.includes('网页搜索') && effective.provider !== 'deepseek-official') {
+      const web = this.providerSettings.getProvider('deepseek-official')
+      if (web) providers.push({ ...web })
     }
+    const skills = resolveSelectedSkills(effective.skills, this.dataDirectory)
+    const runtime = getDshRuntimeInfo()
+    const identity = getRuntimeIdentity({ baseHash: getAgentCapabilityHash(effective), skillRevision: skillBundlesRevision(skills.map((skill) => skill.directory)),
+      workspace: this.workspace, permission, providerRevision: providerRuntimeRevision(providers, this.dataDirectory), dshVersion: runtime.version })
+    return Object.freeze({ agent: Object.freeze(effective), workspace: this.workspace, identity,
+      providers: Object.freeze(providers.map((value) => Object.freeze(value))),
+      skillIds: Object.freeze(skills.map((skill) => skill.id)), dshBin: runtime.dshBin })
   }
 
-  private runtimeKey(agentKey: string): string {
-    return this.workspace === process.cwd() && !agentKey.includes(':') ? agentKey
-      : createHash('sha256').update(agentKey).update(this.workspace).digest('hex')
-  }
-
-  capabilityHash(agent: Agent): string {
-    return getAgentCapabilityHash(agent, selectedSkillsRevision(agent.skills, this.dataDirectory))
+  capabilityHash(agent: Agent, permission: ChatPermission = 'chat'): string {
+    return this.prepareRun(agent, permission).identity.capabilityHash
   }
 
   status(): RuntimeStatus {
@@ -96,39 +96,31 @@ export class DeepSeekHarnessAdapter {
     }
   }
 
-  async run(agent: Agent, prompt: string, sessionId?: string, onText?: (text: string, kind: 'text' | 'reasoning') => void, attachments: ChatImageAttachment[] = []): Promise<{ text: string; reasoning?: string; sessionId?: string }> {
-    const provider = this.providerSettings.getProvider(agent.provider)
+  async run(agent: Agent, prompt: string, sessionId?: string, onText?: (text: string, kind: 'text' | 'reasoning') => void, attachments: ChatImageAttachment[] = [], request?: RuntimeRequest, freshSession = false): Promise<{ text: string; reasoning?: string; sessionId?: string }> {
+    const snapshot = request ?? this.prepareRun(agent, 'chat')
+    agent = snapshot.agent
+    const provider = snapshot.providers.find((value) => value.id === agent.provider)
     if (!provider) {
       return { text: this.demoResponse(agent, prompt), sessionId }
     }
 
-    const agentKey = this.capabilityHash(agent)
-    const key = this.runtimeKey(agentKey)
+    const key = snapshot.identity.key
     let entry = this.runtimes.get(key)
     if (!entry) {
-      const dshHome = join(this.dataDirectory, 'harness', key.slice(0, 12))
-      mkdirSync(dshHome, { recursive: true })
-      const configuredProviders = this.providerSettings.configuredProviders()
-      writeFileSync(join(dshHome, 'settings.yaml'), buildProviderSettingsYaml(configuredProviders))
-      const capabilityPatch = prepareAgentCapabilities(agent, this.dataDirectory, dshHome)
-      const environmentProviders = [provider]
-      if (agent.tools.includes('网页搜索') && provider.id !== 'deepseek-official') {
-        const webProvider = this.providerSettings.getProvider('deepseek-official')
-        if (webProvider) environmentProviders.push(webProvider)
-      }
+      const { dshHome, capabilityPatch } = this.homes.ensure(snapshot)
       entry = {
         harness: new DeepSeekHarness({
-          dshBin: getDshRuntimeInfo().dshBin,
+          dshBin: snapshot.dshBin,
           profile: 'sdk',
           patches: [capabilityPatch],
           provider: agent.provider,
           model: agent.model,
-          cwd: this.workspace,
-          processCwd: this.workspace,
+          cwd: snapshot.workspace,
+          processCwd: snapshot.workspace,
           dshHome,
           env: {
             ...systemEnvironment(),
-            ...providerEnvironment(environmentProviders),
+            ...providerEnvironment(snapshot.providers),
             DSH_HOME: dshHome,
             ELECTRON_RUN_AS_NODE: '1',
           },
@@ -141,6 +133,7 @@ export class DeepSeekHarnessAdapter {
         active: 0,
         activeAgents: new Map(),
         lastUsed: Date.now(),
+        sessions: new Set(),
       }
       this.runtimes.set(key, entry)
     }
@@ -154,6 +147,9 @@ export class DeepSeekHarnessAdapter {
     const trace: string[] = []
     let result
     try {
+      // A new SDK process cannot reliably resume even an existing on-disk session.
+      // Recover each context separately; unknown IDs otherwise create empty sessions.
+      if (request && sessionId && !freshSession && !entry.sessions.has(sessionId)) throw new SessionResumeUnsupportedError()
       const input = attachments.length > 0
         ? [{ type: 'text' as const, text: prompt }, ...attachments.map((attachment) => ({
             type: 'image' as const,
@@ -184,6 +180,7 @@ export class DeepSeekHarnessAdapter {
           }
         },
       })
+      entry.sessions.add(result.sessionId)
     } catch (error) {
       if (error instanceof JsonRpcResponseError && /^session ".+" already exists$/.test(error.message)) {
         throw new SessionResumeUnsupportedError()
@@ -195,6 +192,8 @@ export class DeepSeekHarnessAdapter {
       if (agentRuns === 0) entry.activeAgents.delete(agent.id)
       else entry.activeAgents.set(agent.id, agentRuns)
       entry.lastUsed = Date.now()
+      try { this.homes.markLastUsed(key) }
+      catch { /* Timestamp maintenance must not replace a completed reply. */ }
       await this.evictIdle()
     }
     // DSH may emit intermediate assistant text before the final reply. Persist the last text
@@ -244,7 +243,7 @@ export class DeepSeekHarnessAdapter {
   }
 }
 
-function providerEnvironment(providers: ModelProviderRuntimeConfig[]): Record<string, string> {
+function providerEnvironment(providers: readonly ModelProviderRuntimeConfig[]): Record<string, string> {
   return Object.fromEntries(providers.map((provider) => [
     provider.id === 'custom' ? 'MINDMESH_CUSTOM_API_KEY' : getModelProviderDefinition(provider.id)?.environmentKey,
     provider.apiKey,
@@ -256,53 +255,4 @@ function systemEnvironment(): Record<string, string> {
     (entry): entry is [string, string] => entry[1] !== undefined
       && HARNESS_SYSTEM_ENVIRONMENT.has(entry[0].toUpperCase()),
   ))
-}
-
-export function buildProviderSettingsYaml(providers: ModelProviderRuntimeConfig[]): string {
-  const lines = ['llm-pi-ai:', '  providers:']
-  for (const provider of providers) {
-    if (provider.id === 'deepseek-official') continue
-    if (provider.id === 'custom') {
-      lines.push(
-        '    custom:',
-        `      displayName: ${JSON.stringify(provider.name)}`,
-        '      apiKeyEnv: MINDMESH_CUSTOM_API_KEY',
-        '      api: openai-completions',
-        `      baseURL: ${JSON.stringify(provider.baseUrl)}`,
-        '      models:',
-        `        - id: ${JSON.stringify(provider.model)}`,
-        `          name: ${JSON.stringify(provider.model)}`,
-        '          contextWindow: 131072',
-        '          maxTokens: 8192',
-      )
-      continue
-    }
-    const environmentKey = {
-      'moonshotai-cn': 'MOONSHOT_API_KEY',
-      openai: 'OPENAI_API_KEY',
-      anthropic: 'ANTHROPIC_API_KEY',
-    }[provider.id as 'moonshotai-cn' | 'openai' | 'anthropic']
-    if (environmentKey) {
-      lines.push(`    ${provider.id}:`, `      apiKeyEnv: ${environmentKey}`)
-      continue
-    }
-    const definition = getModelProviderDefinition(provider.id)
-    const models = MODEL_CATALOG.filter((model) => model.provider === provider.id)
-    lines.push(
-      `    ${provider.id}:`,
-      `      displayName: ${JSON.stringify(provider.name)}`,
-      `      apiKeyEnv: ${definition?.environmentKey}`,
-      '      api: openai-completions',
-      `      baseURL: ${JSON.stringify(definition?.baseUrl)}`,
-      '      models:',
-      ...models.flatMap((model) => [
-        `        - id: ${JSON.stringify(model.id)}`,
-        `          name: ${JSON.stringify(model.name)}`,
-        `          contextWindow: ${model.contextWindow ?? 131072}`,
-        '          maxTokens: 8192',
-      ]),
-    )
-  }
-  if (lines.length === 2) return 'llm-pi-ai:\n  providers: {}\n'
-  return `${lines.join('\n')}\n`
 }

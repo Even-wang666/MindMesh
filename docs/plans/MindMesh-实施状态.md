@@ -1,8 +1,11 @@
 # MindMesh 实施状态
 
-更新日期：2026-09-29
+更新日期：2026-10-04
 
 ## 已完成
+
+- 下一阶段 PR 1A 基线与 PR 1B DSH `0.2.0-rc.2` 升级已完成，详见 `docs/migration/` 验收记录。
+- PR 2 Runtime V2：显式权限与 schema/DSH/Skill/Provider/workspace revision、冻结运行快照、新 namespace 的独立 Home 物化、逐 Session 历史恢复、七天磁盘保留和 Electron 单实例锁。详见 [Runtime V2 验收与迁移](../migration/runtime-v2-2026-10.md)。
 
 - 项目内 Conda Python 3.11 环境。
 - DeepSeek Harness 源码浅克隆与精确提交记录。
@@ -47,6 +50,8 @@
 - CI 保留 Ubuntu 类型检查、测试和构建，并增加 Windows unpacked 打包依赖检查与无密钥安全冒烟。
 
 ## 下一阶段
+
+- 按执行规划进入 PR 3 Supervisor：acquire/release、starting 去重、stale/retire 和定向回收，替换 generation 变化时的 shutdownAll。
 
 - 使用各服务的独立测试凭据继续验收 OpenAI、Anthropic、MiniMax、智谱、通义千问、阶跃星辰及自定义 OpenAI 兼容服务；当前 CI 已纳入无密钥安全冒烟，带密钥的模型请求仍由发布前人工验收。
 - SDK 暂无可供桌面应用直接列举工具 Registry 的接口；工具页当前展示受 MindMesh 支持的七项工具，实际启用状态由 Harness 补丁控制。

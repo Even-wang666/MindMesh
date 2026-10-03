@@ -116,7 +116,16 @@ async function pickDirectory(): Promise<string | null> {
   return result.canceled || !result.filePaths[0] ? null : result.filePaths[0]
 }
 
+const primaryInstance = app.requestSingleInstanceLock()
+if (!primaryInstance) app.quit()
+app.on('second-instance', () => {
+  if (mainWindow?.isMinimized()) mainWindow.restore()
+  mainWindow?.show()
+  mainWindow?.focus()
+})
+
 app.whenReady().then(() => {
+  if (!primaryInstance) return
   app.setAppUserModelId('com.mindmesh.desktop')
   const dataDir = join(app.getPath('userData'), 'mindmesh-data')
   const bundledSkills = app.isPackaged ? join(process.resourcesPath, 'skills') : join(process.cwd(), 'resources', 'skills')

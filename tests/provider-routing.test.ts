@@ -49,7 +49,8 @@ describe('provider routing', () => {
       expect(launches[0].env).not.toHaveProperty('MINDMESH_TEST_CREDENTIAL')
       expect(launches[1].env).not.toHaveProperty('MINDMESH_TEST_CREDENTIAL')
 
-      await adapter.run({ ...base, provider: 'openai', model: 'gpt-4.1', tools: ['网页搜索'] }, '搜索网页')
+      const webAgent = { ...base, provider: 'openai', model: 'gpt-4.1', tools: ['网页搜索'] }
+      await adapter.run(webAgent, '搜索网页', undefined, undefined, [], adapter.prepareRun(webAgent, 'full'))
       expect(launches[2].env).toMatchObject({
         OPENAI_API_KEY: 'openai-secret',
         DEEPSEEK_API_KEY: 'deepseek-secret',

@@ -95,6 +95,19 @@ async function runRound(round) {
       return reply.result.value
     }
     await until(() => evaluate('Boolean(window.mindmesh?.chat && document.querySelector(".composer textarea"))'))
+    if (process.env.MINDMESH_E2E_SECOND_INSTANCE === '1') {
+      const duplicateArgs = [`--user-data-dir=${userData}`]
+      const duplicate = spawn(executable, process.env.MINDMESH_E2E_EXE ? duplicateArgs : ['.', ...duplicateArgs], {
+        cwd: workspace, env, windowsHide: true, stdio: 'ignore',
+      })
+      try {
+        await until(() => duplicate.exitCode !== null, 20_000)
+        assert.equal(duplicate.exitCode, 0)
+        assert.equal(app.exitCode, null)
+        assert.equal(await evaluate('Boolean(window.mindmesh?.chat)'), true)
+        console.log('Electron duplicate instance exits; primary remains available: OK')
+      } finally { if (duplicate.exitCode === null) duplicate.kill() }
+    }
     if (securityOnly) {
       const policy = await evaluate('document.querySelector(\'meta[http-equiv="Content-Security-Policy"]\')?.content')
       assert.match(policy, /script-src 'self'/)

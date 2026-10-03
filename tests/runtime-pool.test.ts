@@ -214,7 +214,7 @@ describe('Harness runtime pool', () => {
     }
   })
 
-  it('deletes only unreferenced app-owned homes after restart', async () => {
+  it('retains homes for seven days and protects session references and legacy homes', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-pool-'))
     const db = new MindMeshDatabase(join(directory, 'mindmesh.sqlite'))
     const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
@@ -223,10 +223,14 @@ describe('Harness runtime pool', () => {
       await adapter.run(agent('orphan'), 'second')
       await adapter.shutdownAll()
       const [keptHome, orphanHome] = state.launched
-      db.getOrCreateRuntimeSession('private:kept', agent('kept'), 'session', getAgentCapabilityHash(agent('kept')))
+      db.getOrCreateRuntimeSession('private:kept', agent('kept'), 'session', adapter.capabilityHash(agent('kept')))
       mkdirSync(join(directory, 'harness', 'manual'), { recursive: true })
       mkdirSync(join(directory, 'harness', 'aaaaaaaaaaaa'), { recursive: true })
 
+      adapter.cleanupUnusedHomes(db.referencedCapabilityHashes())
+      expect(existsSync(orphanHome)).toBe(true)
+      vi.useFakeTimers()
+      vi.setSystemTime(Date.now() + 8 * 24 * 60 * 60_000)
       adapter.cleanupUnusedHomes(db.referencedCapabilityHashes())
 
       expect(existsSync(keptHome)).toBe(true)
@@ -234,6 +238,7 @@ describe('Harness runtime pool', () => {
       expect(readdirSync(join(directory, 'harness'))).toContain('manual')
       expect(readdirSync(join(directory, 'harness'))).toContain('aaaaaaaaaaaa')
     } finally {
+      vi.useRealTimers()
       await adapter.shutdownAll()
       db.close()
       if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })

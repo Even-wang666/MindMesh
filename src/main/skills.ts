@@ -200,14 +200,14 @@ export function resolveSelectedSkills(values: string[], dataDirectory: string): 
 }
 
 export function selectedSkillsRevision(values: string[], dataDirectory: string): string {
-  return skillCatalogRevision(resolveSelectedSkills(values, dataDirectory))
+  return skillBundlesRevision(resolveSelectedSkills(values, dataDirectory).map((skill) => skill.directory))
 }
 
-function skillCatalogRevision(skills: SkillCatalogItem[]): string {
-  if (skills.length === 0) return ''
+export function skillBundlesRevision(directories: string[]): string {
+  if (directories.length === 0) return ''
   const hash = createHash('sha256')
-  for (const skill of [...skills].sort((left, right) => left.id.localeCompare(right.id))) {
-    hash.update(skill.id).update(hashDirectory(skill.directory))
+  for (const directory of [...directories].sort((left, right) => basename(left).localeCompare(basename(right)))) {
+    hash.update(basename(directory)).update(hashDirectory(directory))
   }
   return hash.digest('hex')
 }

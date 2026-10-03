@@ -8,6 +8,7 @@ import { validateChatContent } from '../shared/chat-content'
 import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter, getAgentCapabilityHash, SessionResumeUnsupportedError } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
+import type { RuntimeRequest } from './runtime-revision'
 
 const SHUTDOWN_TIMEOUT_MS = 15_000
 
@@ -140,7 +141,7 @@ export class MindMeshServices {
     const promptContent = content.trim() || '请分析附带的图片。'
     const contextKey = `private:${agentId}`
     let session = this.db.getOrCreateRuntimeSession(
-      contextKey, runAgent, `private-${agentId}`, this.capabilityHash(runAgent),
+      contextKey, runAgent, `private-${agentId}`, getAgentCapabilityHash(runAgent),
     )
     // persona 保持会话快照语义；tools 与 reasoningEffort 是活能力，跟随最新 Agent 配置，
     // 变化时经能力哈希比较触发会话重建（思考强度是 Harness 实例级参数，必须重建才生效）。
@@ -151,7 +152,9 @@ export class MindMeshServices {
       sessionRunAgent = { ...sessionRunAgent, provider: runAgent.provider, model: runAgent.model }
     }
     let restarted = false
-    const sessionRunCapabilityHash = this.capabilityHash(sessionRunAgent)
+    sessionRunAgent = { ...sessionRunAgent, name: agent.name, role: agent.role }
+    const runtimeRequest = this.prepareRuntime(sessionRunAgent, options?.permission ?? 'chat')
+    const sessionRunCapabilityHash = runtimeRequest?.identity.capabilityHash ?? this.capabilityHash(sessionRunAgent)
     if (session.capabilityHash !== sessionRunCapabilityHash
       || (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model))) {
       session = this.db.restartRuntimeSession(
@@ -168,7 +171,7 @@ export class MindMeshServices {
     try {
       result = await this.runAgent(sessionAgent, buildPrivatePrompt(sessionAgent, promptContent, restarted ? history : []),
         session.harnessSessionId, 'private', agentId, requestId,
-        () => buildPrivatePrompt(sessionAgent, promptContent, history), images)
+        () => buildPrivatePrompt(sessionAgent, promptContent, history), images, runtimeRequest)
     } catch (error) {
       if (this.shuttingDown) return []
       if (error instanceof ChatStoppedError) {
@@ -229,7 +232,7 @@ export class MindMeshServices {
       const agent = members.find((item) => item.id === runAgent.id)!
       const contextKey = `space:${spaceId}:${agent.id}`
       let session = this.db.getOrCreateRuntimeSession(
-        contextKey, runAgent, `space-${spaceId}-${agent.id}`, this.capabilityHash(runAgent),
+        contextKey, runAgent, `space-${spaceId}-${agent.id}`, getAgentCapabilityHash(runAgent),
         this.db.lastAgentMessageSequence(spaceId, agent.id),
       )
       let sessionRunAgent = resolveRunAgent(
@@ -238,7 +241,9 @@ export class MindMeshServices {
       if (images.length > 0 && !supportsImageInput(sessionRunAgent.provider, sessionRunAgent.model)) {
         sessionRunAgent = { ...sessionRunAgent, provider: runAgent.provider, model: runAgent.model }
       }
-      const sessionRunCapabilityHash = this.capabilityHash(sessionRunAgent)
+      sessionRunAgent = { ...sessionRunAgent, name: agent.name, role: agent.role }
+      const runtimeRequest = this.prepareRuntime(sessionRunAgent, options?.permission ?? 'chat')
+      const sessionRunCapabilityHash = runtimeRequest?.identity.capabilityHash ?? this.capabilityHash(sessionRunAgent)
       if (session.capabilityHash !== sessionRunCapabilityHash
         || (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model))) {
         session = this.db.restartRuntimeSession(
@@ -255,7 +260,7 @@ export class MindMeshServices {
       try {
         result = await this.runAgent(sessionAgent, prompt, session.harnessSessionId,
           'space', spaceId, crypto.randomUUID(),
-          () => buildSpacePrompt(sessionAgent, space, this.db.listMessages('space', spaceId)), images)
+          () => buildSpacePrompt(sessionAgent, space, this.db.listMessages('space', spaceId)), images, runtimeRequest)
       } catch (error) {
         if (this.shuttingDown) break
         if (error instanceof ChatStoppedError) {
@@ -364,10 +369,14 @@ export class MindMeshServices {
       : getAgentCapabilityHash(agent)
   }
 
+  private prepareRuntime(agent: Agent, permission: Parameters<DeepSeekHarnessAdapter['prepareRun']>[1]): RuntimeRequest | undefined {
+    return typeof this.harness.prepareRun === 'function' ? this.harness.prepareRun(agent, permission) : undefined
+  }
+
   private async runAgent(
     agent: Parameters<DeepSeekHarnessAdapter['run']>[0], prompt: string, sessionId: string,
     scope: Message['scope'], scopeId: string, requestId: string, recoveryPrompt: () => string,
-    attachments: ChatImageAttachment[] = [],
+    attachments: ChatImageAttachment[] = [], runtimeRequest?: RuntimeRequest,
   ): ReturnType<DeepSeekHarnessAdapter['run']> {
     let streamed = ''
     let streamedReasoning = ''
@@ -395,12 +404,15 @@ export class MindMeshServices {
       return stopAttempt
     }
     this.activeStops.set(stopKey, stop)
-    const run = (input: string, id: string) => this.harness.run(agent, input, id, (text, kind) => {
+    const onText = (text: string, kind: 'text' | 'reasoning') => {
       if (stopRequested) return
       if (kind === 'reasoning') streamedReasoning += text
       else streamed += text
       this.emitText(requestId, scope, scopeId, agent.id, text, kind)
-    }, attachments)
+    }
+    const run = (input: string, id: string, freshSession = false) => runtimeRequest
+      ? this.harness.run(agent, input, id, onText, attachments, runtimeRequest, freshSession)
+      : this.harness.run(agent, input, id, onText, attachments)
     let result
     try {
       result = await run(prompt, sessionId)
@@ -411,7 +423,7 @@ export class MindMeshServices {
       streamed = ''
       streamedReasoning = ''
       try {
-        result = await run(recoveryPrompt(), `session-${crypto.randomUUID()}`)
+        result = await run(recoveryPrompt(), `session-${crypto.randomUUID()}`, true)
       } catch (recoveryError) {
         if (stopRequested) throw new ChatStoppedError(streamed, streamedReasoning)
         throw recoveryError
