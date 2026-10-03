@@ -8,6 +8,7 @@ import type { ModelProviderSettings } from '../src/main/model-provider-settings'
 const launches = vi.hoisted(() => [] as Array<Record<string, unknown>>)
 vi.mock('@deepseek-ai/dsh-sdk-client', () => ({
   DeepSeekHarness: class {
+    async start() {}
     constructor(options: Record<string, unknown>) { launches.push(options) }
     async run() { return { finalResponse: '完成', sessionId: 'session' } }
     async close() {}
@@ -56,7 +57,7 @@ describe('provider routing', () => {
         DEEPSEEK_API_KEY: 'deepseek-secret',
       })
       const selected = join(directory, 'selected')
-      await adapter.shutdownAll()
+      await adapter.invalidateWorkspace()
       adapter.setWorkspace(selected)
       await adapter.run(base, '新目录')
       expect(launches[3]).toMatchObject({ cwd: selected, processCwd: selected })

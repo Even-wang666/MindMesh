@@ -558,11 +558,12 @@ export class MindMeshDatabase {
     return this.getOrCreateRuntimeSession(contextKey, agent, sessionId, capabilityHash, initialSequence)
   }
 
-  saveRuntimeSessionProgress(contextKey: string, sessionId: string, sequence: number): void {
+  saveRuntimeSessionProgress(contextKey: string, sessionId: string, sequence: number, expected?: RuntimeSession): void {
     this.db.prepare(`
       UPDATE runtime_sessions SET harnessSessionId = ?, lastConsumedMessageSequence = ?, updatedAt = ?
-      WHERE contextKey = ?
-    `).run(sessionId, sequence, new Date().toISOString(), contextKey)
+      WHERE contextKey = ? AND (? IS NULL OR (capabilityHash = ? AND harnessSessionId = ?))
+    `).run(sessionId, sequence, new Date().toISOString(), contextKey,
+      expected?.capabilityHash ?? null, expected?.capabilityHash ?? null, expected?.harnessSessionId ?? null)
   }
 
   referencedCapabilityHashes(): string[] {

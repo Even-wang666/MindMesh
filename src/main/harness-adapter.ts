@@ -1,34 +1,17 @@
-import { DeepSeekHarness, JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
-import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Agent, ChatImageAttachment, ChatPermission, RuntimeStatus } from '../shared/contracts'
-import type { ModelProviderRuntimeConfig } from './model-provider-settings'
 import { ModelProviderSettings } from './model-provider-settings'
-import { getModelProviderDefinition } from '../shared/model-providers'
 import { getAgentCapabilityHash } from './agent-capability'
 import { resolveSelectedSkills, skillBundlesRevision } from './skills'
 import { getDshRuntimeInfo } from './dsh-runtime'
 import { getRuntimeIdentity, providerRuntimeRevision, type RuntimeRequest } from './runtime-revision'
-import { RuntimeHomeMaterializer } from './runtime-home-materializer'
+import { RuntimeSupervisor, type RuntimeOwner } from './runtime-supervisor'
+import { randomUUID } from 'node:crypto'
+import { runtimeFailureDetail } from './runtime-errors'
 
 export { getAgentCapabilityHash } from './agent-capability'
 export { buildProviderSettingsYaml } from './runtime-home-materializer'
-
-const MAX_IDLE_RUNTIMES = 8
-const IDLE_RUNTIME_TTL_MS = 10 * 60_000
-const HARNESS_SYSTEM_ENVIRONMENT = new Set([
-  'APPDATA', 'COMMONPROGRAMFILES', 'COMMONPROGRAMFILES(X86)', 'COMSPEC', 'HOME', 'HOMEDRIVE', 'HOMEPATH',
-  'LOCALAPPDATA', 'OS', 'PATH', 'PATHEXT', 'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)',
-  'PSMODULEPATH', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'TMP', 'USERPROFILE', 'WINDIR',
-])
-
-type RuntimeEntry = {
-  harness: DeepSeekHarness
-  active: number
-  activeAgents: Map<string, number>
-  lastUsed: number
-  sessions: Set<string>
-}
 
 export class SessionResumeUnsupportedError extends Error {
   constructor() {
@@ -37,21 +20,20 @@ export class SessionResumeUnsupportedError extends Error {
 }
 
 export class DeepSeekHarnessAdapter {
-  private readonly runtimes = new Map<string, RuntimeEntry>()
-  private readonly homes: RuntimeHomeMaterializer
+  private readonly supervisor: RuntimeSupervisor
 
   constructor(
     private workspace: string,
     private readonly dataDirectory: string,
     private readonly providerSettings: ModelProviderSettings,
-  ) { this.homes = new RuntimeHomeMaterializer(dataDirectory) }
+  ) { this.supervisor = new RuntimeSupervisor(dataDirectory) }
 
   get workspacePath(): string { return this.workspace }
 
   setWorkspace(path: string): void { this.workspace = path }
 
   cleanupUnusedHomes(capabilityHashes: string[]): void {
-    this.homes.cleanupExpired(capabilityHashes, [...this.runtimes.keys()])
+    this.supervisor.cleanupHomes(capabilityHashes)
   }
 
   prepareRun(agent: Agent, permission: ChatPermission): RuntimeRequest {
@@ -80,6 +62,10 @@ export class DeepSeekHarnessAdapter {
 
   status(): RuntimeStatus {
     const dshVersion = getDshRuntimeInfo().version
+    const diagnostics = this.supervisor.listStatus()
+    const failed = diagnostics.find((entry) => entry.state === 'failed')
+    if (failed) return { state: 'error', dshVersion, label: '运行异常',
+      detail: runtimeFailureDetail(failed.lastError?.kind ?? 'unknown') }
     if (this.providerSettings.configuredProviders().length === 0) {
       return {
         state: 'demo',
@@ -89,14 +75,14 @@ export class DeepSeekHarnessAdapter {
       }
     }
     return {
-      state: this.runtimes.size > 0 ? 'running' : 'ready',
+      state: diagnostics.length > 0 ? 'running' : 'ready',
       dshVersion,
-      label: this.runtimes.size > 0 ? '正常运行' : '准备就绪',
-      detail: this.runtimes.size > 0 ? '模型服务正在响应对话。' : '模型服务已连接，可以开始对话。',
+      label: diagnostics.length > 0 ? '正常运行' : '准备就绪',
+      detail: diagnostics.length > 0 ? '模型服务正在响应对话。' : '模型服务已连接，可以开始对话。',
     }
   }
 
-  async run(agent: Agent, prompt: string, sessionId?: string, onText?: (text: string, kind: 'text' | 'reasoning') => void, attachments: ChatImageAttachment[] = [], request?: RuntimeRequest, freshSession = false): Promise<{ text: string; reasoning?: string; sessionId?: string }> {
+  async run(agent: Agent, prompt: string, sessionId?: string, onText?: (text: string, kind: 'text' | 'reasoning') => void, attachments: ChatImageAttachment[] = [], request?: RuntimeRequest, freshSession = false, runOptions?: Omit<RuntimeOwner, 'agentId'> & { recoveryPrompt: () => string }): Promise<{ text: string; reasoning?: string; sessionId?: string }> {
     const snapshot = request ?? this.prepareRun(agent, 'chat')
     agent = snapshot.agent
     const provider = snapshot.providers.find((value) => value.id === agent.provider)
@@ -104,61 +90,31 @@ export class DeepSeekHarnessAdapter {
       return { text: this.demoResponse(agent, prompt), sessionId }
     }
 
-    const key = snapshot.identity.key
-    let entry = this.runtimes.get(key)
-    if (!entry) {
-      const { dshHome, capabilityPatch } = this.homes.ensure(snapshot)
-      entry = {
-        harness: new DeepSeekHarness({
-          dshBin: snapshot.dshBin,
-          profile: 'sdk',
-          patches: [capabilityPatch],
-          provider: agent.provider,
-          model: agent.model,
-          cwd: snapshot.workspace,
-          processCwd: snapshot.workspace,
-          dshHome,
-          env: {
-            ...systemEnvironment(),
-            ...providerEnvironment(snapshot.providers),
-            DSH_HOME: dshHome,
-            ELECTRON_RUN_AS_NODE: '1',
-          },
-          maxTokens: 8192,
-          // 思考强度是 harness 实例级构造参数：档位变化会改变能力哈希，
-          // 从而落到独立的运行池条目（新 dshHome/新会话），无需额外失效逻辑。
-          ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort as ReasoningEffortId } : {}),
-          initializeTimeoutMs: 30_000,
-        }),
-        active: 0,
-        activeAgents: new Map(),
-        lastUsed: Date.now(),
-        sessions: new Set(),
-      }
-      this.runtimes.set(key, entry)
-    }
-    entry.active += 1
-    entry.activeAgents.set(agent.id, (entry.activeAgents.get(agent.id) ?? 0) + 1)
-    entry.lastUsed = Date.now()
-    this.runtimes.delete(key)
-    this.runtimes.set(key, entry)
+    const lease = await this.supervisor.acquire(snapshot, { agentId: agent.id,
+      contextKey: runOptions?.contextKey ?? agent.id, requestId: runOptions?.requestId ?? randomUUID() })
     const reasoning: string[] = []
     const assistantTexts: string[] = []
     const trace: string[] = []
     let result
+    let failure: unknown
     try {
       // A new SDK process cannot reliably resume even an existing on-disk session.
       // Recover each context separately; unknown IDs otherwise create empty sessions.
-      if (request && sessionId && !freshSession && !entry.sessions.has(sessionId)) throw new SessionResumeUnsupportedError()
-      const input = attachments.length > 0
-        ? [{ type: 'text' as const, text: prompt }, ...attachments.map((attachment) => ({
+      if (request && sessionId && !freshSession && !lease.sessions.has(sessionId)) {
+        if (!runOptions) throw new SessionResumeUnsupportedError()
+        prompt = runOptions.recoveryPrompt()
+        sessionId = `session-${randomUUID()}`
+      }
+      const invoke = (text: string, id?: string) => {
+        const input = attachments.length > 0
+        ? [{ type: 'text' as const, text }, ...attachments.map((attachment) => ({
             type: 'image' as const,
             data: attachment.data,
             mimeType: attachment.mediaType,
           }))]
-        : prompt
-      result = await entry.harness.run(input, {
-        sessionId,
+        : text
+        return lease.harness.run(input, {
+        sessionId: id,
         onNotification: (notification) => {
           if (notification.method !== 'session.event') return
           const event = notification.params.event as SessionEvent
@@ -179,22 +135,23 @@ export class DeepSeekHarnessAdapter {
             trace.push(text)
           }
         },
-      })
-      entry.sessions.add(result.sessionId)
+        })
+      }
+      try { result = await invoke(prompt, sessionId) }
+      catch (error) {
+        if (!runOptions || !(error instanceof JsonRpcResponseError) || !/^session ".+" already exists$/.test(error.message)) throw error
+        reasoning.length = assistantTexts.length = trace.length = 0
+        result = await invoke(runOptions.recoveryPrompt(), `session-${randomUUID()}`)
+      }
+      lease.sessions.add(result.sessionId)
     } catch (error) {
+      if (!(error instanceof SessionResumeUnsupportedError)) failure = error
       if (error instanceof JsonRpcResponseError && /^session ".+" already exists$/.test(error.message)) {
         throw new SessionResumeUnsupportedError()
       }
       throw error
     } finally {
-      entry.active -= 1
-      const agentRuns = (entry.activeAgents.get(agent.id) ?? 1) - 1
-      if (agentRuns === 0) entry.activeAgents.delete(agent.id)
-      else entry.activeAgents.set(agent.id, agentRuns)
-      entry.lastUsed = Date.now()
-      try { this.homes.markLastUsed(key) }
-      catch { /* Timestamp maintenance must not replace a completed reply. */ }
-      await this.evictIdle()
+      await lease.release(failure)
     }
     // DSH may emit intermediate assistant text before the final reply. Persist the last text
     // segment as the answer and keep every earlier segment in the reasoning trace. This pairs
@@ -208,51 +165,19 @@ export class DeepSeekHarnessAdapter {
     }
   }
 
-  private async evictIdle(): Promise<void> {
-    const now = Date.now()
-    for (const [key, entry] of this.runtimes) {
-      if (entry.active) continue
-      if (this.runtimes.size <= MAX_IDLE_RUNTIMES && now - entry.lastUsed < IDLE_RUNTIME_TTL_MS) continue
-      this.runtimes.delete(key)
-      try { await entry.harness.close() }
-      catch { /* Cleanup must not replace a completed reply. */ }
-    }
-  }
+  runtimeDiagnostics() { return this.supervisor.listStatus() }
+  invalidateProvider(id: string): Promise<void> { return this.supervisor.invalidateProvider(id) }
+  invalidateWorkspace(): Promise<void> { return this.supervisor.invalidateWorkspace() }
+  forgetAgent(id: string): Promise<void> { return this.supervisor.forgetOwner(id) }
+  forgetSpace(id: string): Promise<void> { return this.supervisor.forgetOwner(undefined, `space:${id}:`) }
 
-  /** The SDK has no per-turn cancel method, so stopping a turn closes its owned runtime. */
-  async stop(agent: Agent): Promise<boolean> {
-    const ownedRuntimes = [...this.runtimes.entries()].filter(([, candidate]) =>
-      candidate.active === 1 && candidate.activeAgents.get(agent.id) === 1)
-    /* A runtime can be pooled by capability. Closing it is safe only when this is its sole turn. */
-    if (ownedRuntimes.length !== 1) return false
-    const [key, entry] = ownedRuntimes[0]
-    this.runtimes.delete(key)
-    await entry.harness.close()
-    return true
-  }
+  /** The SDK cannot cancel one shared turn; only close a sole matching lease. */
+  stop(agent: Agent, requestId?: string): Promise<boolean> { return this.supervisor.stop(agent.id, requestId) }
 
   private demoResponse(agent: Agent, prompt: string): string {
     const lastLine = prompt.split('\n').filter(Boolean).at(-1)?.replace(/^用户：/, '') ?? '你的问题'
     return `我是 ${agent.name}，当前处于本地演示模式。\n\n我已经收到：${lastLine}\n\n配置该智能体对应的模型服务后，这里会由 ${agent.model} 通过统一 Harness Runtime 返回真实结果。`
   }
 
-  async shutdownAll(): Promise<void> {
-    const entries = [...this.runtimes.values()]
-    this.runtimes.clear()
-    await Promise.allSettled(entries.map((entry) => entry.harness.close()))
-  }
-}
-
-function providerEnvironment(providers: readonly ModelProviderRuntimeConfig[]): Record<string, string> {
-  return Object.fromEntries(providers.map((provider) => [
-    provider.id === 'custom' ? 'MINDMESH_CUSTOM_API_KEY' : getModelProviderDefinition(provider.id)?.environmentKey,
-    provider.apiKey,
-  ]).filter((entry): entry is [string, string] => Boolean(entry[0])))
-}
-
-function systemEnvironment(): Record<string, string> {
-  return Object.fromEntries(Object.entries(process.env).filter(
-    (entry): entry is [string, string] => entry[1] !== undefined
-      && HARNESS_SYSTEM_ENVIRONMENT.has(entry[0].toUpperCase()),
-  ))
+  shutdownAll(): Promise<void> { return this.supervisor.shutdownAll() }
 }

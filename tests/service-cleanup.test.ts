@@ -8,6 +8,9 @@ function setup() {
   const db = new MindMeshDatabase(':memory:')
   const harness = {
     shutdownAll: vi.fn(async () => undefined),
+    forgetAgent: vi.fn(async () => undefined),
+    forgetSpace: vi.fn(async () => undefined),
+    invalidateWorkspace: vi.fn(async () => undefined),
     cleanupUnusedHomes: vi.fn(),
     setWorkspace: vi.fn(),
     status: vi.fn(() => ({ state: 'ready', label: '', detail: '' })),
@@ -24,7 +27,8 @@ describe('orphan Harness home cleanup', () => {
       db.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'session', getAgentCapabilityHash(agent))
       await service.removeAgent(agent.id)
       expect(db.referencedCapabilityHashes()).toEqual([])
-      expect(harness.shutdownAll).toHaveBeenCalledOnce()
+      expect(harness.shutdownAll).not.toHaveBeenCalled()
+      expect(harness.forgetAgent).toHaveBeenCalledWith(agent.id)
       expect(harness.cleanupUnusedHomes).toHaveBeenCalledWith([])
     } finally { db.close() }
   })
@@ -37,7 +41,8 @@ describe('orphan Harness home cleanup', () => {
       db.getOrCreateRuntimeSession(`space:${space.id}:${agent.id}`, agent, 'session', getAgentCapabilityHash(agent))
       await service.removeSpace(space.id)
       expect(db.referencedCapabilityHashes()).toEqual([])
-      expect(harness.shutdownAll).toHaveBeenCalledOnce()
+      expect(harness.shutdownAll).not.toHaveBeenCalled()
+      expect(harness.forgetSpace).toHaveBeenCalledWith(space.id)
       expect(harness.cleanupUnusedHomes).toHaveBeenCalledWith([])
     } finally { db.close() }
   })

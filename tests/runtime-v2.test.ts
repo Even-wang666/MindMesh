@@ -15,6 +15,7 @@ const launches = vi.hoisted(() => [] as { dshHome: string; env: Record<string, s
 const prompts = vi.hoisted(() => [] as string[])
 vi.mock('@deepseek-ai/dsh-sdk-client', () => ({
   DeepSeekHarness: class {
+    async start() {}
     constructor(options: { dshHome: string; env: Record<string, string> }) { launches.push(options) }
     async run(prompt: string, options: { sessionId: string }) {
       prompts.push(prompt)
@@ -165,7 +166,7 @@ describe('Runtime V2 identity', () => {
       const space = services.createSpace({ name: 'Test', description: '', context: '', memberIds: [member.id] })
       await services.sendSpace(space.id, `@${member.name} space remembered`)
       const before = db.getOrCreateRuntimeSession(`private:${member.id}`, member, 'unused', adapter.capabilityHash(member))
-      await adapter.shutdownAll()
+      await adapter.invalidateWorkspace()
       const root = resolve(directory, 'runtime-v2')
       for (const entry of readdirSync(root)) {
         if (/^[a-f0-9]{64}$/.test(entry)) {

@@ -6,6 +6,7 @@
 
 - 下一阶段 PR 1A 基线与 PR 1B DSH `0.2.0-rc.2` 升级已完成，详见 `docs/migration/` 验收记录。
 - PR 2 Runtime V2：显式权限与 schema/DSH/Skill/Provider/workspace revision、冻结运行快照、新 namespace 的独立 Home 物化、逐 Session 历史恢复、七天磁盘保留和 Electron 单实例锁。详见 [Runtime V2 验收与迁移](../migration/runtime-v2-2026-10.md)。
+- PR 3 Runtime Supervisor：starting 去重、acquire/release、stale/retire、按 Provider/context/request 定向回收、安全错误诊断及 Session 条件写回。详见 [Supervisor 验收](../migration/runtime-supervisor-2026-10.md)。
 
 - 项目内 Conda Python 3.11 环境。
 - DeepSeek Harness 源码浅克隆与精确提交记录。
@@ -41,7 +42,7 @@
 - Skill 页面从本地技能目录读取已安装的 `SKILL.md`；Agent 选择的技能被复制到独立 Harness 技能根目录，所选工具通过 SDK 启动补丁启用，未选中的内置工具关闭。
 - 新增脱敏运行错误 JSONL 日志，仅记录时间、范围、Agent ID、已知错误类型和安全代码，不记录提示词、原始错误消息或密钥。
 - 新增跨 Space／私聊隔离、双 Provider 启动路由、能力补丁与删除范围测试。真实 DeepSeek SDK 已使用选中的“文件”工具读取随机标记，并从 Skill Registry 加载自定义技能返回技能正文中的隐藏标记；Windows unpacked 包的真实对话及 Space 删除界面通过，运行依赖检查缺失 0 项。
-- 设置页可通过系统文件夹选择器指定 Agent 工作目录，路径保存于 SQLite；切换目录会关闭旧 Harness 进程并重建运行会话，聊天消息保留。真实 DeepSeek 文件工具已在指定临时目录完成读取、创建和写入；选中的 Shell 工具也通过 PowerShell 读取了随机标记文件。Electron 界面冒烟覆盖设置入口。
+- 设置页可通过系统文件夹选择器指定 Agent 工作目录，路径保存于 SQLite；PR 3 起切换目录会使旧实例 stale，在途请求完成后回收，后续请求使用新 Session，聊天消息保留。真实 DeepSeek 文件工具已在指定临时目录完成读取、创建和写入；选中的 Shell 工具也通过 PowerShell 读取了随机标记文件。Electron 界面冒烟覆盖设置入口。
 - 模型服务设置支持 DeepSeek、Kimi、OpenAI、Anthropic、MiniMax、智谱、通义千问和阶跃星辰八家预置服务，以及一个 OpenAI 兼容自定义服务；确定性测试覆盖路由和配置。DeepSeek 与 Kimi 已完成真实 API 请求验收，Kimi 目录更新为当前可用的 K3 与 K2.6；Electron 双轮重启测试覆盖 Kimi 私聊及 Kimi → DeepSeek 的 Space 顺序协作。
 - Kimi K3 已完成 Windows unpacked 与 NSIS 安装版发布验收：真实私聊、Kimi → DeepSeek Space 双轮跨重启、界面编辑/删除、正常退出及静默卸载全部通过。Harness 单轮输出上限提升至 8192，空正文不再静默持久化；Electron 冒烟测试改为断言实际消息正文，并支持失败时保留隔离用户目录。
 - DeepSeek Flash 对话支持 PNG、JPEG、WebP、GIF 图片输入，主进程会校验格式、签名及 32 MiB 总大小；设置页支持查询 DeepSeek 余额。
@@ -51,7 +52,7 @@
 
 ## 下一阶段
 
-- 按执行规划进入 PR 3 Supervisor：acquire/release、starting 去重、stale/retire 和定向回收，替换 generation 变化时的 shutdownAll。
+- 按执行规划进入 PR 4 Plugin 控制面与 staging：版本化 DB migration、插件 desired state、受控包管理及隔离兼容验证。
 
 - 使用各服务的独立测试凭据继续验收 OpenAI、Anthropic、MiniMax、智谱、通义千问、阶跃星辰及自定义 OpenAI 兼容服务；当前 CI 已纳入无密钥安全冒烟，带密钥的模型请求仍由发布前人工验收。
 - SDK 暂无可供桌面应用直接列举工具 Registry 的接口；工具页当前展示受 MindMesh 支持的七项工具，实际启用状态由 Harness 补丁控制。

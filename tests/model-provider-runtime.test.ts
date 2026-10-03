@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,6 +15,9 @@ vi.mock('electron', () => ({
 }))
 
 import { buildProviderSettingsYaml, DeepSeekHarnessAdapter, SessionResumeUnsupportedError } from '../src/main/harness-adapter'
+
+beforeEach(() => { vi.spyOn(DeepSeekHarness.prototype, 'start').mockResolvedValue(undefined) })
+afterEach(() => { vi.restoreAllMocks() })
 
 describe('model provider runtime settings', () => {
   it('uses an empty provider map when only the native DeepSeek route is configured', () => {

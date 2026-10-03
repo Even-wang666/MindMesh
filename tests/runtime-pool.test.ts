@@ -16,6 +16,7 @@ vi.mock('@deepseek-ai/dsh-sdk-client', () => ({
   DeepSeekHarness: class {
     private home: string
     constructor(options: { dshHome: string }) { this.home = options.dshHome; state.launched.push(this.home) }
+    async start() {}
     async run(prompt: string) {
       if (prompt === 'hold') await new Promise<void>((resolveRun) => { state.release = resolveRun })
       if (prompt === 'fail') throw new Error('run failed')

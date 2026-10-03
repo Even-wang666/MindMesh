@@ -9,11 +9,13 @@ import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter, getAgentCapabilityHash, SessionResumeUnsupportedError } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
 import type { RuntimeRequest } from './runtime-revision'
+import { classifyRuntimeFailure, runtimeFailureDetail, type RuntimeFailureKind } from './runtime-errors'
 
 const SHUTDOWN_TIMEOUT_MS = 15_000
 
 export class MindMeshServices {
   private runtimeFailed = false
+  private runtimeFailureKind: RuntimeFailureKind = 'unknown'
   private deepSeekBalance: ModelProviderStatus['balance']
   private deepSeekBalanceError = false
   private balanceRequestGeneration = 0
@@ -39,14 +41,16 @@ export class MindMeshServices {
   updateAgent = (id: string, input: CreateAgentInput) => this.db.updateAgent(id, input)
   removeAgent = async (id: string): Promise<void> => {
     this.db.removeAgent(id)
-    await this.resetRuntimesAndCleanupHomes()
+    await this.harness.forgetAgent(id)
+    this.cleanupUnusedHomes()
   }
   listSpaces = () => this.db.listSpaces()
   createSpace = (input: CreateSpaceInput) => this.db.createSpace(input)
   updateSpace = (id: string, input: CreateSpaceInput) => this.db.updateSpace(id, input)
   removeSpace = async (id: string): Promise<void> => {
     this.db.removeSpace(id)
-    await this.resetRuntimesAndCleanupHomes()
+    await this.harness.forgetSpace(id)
+    this.cleanupUnusedHomes()
   }
   updateSpaceContext = (id: string, context: string) => this.db.updateSpaceContext(id, context)
   messages = (scope: Message['scope'], scopeId: string) => this.db.listMessages(scope, scopeId)
@@ -66,8 +70,8 @@ export class MindMeshServices {
   }
   runtimeStatus = (): RuntimeStatus => {
     const status = this.harness.status()
-    return this.runtimeFailed && status.state !== 'demo'
-      ? { ...status, state: 'error', label: '运行异常', detail: '上次模型回复失败，请检查模型服务配置或网络。' }
+    return this.runtimeFailed && status.state !== 'demo' && status.state !== 'error'
+      ? { ...status, state: 'error', label: '运行异常', detail: runtimeFailureDetail(this.runtimeFailureKind) }
       : status
   }
   resetRuntimeFailure = (): void => { this.runtimeFailed = false }
@@ -75,16 +79,16 @@ export class MindMeshServices {
   saveUserProfile = (profile: UserProfile) => this.db.saveUserProfile(profile)
 
   async changeWorkspace(path: string): Promise<void> {
-    await this.harness.shutdownAll()
     this.db.changeWorkspace(path)
     this.harness.setWorkspace(path)
+    await this.harness.invalidateWorkspace()
     this.cleanupUnusedHomes()
     this.resetRuntimeFailure()
   }
 
   async saveModelProvider(input: SaveModelProviderInput) {
     this.providerSettings.save(input)
-    await this.harness.shutdownAll()
+    await this.harness.invalidateProvider(input.id)
     this.resetRuntimeFailure()
     await this.refreshDeepSeekBalance()
     return this.modelProviders()
@@ -97,7 +101,7 @@ export class MindMeshServices {
       this.deepSeekBalance = undefined
       this.deepSeekBalanceError = false
     }
-    await this.harness.shutdownAll()
+    await this.harness.invalidateProvider(id)
     this.resetRuntimeFailure()
     return this.modelProviders()
   }
@@ -174,6 +178,7 @@ export class MindMeshServices {
         () => buildPrivatePrompt(sessionAgent, promptContent, history), images, runtimeRequest)
     } catch (error) {
       if (this.shuttingDown) return []
+      if (!this.db.getAgent(agentId)) return []
       if (error instanceof ChatStoppedError) {
         if (error.text || error.reasoning) {
           this.db.addMessage({
@@ -187,16 +192,16 @@ export class MindMeshServices {
       this.recordRuntimeError('private', agent.id, error)
       this.db.addMessage({
         scope: 'private', scopeId: agentId, authorType: 'system', authorName: 'MindMesh',
-        content: `${agent.name} 回复失败，请检查模型服务配置或网络后重试。`,
+        content: `${agent.name} 回复失败：${runtimeFailureDetail(this.runtimeFailureKind)}`,
       })
       return this.db.listMessages('private', agentId)
     }
-    if (this.shuttingDown) return []
+    if (this.shuttingDown || !this.db.getAgent(agentId)) return []
     this.db.addMessage({
       scope: 'private', scopeId: agentId, authorType: 'agent', authorId: agent.id,
       authorName: sessionAgent.name, content: result.text, reasoning: result.reasoning,
     })
-    this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, 0)
+    this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, 0, session)
     void this.refreshDeepSeekBalance()
     return this.db.listMessages('private', agentId)
   }
@@ -228,7 +233,8 @@ export class MindMeshServices {
     }
 
     for (const runAgent of runAgents) {
-      if (this.shuttingDown) break
+      if (this.shuttingDown || !this.db.getSpace(spaceId)) break
+      if (!this.db.getAgent(runAgent.id)) continue
       const agent = members.find((item) => item.id === runAgent.id)!
       const contextKey = `space:${spaceId}:${agent.id}`
       let session = this.db.getOrCreateRuntimeSession(
@@ -262,14 +268,15 @@ export class MindMeshServices {
           'space', spaceId, crypto.randomUUID(),
           () => buildSpacePrompt(sessionAgent, space, this.db.listMessages('space', spaceId)), images, runtimeRequest)
       } catch (error) {
-        if (this.shuttingDown) break
+        if (this.shuttingDown || !this.db.getSpace(spaceId)) break
+        if (!this.db.getAgent(agent.id)) continue
         if (error instanceof ChatStoppedError) {
           if (error.text || error.reasoning) {
             const reply = this.db.addMessage({
               scope: 'space', scopeId: spaceId, authorType: 'agent', authorId: agent.id,
               authorName: sessionAgent.name, content: error.text, reasoning: error.reasoning || undefined, stopped: true,
             })
-            this.db.saveRuntimeSessionProgress(contextKey, session.harnessSessionId, reply.sequence)
+            this.db.saveRuntimeSessionProgress(contextKey, session.harnessSessionId, reply.sequence, session)
           }
           void this.refreshDeepSeekBalance()
           break
@@ -277,16 +284,17 @@ export class MindMeshServices {
         this.recordRuntimeError('space', agent.id, error)
         this.db.addMessage({
           scope: 'space', scopeId: spaceId, authorType: 'system', authorName: 'MindMesh',
-          content: `${agent.name} 回复失败，请检查模型服务配置或网络后重试。`,
+          content: `${agent.name} 回复失败：${runtimeFailureDetail(this.runtimeFailureKind)}`,
         })
         continue
       }
-      if (this.shuttingDown) break
+      if (this.shuttingDown || !this.db.getSpace(spaceId)) break
+      if (!this.db.getAgent(agent.id)) continue
       const reply = this.db.addMessage({
         scope: 'space', scopeId: spaceId, authorType: 'agent', authorId: agent.id,
         authorName: sessionAgent.name, content: result.text, reasoning: result.reasoning,
       })
-      this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, reply.sequence)
+      this.db.saveRuntimeSessionProgress(contextKey, result.sessionId ?? session.harnessSessionId, reply.sequence, session)
       void this.refreshDeepSeekBalance()
     }
     return this.shuttingDown ? [] : this.db.listMessages('space', spaceId)
@@ -341,13 +349,9 @@ export class MindMeshServices {
 
   private recordRuntimeError(scope: 'private' | 'space', agentId: string, error: unknown): void {
     this.runtimeFailed = true
+    this.runtimeFailureKind = classifyRuntimeFailure(error)
     try { this.onRuntimeError(scope, agentId, error) }
     catch { /* Logging must not replace the visible failure message. */ }
-  }
-
-  private async resetRuntimesAndCleanupHomes(): Promise<void> {
-    await this.harness.shutdownAll()
-    this.cleanupUnusedHomes()
   }
 
   private trackRun(start: () => Promise<Message[]>): Promise<Message[]> {
@@ -390,7 +394,7 @@ export class MindMeshServices {
       stopRequested = true
       stopAttempt = (async () => {
         try {
-          const stopped = await this.harness.stop(agent)
+          const stopped = runtimeRequest ? await this.harness.stop(agent, requestId) : await this.harness.stop(agent)
           stopSucceeded = stopped
           if (!stopped) stopRequested = false
           return stopped
@@ -411,7 +415,8 @@ export class MindMeshServices {
       this.emitText(requestId, scope, scopeId, agent.id, text, kind)
     }
     const run = (input: string, id: string, freshSession = false) => runtimeRequest
-      ? this.harness.run(agent, input, id, onText, attachments, runtimeRequest, freshSession)
+      ? this.harness.run(agent, input, id, onText, attachments, runtimeRequest, freshSession,
+        { contextKey: scope === 'private' ? `private:${scopeId}` : `space:${scopeId}:${agent.id}`, requestId, recoveryPrompt })
       : this.harness.run(agent, input, id, onText, attachments)
     let result
     try {
