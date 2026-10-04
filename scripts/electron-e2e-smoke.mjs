@@ -1,19 +1,27 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import electron from 'electron'
 import { startPluginModelFixture } from './plugin-model-fixture.mjs'
+import { startPluginFixtureRegistry } from './plugin-fixture-registry.mjs'
 
 const workspace = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const userData = mkdtempSync(join(tmpdir(), 'mindmesh-e2e-'))
 const executable = process.env.MINDMESH_E2E_EXE ?? electron
 const agencyOnly = process.argv.includes('--agency-agents')
 const teamsOnly = process.argv.includes('--teams')
-const securityOnly = process.argv.includes('--security-only') || agencyOnly || teamsOnly
+const pluginUi = process.argv.includes('--plugin-marketplace')
+const pluginCatalogOnly = process.argv.includes('--plugin-catalog')
+const securityOnly =
+  process.argv.includes('--security-only') ||
+  agencyOnly ||
+  teamsOnly ||
+  pluginUi ||
+  pluginCatalogOnly
 const keepUserData = process.env.MINDMESH_E2E_KEEP_USER_DATA === '1'
 const key = process.env.DEEPSEEK_API_KEY
 const providerOverride = process.env.MINDMESH_E2E_PROVIDER
@@ -79,7 +87,9 @@ async function runRound(round) {
   const port = await freePort()
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
+  if (pluginUi) env.PATH = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
   const args = [`--remote-debugging-port=${port}`, `--user-data-dir=${userData}`]
+  if (pluginUi) args.push(`--plugin-market-fixture=${join(userData, 'plugin-market-fixture.json')}`)
   const app = spawn(executable, process.env.MINDMESH_E2E_EXE ? args : ['.', ...args], {
     cwd: workspace,
     env,
@@ -168,6 +178,152 @@ async function runRound(round) {
         true
       )
       console.log('Electron Marketplace navigation, tabs and validated IPC: OK')
+      assert.equal(
+        await evaluate(
+          `document.querySelector('[data-nav="marketplace"] svg').classList.contains('lucide-store')`
+        ),
+        true
+      )
+      assert.equal(
+        await evaluate(
+          `document.querySelector('[data-nav="spaces"] svg').classList.contains('lucide-boxes')`
+        ),
+        true
+      )
+      if (pluginCatalogOnly) {
+        const catalog = await evaluate(`window.mindmesh.marketplace.list('plugins')`)
+        assert.equal(catalog.state, 'fresh', catalog.error)
+        assert.ok(catalog.items.length > 0)
+        assert.ok(catalog.items.some((item) => item.plugin?.packageName && item.plugin.version))
+        console.log(`Electron real community plugin catalog (${catalog.items.length} entries): OK`)
+      }
+      if (pluginUi) {
+        const mainKey = JSON.stringify(['plugins', 'dsh', 'mindmesh-fixture-plugin'])
+        const peerKey = JSON.stringify(['plugins', 'dsh', 'mindmesh-fixture-peer'])
+        const buildKey = JSON.stringify(['plugins', 'dsh', 'mindmesh-fixture-build'])
+        const readState = () => evaluate('window.mindmesh.plugins.state()')
+        await evaluate(
+          `window.__pluginPhases = []; window.mindmesh.plugins.onProgress(operation => window.__pluginPhases.push(operation.phase))`
+        )
+        async function action(key, label, expected = 'succeeded') {
+          const before = (await readState()).operation?.requestId
+          await until(() =>
+            evaluate(
+              `Array.from(document.querySelectorAll('[data-plugin-key]')).find(card => card.dataset.pluginKey === ${JSON.stringify(key)})?.textContent.includes(${JSON.stringify(label)})`
+            )
+          )
+          assert.equal(
+            await evaluate(
+              `(() => { const card = Array.from(document.querySelectorAll('[data-plugin-key]')).find(card => card.dataset.pluginKey === ${JSON.stringify(key)}); const button = Array.from(card.querySelectorAll('button')).find(button => button.textContent === ${JSON.stringify(label)}); if (!button || button.disabled) return false; button.click(); return true; })()`
+            ),
+            true
+          )
+          const result = await until(async () => {
+            const state = await readState()
+            return state.operation &&
+              state.operation.requestId !== before &&
+              ['succeeded', 'failed', 'cancelled'].includes(state.operation.phase)
+              ? state
+              : null
+          }, 180_000)
+          assert.equal(result.operation.phase, expected, result.operation.diagnostics)
+          console.log(`Plugin UI ${label}: ${expected}`)
+          await until(() =>
+            evaluate(
+              `!Array.from(document.querySelectorAll('button')).find(button => button.textContent === '检查兼容性')?.disabled`
+            )
+          )
+          return result
+        }
+        if (round === 1) {
+          const before = await readState()
+          await action(mainKey, '检查兼容性')
+          assert.deepEqual((await readState()).installed, before.installed)
+          await action(mainKey, '安装插件')
+          await action(peerKey, '检查兼容性')
+          await action(peerKey, '安装插件')
+          const beforeRemove = (await readState()).installed
+          assert.deepEqual((await action(mainKey, '移除插件', 'failed')).installed, beforeRemove)
+          await action(peerKey, '移除插件')
+          await action(mainKey, '停用插件')
+          await action(mainKey, '启用插件')
+          assert.equal(
+            (await action(buildKey, '检查兼容性', 'failed')).results.find(
+              (result) => result.key === buildKey
+            ).compatibility,
+            'needs-approval'
+          )
+          assert.equal(existsSync(join(userData, 'fixtures', 'script-ran')), false)
+          pluginRegistry.setCatalogVersion('1.0.1')
+          await evaluate(
+            `Array.from(document.querySelectorAll('button')).find(button => button.textContent === '刷新目录').click()`
+          )
+          await until(() =>
+            evaluate(
+              `document.querySelector('#marketplace-panel').getAttribute('aria-busy') === 'false' && document.querySelector('.plugin-marketplace').textContent.includes('目录版本：1.0.1')`
+            )
+          )
+          await action(mainKey, '检查兼容性')
+          await action(mainKey, '更新至 1.0.1')
+        } else {
+          assert.equal((await readState()).installed[0].version, '1.0.1')
+          assert.equal((await readState()).installed[0].enabled, true)
+          await until(() =>
+            evaluate(
+              `document.querySelector('.plugin-marketplace').textContent.includes('已安装 1.0.1')`
+            )
+          )
+        }
+        if (round === 2) {
+          const beforeCancel = await readState()
+          await evaluate(
+            `Array.from(document.querySelectorAll('[data-plugin-key]')).find(card => card.dataset.pluginKey === ${JSON.stringify(mainKey)}).querySelector('button').click()`
+          )
+          await until(async () => {
+            const operation = (await readState()).operation
+            return (
+              operation &&
+              operation.requestId !== beforeCancel.operation?.requestId &&
+              !['succeeded', 'failed', 'cancelled'].includes(operation.phase)
+            )
+          })
+          await until(() =>
+            evaluate(
+              `Boolean(Array.from(document.querySelectorAll('button')).find(button => button.textContent === '取消操作'))`
+            )
+          )
+          await evaluate(
+            `Array.from(document.querySelectorAll('button')).find(button => button.textContent === '取消操作').click()`
+          )
+          await until(async () => (await readState()).operation?.phase === 'cancelled')
+          assert.deepEqual((await readState()).installed, beforeCancel.installed)
+          console.log('Plugin UI cancellation preserves installed set: OK')
+        }
+        if (process.env.MINDMESH_E2E_SCREENSHOT) {
+          const screenshot = await client.call('Page.captureScreenshot', { format: 'png' })
+          writeFileSync(process.env.MINDMESH_E2E_SCREENSHOT, Buffer.from(screenshot.data, 'base64'))
+        }
+        await evaluate(
+          `window.mindmesh.settings.saveModelProvider({ id: 'custom', name: 'Plugin UI fixture', baseUrl: ${JSON.stringify(agencyModel.url)}, model: 'fixture-model', apiKey: 'fixture-key' })`
+        )
+        const agent = await evaluate(`window.mindmesh.agents.list().then(agents => agents[0])`)
+        await evaluate(
+          `window.mindmesh.agents.update(${JSON.stringify(agent.id)}, { ...${JSON.stringify(agent)}, provider: 'custom', model: 'fixture-model', tools: [] })`
+        )
+        const messages = await evaluate(
+          `window.mindmesh.chat.sendPrivate(${JSON.stringify(agent.id)}, 'Call fixture tool', [], { permission: 'full' })`
+        )
+        assert.match(messages.at(-1).content, /fixture:1\.0\.1/)
+        assert.equal(existsSync(join(userData, 'fixtures', 'tool-called-1.0.1')), true)
+        if (round === 2) {
+          await action(mainKey, '移除插件')
+          assert.equal((await readState()).installed.length, 0)
+        }
+        assert.ok((await evaluate('window.__pluginPhases')).includes('booting'))
+        console.log(
+          `Electron plugin Marketplace check/install/update/enable/disable/dependency remove gate and real full tool call round ${round}: OK`
+        )
+      }
       if (teamsOnly) {
         const catalog = await evaluate(`window.mindmesh.marketplace.list('teams', true)`)
         assert.equal(catalog.state, 'fresh', catalog.error)
@@ -547,12 +703,24 @@ async function runRound(round) {
   }
 }
 
-const agencyModel = agencyOnly || teamsOnly ? await startPluginModelFixture() : null
+const agencyModel = agencyOnly || teamsOnly || pluginUi ? await startPluginModelFixture() : null
+const pluginRegistry = pluginUi
+  ? await startPluginFixtureRegistry(join(userData, 'fixtures'))
+  : null
+if (pluginRegistry)
+  writeFileSync(
+    join(userData, 'plugin-market-fixture.json'),
+    JSON.stringify({
+      catalogUrl: `${pluginRegistry.url}plugins.json`,
+      registry: pluginRegistry.url,
+    })
+  )
 try {
   await runRound(1)
   if (process.env.MINDMESH_E2E_RESTART === '1') await runRound(2)
 } finally {
   await agencyModel?.close()
+  await pluginRegistry?.close()
   const tempRoot = resolve(tmpdir()) + sep
   if (keepUserData) console.error(`Electron user data preserved: ${userData}`)
   else if (resolve(userData).startsWith(tempRoot))

@@ -60,8 +60,23 @@ export async function startPluginFixtureRegistry(root) {
       packages.set(`${name}@${version}`, readFileSync(file))
     }
   let url = ''
+  let catalogVersion = '1.0.0'
   const server = createServer((request, response) => {
     const path = request.url ?? ''
+    if (path === '/plugins.json') {
+      response.setHeader('Content-Type', 'application/json')
+      response.end(
+        JSON.stringify({
+          plugins: names.map((name) => ({
+            name,
+            npm: name,
+            version: name === names[0] ? catalogVersion : '1.0.0',
+            description: { zh: '本地插件测试 fixture' },
+          })),
+        })
+      )
+      return
+    }
     const name = path.split('/')[1]
     if (path.endsWith('.tgz')) {
       const version = path.split('/').pop().replace('.tgz', '')
@@ -102,5 +117,11 @@ export async function startPluginFixtureRegistry(root) {
   })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   url = `http://127.0.0.1:${server.address().port}/`
-  return { url, close: () => new Promise((resolve) => server.close(() => resolve())) }
+  return {
+    url,
+    setCatalogVersion: (version) => {
+      catalogVersion = version
+    },
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  }
 }

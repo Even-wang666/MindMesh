@@ -26,6 +26,31 @@ beforeAll(async () => {
 })
 
 describe('preload chat boundary', () => {
+  it('forwards structured plugin actions on fixed channels and unsubscribes progress', async () => {
+    electron.invoke.mockClear()
+    const request = {
+      requestId: 'a'.repeat(36),
+      key: '["plugins","dsh","fixture"]',
+      action: 'check' as const,
+      version: '1.0.0',
+    }
+    await api.plugins.state()
+    await api.plugins.change(request)
+    await api.plugins.cancel(request.requestId)
+    expect(electron.invoke.mock.calls).toEqual([
+      ['plugins:state'],
+      ['plugins:change', request],
+      ['plugins:cancel', request.requestId],
+    ])
+    const listener = vi.fn(),
+      unsubscribe = api.plugins.onProgress(listener)
+    const subscription = electron.on.mock.calls.find(([channel]) => channel === 'plugins:progress')!
+    subscription[1]({}, { ...request, phase: 'checking' })
+    expect(listener).toHaveBeenCalledWith({ ...request, phase: 'checking' })
+    unsubscribe()
+    expect(electron.removeListener).toHaveBeenCalledWith('plugins:progress', subscription[1])
+    electron.invoke.mockClear()
+  })
   it('forwards only catalog kind and refresh over marketplace IPC', async () => {
     electron.invoke.mockClear()
     await api.marketplace.list('teams')

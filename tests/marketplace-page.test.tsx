@@ -9,7 +9,13 @@ afterEach(() => cleanup())
 function setup(list: ReturnType<typeof vi.fn>): void {
   Object.defineProperty(window, 'mindmesh', {
     configurable: true,
-    value: { marketplace: { list } },
+    value: {
+      marketplace: { list },
+      plugins: {
+        state: vi.fn(async () => ({ installed: [], results: [], operation: null })),
+        onProgress: vi.fn(() => () => {}),
+      },
+    },
   })
 }
 

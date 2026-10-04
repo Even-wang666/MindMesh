@@ -54,3 +54,9 @@ jobs:
         run: |
           $env:MINDMESH_E2E_EXE = Join-Path $PWD 'release\win-unpacked\MindMesh.exe'
           node scripts/electron-e2e-smoke.mjs --security-only
+      - name: Smoke-test packaged plugin Marketplace and restart
+        shell: pwsh
+        run: |
+          $env:MINDMESH_E2E_EXE = Join-Path $PWD 'release\win-unpacked\MindMesh.exe'
+          $env:MINDMESH_E2E_RESTART = '1'
+          node scripts/electron-e2e-smoke.mjs --plugin-marketplace

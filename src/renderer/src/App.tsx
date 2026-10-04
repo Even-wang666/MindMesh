@@ -17,6 +17,7 @@ import {
   Plus,
   Search,
   Settings,
+  Store,
   Trash2,
   Wrench,
   X,
@@ -438,7 +439,7 @@ function PrimaryNav({
         { id: 'agents', label: '智能体', icon: Bot },
         { id: 'skills', label: '技能', icon: Library },
         { id: 'tools', label: '工具', icon: Wrench },
-        { id: 'marketplace', label: '市场', icon: Boxes },
+        { id: 'marketplace', label: '市场', icon: Store },
       ],
     },
   ]

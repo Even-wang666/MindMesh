@@ -1,4 +1,5 @@
 import type { MarketplaceCatalog, MarketplaceKind } from './marketplace'
+import type { PluginOperation, PluginRequest, PluginState } from './plugins'
 
 export type AgentSource = {
   source: string
@@ -148,6 +149,12 @@ export type ChatDelta = {
 export type ChatProgress = Pick<Message, 'scope' | 'scopeId'> & { agentName: string }
 
 export type MindMeshApi = {
+  plugins: {
+    state(): Promise<PluginState>
+    change(request: PluginRequest): Promise<PluginOperation>
+    cancel(requestId: string): Promise<boolean>
+    onProgress(listener: (operation: PluginOperation) => void): () => void
+  }
   marketplace: {
     list(kind: MarketplaceKind, refresh?: boolean): Promise<MarketplaceCatalog>
     installAgent(key: string, revision: string): Promise<Agent>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { PluginMarketplace } from './PluginMarketplace'
 import {
   marketplaceKinds,
   type MarketplaceCatalog,
@@ -181,7 +182,8 @@ export function MarketplacePage({
             <p>此目录尚无条目，请稍后刷新。</p>
           </div>
         )}
-        {!loading && (
+        {kind === 'plugins' && <PluginMarketplace items={catalog?.items ?? []} />}
+        {!loading && kind !== 'plugins' && (
           <div className="catalog-grid">
             {catalog?.items.map((item) => (
               <article key={item.key}>

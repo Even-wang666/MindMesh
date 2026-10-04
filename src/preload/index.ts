@@ -6,8 +6,20 @@ import type {
   SkillInstallProgress,
 } from '../shared/contracts'
 import { validateChatContent } from '../shared/chat-content'
+import type { PluginOperation } from '../shared/plugins'
 
 const api: MindMeshApi = {
+  plugins: {
+    state: () => ipcRenderer.invoke('plugins:state'),
+    change: (request) => ipcRenderer.invoke('plugins:change', request),
+    cancel: (requestId) => ipcRenderer.invoke('plugins:cancel', requestId),
+    onProgress: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: PluginOperation): void =>
+        listener(payload)
+      ipcRenderer.on('plugins:progress', handler)
+      return () => ipcRenderer.removeListener('plugins:progress', handler)
+    },
+  },
   marketplace: {
     list: (kind, refresh = false) => ipcRenderer.invoke('marketplace:list', kind, refresh),
     installAgent: (key, revision) => ipcRenderer.invoke('marketplace:installAgent', key, revision),

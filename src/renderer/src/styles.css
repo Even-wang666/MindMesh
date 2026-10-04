@@ -2306,6 +2306,22 @@ em,
 .marketplace-install {
   margin-top: var(--sp-4);
 }
+.plugin-marketplace article {
+  min-width: 0;
+  gap: var(--sp-2);
+  overflow-wrap: anywhere;
+}
+.plugin-marketplace pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.plugin-operation {
+  margin: var(--sp-4) 0;
+  padding: var(--sp-4);
+  border-radius: var(--r-control);
+  background: var(--surface-raised);
+}
 .catalog-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));

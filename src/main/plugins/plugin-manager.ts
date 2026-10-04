@@ -14,6 +14,7 @@ import { parseDocument } from 'yaml'
 import { prepareAgentCapabilities, toolCatalog } from '../capabilities'
 import { getDshRuntimeInfo } from '../dsh-runtime'
 import { buildProviderSettingsYaml } from '../runtime-home-materializer'
+import type { PluginPhase } from '../../shared/plugins'
 import { BundledPackageManager, DshCliRunner, stagingEnvironment } from './dsh-cli-runner'
 import { pluginPackageDigests } from './plugin-inventory'
 import { redactPluginDiagnostic } from './plugin-diagnostics'
@@ -48,8 +49,13 @@ export class PluginStaging {
     this.runner = new DshCliRunner(runtime.dshBin, new BundledPackageManager(resourcesPath))
   }
 
-  async validate(plugins: InstalledPlugin[], signal?: AbortSignal): Promise<PluginArtifact> {
+  async validate(
+    plugins: InstalledPlugin[],
+    signal?: AbortSignal,
+    progress: (phase: PluginPhase) => void = () => {}
+  ): Promise<PluginArtifact> {
     signal?.throwIfAborted()
+    progress('preparing')
     const root = join(this.dataDirectory, 'plugin-staging')
     mkdirSync(root, { recursive: true })
     for (const entry of readdirSync(root, { withFileTypes: true })) {
@@ -98,6 +104,7 @@ export class PluginStaging {
       const enabled = plugins
         .filter((plugin) => plugin.enabled)
         .sort((a, b) => a.packageName.localeCompare(b.packageName))
+      progress('installing')
       if (enabled.length)
         await run(
           [
@@ -114,6 +121,7 @@ export class PluginStaging {
           'install'
         )
       const profile = join(home, 'profiles', 'sdk')
+      progress('checking')
       pluginPackageDigests(join(profile, 'node_modules'))
       for (const plugin of enabled) {
         const installed = JSON.parse(
@@ -158,6 +166,7 @@ export class PluginStaging {
         }
       }
       checkEntries(document.toJS())
+      progress('booting')
       // SDK transport ignores non-JSON lines. Probe framing strictly before its own handshake.
       await run(['--profile', 'sdk', '--patch', patch], 'protocol', true)
       signal?.throwIfAborted()
@@ -183,6 +192,7 @@ export class PluginStaging {
         await sdk.close()
       }
       signal?.throwIfAborted()
+      progress('sealing')
       for (const [file, expected] of Object.entries(installInputs)) {
         const path = join(profile, file)
         if ((existsSync(path) ? readFileSync(path, 'utf8') : null) !== expected)
@@ -253,7 +263,12 @@ export class PluginManager {
   snapshot(): PluginSetSnapshot {
     return this.set.snapshot()
   }
-  change(change: PluginChange, signal?: AbortSignal): Promise<PluginSetSnapshot> {
+  change(
+    change: PluginChange,
+    signal?: AbortSignal,
+    options: { progress?: (phase: PluginPhase) => void; validateOnly?: boolean } = {}
+  ): Promise<PluginSetSnapshot> {
+    options.progress?.('queued')
     const operation = this.queue.then(async () => {
       signal?.throwIfAborted()
       const before = this.set.snapshot(),
@@ -267,7 +282,7 @@ export class PluginManager {
         const plugin = {
           packageName: change.packageName,
           version: change.version,
-          enabled: index < 0 ? true : plugins[index].enabled,
+          enabled: options.validateOnly || index < 0 ? true : plugins[index].enabled,
           config: index < 0 ? {} : plugins[index].config,
           installedAt: index < 0 ? now : plugins[index].installedAt,
           updatedAt: now,
@@ -282,8 +297,10 @@ export class PluginManager {
           plugins[index].updatedAt = now
         }
       }
-      const artifact = await this.staging.validate(plugins, signal)
+      const artifact = await this.staging.validate(plugins, signal, options.progress)
       signal?.throwIfAborted()
+      if (options.validateOnly) return before
+      options.progress?.('committing')
       return this.set.commit(before.generation, plugins, artifact)
     })
     this.queue = operation.catch(() => {})

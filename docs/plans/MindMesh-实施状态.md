@@ -12,6 +12,7 @@
 - PR 6 Marketplace 基础：共享来源身份/key、Main 规范化目录与持久缓存、固定 IPC/Preload、市场导航和智能体/团队/插件三个页签；包含 loading/error/stale cache、刷新与切页竞态处理。真实内容和安装留到 PR 7–9。详见 [Marketplace 基础验收](../migration/marketplace-foundation-2026-10.md)。
 - PR 7 Agency Agents：官方目录按单一 commit 读取并缓存原文/完整许可；schema 3 来源关联迁移、安装去重/重名处理、空工具/技能与向导默认模型、Installed/Open 和用户编辑保护。详见 [Agency Agents 验收与回滚](../migration/agency-agents-2026-10.md)。
 - PR 8 Curated Teams：两份内置清单、同 commit 成员引用解析、Agent 来源复用、数据库原子安装和 schema 4 Space 来源映射；团队 Installed/Open、失败回滚、已有编辑保留和重启成员顺序已验证，真实 Electron 双轮三成员 DSH 协作通过。详见 [Team 验收与回滚](../migration/teams-2026-10.md)。
+- PR 9 Plugin Catalog UI 实现：真实社区目录、本机全集合兼容检查、exact 安装/更新/移除/启停、进度/取消/脱敏诊断和配置风险提示；市场店铺图标与协作空间图标已区分。完整测试、开发版/Windows unpacked/NSIS 安装版双轮真实插件工具调用、取消保护与静默卸载通过，干净 VM 发布 Gate 待完成。详见 [Plugin Marketplace 验收](../migration/plugin-marketplace-2026-10.md)。
 
 - 项目内 Conda Python 3.11 环境。
 - DeepSeek Harness 源码浅克隆与精确提交记录。
@@ -57,7 +58,7 @@
 
 ## 下一阶段
 
-- 按执行规划进入 PR 9 Plugin Catalog UI：真实 catalog adapter、本机兼容结果、安装/更新/移除/启停进度和诊断，最终执行完整 Windows 发布验收。
+- 完成 PR 9 干净 Windows VM 发布 Gate；当前设备没有可用虚拟机环境，本机隔离安装不能代替该项。
 
 - 使用各服务的独立测试凭据继续验收 OpenAI、Anthropic、MiniMax、智谱、通义千问、阶跃星辰及自定义 OpenAI 兼容服务；当前 CI 已纳入无密钥安全冒烟，带密钥的模型请求仍由发布前人工验收。
 - SDK 暂无可供桌面应用直接列举工具 Registry 的接口；工具页当前展示受 MindMesh 支持的七项工具，实际启用状态由 Harness 补丁控制。

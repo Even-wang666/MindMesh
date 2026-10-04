@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { validatePluginSpec } from './plugins/plugin-set'
 import {
   isMarketplaceKind,
   marketplaceKey,
@@ -29,7 +30,8 @@ export function normalizeMarketplaceItems(
   kind: MarketplaceKind,
   source: string
 ): MarketplaceItem[] {
-  if (!Array.isArray(payload) || payload.length > 2_000) throw new Error('目录格式无效')
+  if (!Array.isArray(payload) || payload.length > (kind === 'plugins' ? 10_000 : 2_000))
+    throw new Error('目录格式无效')
   const items = new Map<string, MarketplaceItem>()
   for (const raw of payload) {
     if (!raw || typeof raw !== 'object') continue
@@ -41,6 +43,32 @@ export function normalizeMarketplaceItems(
     const identity = { kind, source, sourceId }
     const key = marketplaceKey(identity)
     if (items.has(key)) continue
+    let plugin: MarketplaceItem['plugin']
+    if (kind === 'plugins') {
+      const fields = row.plugin as Record<string, unknown> | undefined
+      const packageName =
+          typeof fields?.packageName === 'string' && fields.packageName.length <= 214
+            ? fields.packageName
+            : undefined,
+        version =
+          typeof fields?.version === 'string' && fields.version.length <= 100
+            ? fields.version
+            : undefined
+      try {
+        validatePluginSpec(packageName ?? '', version ?? '')
+        if (packageName !== sourceId) throw new Error('Plugin identity mismatch')
+        plugin = { packageName, version, warnings: [] }
+      } catch {
+        plugin = { warnings: ['需要手动设置：没有可安装的 npm 确切版本。'] }
+      }
+      if (Array.isArray(fields?.warnings))
+        plugin.warnings.push(
+          ...fields.warnings
+            .slice(0, 8)
+            .map((value) => text(value, 200))
+            .filter((value): value is string => !!value)
+        )
+    }
     items.set(key, {
       ...identity,
       key,
@@ -48,6 +76,7 @@ export function normalizeMarketplaceItems(
       description: text(row.description, 2_000) ?? '',
       revision: text(row.revision, 160),
       license: text(row.license, 160),
+      ...(plugin ? { plugin } : {}),
     })
   }
   return [...items.values()]
@@ -111,7 +140,7 @@ export class MarketplaceCatalogService {
         typeof raw.fetchedAt !== 'string' ||
         !Number.isFinite(Date.parse(raw.fetchedAt)) ||
         !Array.isArray(raw.items) ||
-        raw.items.length > 2_000 * providers.length
+        raw.items.length > (kind === 'plugins' ? 10_000 : 2_000) * providers.length
       )
         return undefined
       const items = providers.flatMap((provider) =>

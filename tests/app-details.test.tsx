@@ -52,6 +52,12 @@ const agent: Agent = {
 function mockApi(): MindMeshApi {
   let storedProfile: UserProfile = { name: '你', avatar: null }
   return {
+    plugins: {
+      state: vi.fn(async () => ({ installed: [], results: [], operation: null })),
+      change: vi.fn(),
+      cancel: vi.fn(),
+      onProgress: vi.fn(() => () => {}),
+    },
     marketplace: {
       list: vi.fn(async (kind) => ({ kind, items: [], state: 'fresh' as const, fetchedAt: null })),
       installAgent: vi.fn(),

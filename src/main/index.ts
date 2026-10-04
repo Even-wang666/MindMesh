@@ -1,5 +1,6 @@
 import { join } from 'node:path'
-import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, statSync, readFileSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
@@ -21,12 +22,15 @@ import { redactPluginDiagnostic } from './plugins/plugin-diagnostics'
 import { MarketplaceCatalogService } from './marketplace'
 import { AgencyProvider, installAgencyAgent } from './agency-provider'
 import { teamProvider, installTeam } from './team-provider'
+import { PluginManager, PluginStaging } from './plugins/plugin-manager'
+import { DshPluginCatalogProvider, PluginMarketplaceService } from './plugins/plugin-marketplace'
 
 let mainWindow: BrowserWindow | null = null
 let services: MindMeshServices | null = null
 let quitReady = false
 let shutdownTask: Promise<void> | null = null
 let pluginDeveloperTask: Promise<void> | null = null
+let pluginMarketplace: PluginMarketplaceService | null = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -63,13 +67,48 @@ function createWindow(): void {
   }
 }
 
-function registerIpc(current: MindMeshServices, dataDir: string): void {
+function registerIpc(
+  current: MindMeshServices,
+  dataDir: string,
+  pluginSet: PluginSetManager
+): void {
+  // Explicit local test entry; never accepts catalog/registry endpoints from Renderer IPC.
+  const fixtureFile = app.commandLine.getSwitchValue('plugin-market-fixture')
+  let fixture: { catalogUrl?: string; registry?: string } = {}
+  if (fixtureFile) {
+    if (!isAbsolute(fixtureFile) || statSync(fixtureFile).size > 4096)
+      throw new Error('Invalid marketplace fixture')
+    fixture = JSON.parse(readFileSync(fixtureFile, 'utf8'))
+    if (
+      !fixture ||
+      typeof fixture.catalogUrl !== 'string' ||
+      !/^http:\/\/127\.0\.0\.1:\d+\/plugins\.json$/.test(fixture.catalogUrl) ||
+      typeof fixture.registry !== 'string' ||
+      !/^http:\/\/127\.0\.0\.1:\d+\/$/.test(fixture.registry)
+    )
+      throw new Error('Marketplace fixture must be loopback')
+  }
   const agency = new AgencyProvider(dataDir)
   const marketplace = new MarketplaceCatalogService(dataDir, [
     agency,
     teamProvider,
-    { kind: 'plugins', source: 'dsh', load: async () => [] },
+    new DshPluginCatalogProvider(fixture.catalogUrl),
   ])
+  pluginMarketplace = new PluginMarketplaceService(
+    dataDir,
+    marketplace,
+    new PluginManager(
+      pluginSet,
+      new PluginStaging(dataDir, process.resourcesPath, fixture.registry)
+    ),
+    (operation) => {
+      if (mainWindow && !mainWindow.webContents.isDestroyed())
+        mainWindow.webContents.send('plugins:progress', operation)
+    }
+  )
+  ipcMain.handle('plugins:state', () => pluginMarketplace!.state())
+  ipcMain.handle('plugins:change', (_event, request) => pluginMarketplace!.change(request))
+  ipcMain.handle('plugins:cancel', (_event, requestId) => pluginMarketplace!.cancel(requestId))
   ipcMain.handle('marketplace:list', async (_event, kind, refresh) => {
     const result = await marketplace.list(kind, refresh)
     return {
@@ -240,12 +279,8 @@ app.whenReady().then(async () => {
     savedWorkspace && existsSync(savedWorkspace) && statSync(savedWorkspace).isDirectory()
       ? savedWorkspace
       : defaultWorkspace
-  const harness = new DeepSeekHarnessAdapter(
-    workspace,
-    dataDir,
-    providerSettings,
-    new PluginSetManager(db)
-  )
+  const pluginSet = new PluginSetManager(db)
+  const harness = new DeepSeekHarnessAdapter(workspace, dataDir, providerSettings, pluginSet)
   try {
     harness.cleanupUnusedHomes(db.referencedCapabilityHashes())
   } catch {
@@ -259,7 +294,7 @@ app.whenReady().then(async () => {
     (scope, agentId, error) =>
       appendRuntimeError(join(dataDir, 'runtime-errors.jsonl'), scope, agentId, error)
   )
-  registerIpc(services, dataDir)
+  registerIpc(services, dataDir, pluginSet)
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -277,6 +312,7 @@ app.on('before-quit', (event) => {
   shutdownTask = (async () => {
     try {
       await pluginDeveloperTask?.catch(() => {})
+      await pluginMarketplace?.shutdown()
       await services?.shutdown()
     } finally {
       try {
