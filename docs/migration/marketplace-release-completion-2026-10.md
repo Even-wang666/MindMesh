@@ -10,7 +10,7 @@ Team 卡片增加成员数量与成员预览。预览由本地 curated manifest 
 
 ## CI 既有失败与修复
 
-读取 `acb9e46` 对应 CI 的实际任务日志：Windows package 在 `electronDist` 不存在时失败；Ubuntu capability test 在请求浏览器 patch 时收到明确的 Chromium 不可用错误。首次尝试增加 Electron build 许可，远程任务仍在同一位置失败；核对实际 Electron 44 package 后确认它已没有 postinstall，改为构建 job 显式执行官方 `install-electron` CLI，撤回无效的许可改动。不开放第三方插件 build scripts。浏览器 availability 当前仅支持 Windows Edge，测试现对不可用环境断言错误，保留可用环境中 MCP 插入及会话工具的完整断言。不新增 Linux 浏览器产品支持。
+读取 `acb9e46` 对应 CI 的实际任务日志：Windows package 在 `electronDist` 不存在时失败；Ubuntu capability test 在请求浏览器 patch 时收到明确的 Chromium 不可用错误。首次尝试增加 Electron build 许可，远程任务仍在同一位置失败；核对实际 Electron 44 package 后确认它已没有 postinstall，构建 job 还必须显式执行官方 `install-electron` CLI。保留已受信 Electron 的构建许可以满足 pnpm 的依赖状态检查，不开放第三方插件 build scripts。浏览器 availability 当前仅支持 Windows Edge，测试现对不可用环境断言错误，保留可用环境中 MCP 插入及会话工具的完整断言。不新增 Linux 浏览器产品支持。
 
 ## 独立安装验收
 

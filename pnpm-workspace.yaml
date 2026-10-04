@@ -17,7 +17,7 @@ overrides:
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': true
-  electron: set this to true or false
+  electron: true
   electron-winstaller: true
   esbuild: true
   koffi: true
