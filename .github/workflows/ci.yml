@@ -44,7 +44,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm exec install-electron
-      - run: pnpm exec electron-builder --win nsis --config.electronDist=node_modules/electron/dist --publish never
+      - run: pnpm exec electron-builder --win --dir --config.electronDist=node_modules/electron/dist --publish never
       - run: pnpm check:package-deps
       - name: Smoke-test plugins without external pnpm
         shell: pwsh
@@ -62,6 +62,7 @@ jobs:
           $env:MINDMESH_E2E_EXE = Join-Path $PWD 'release\win-unpacked\MindMesh.exe'
           $env:MINDMESH_E2E_RESTART = '1'
           node scripts/electron-e2e-smoke.mjs --plugin-marketplace
+      - run: pnpm exec electron-builder --win nsis --config.electronDist=node_modules/electron/dist --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release-candidate

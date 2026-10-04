@@ -38,7 +38,7 @@ export class RuntimeHomeMaterializer {
     signal?.throwIfAborted()
     let root = join(this.dataDirectory, 'runtime-v2')
     mkdirSync(root, { recursive: true })
-    root = realpathSync(root)
+    root = realpathSync.native(root)
     if (!/^[a-f0-9]{64}$/.test(request.identity.key)) throw new Error('Invalid runtime home key')
     const home = join(root, request.identity.key)
     const metadataPath = join(home, 'metadata.json')

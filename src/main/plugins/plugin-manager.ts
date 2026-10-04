@@ -60,7 +60,7 @@ export class PluginStaging {
     let root = join(this.dataDirectory, 'plugin-staging')
     mkdirSync(root, { recursive: true })
     // pnpm importer paths must use the same canonical root as its workspace discovery.
-    root = realpathSync(root)
+    root = realpathSync.native(root)
     for (const entry of readdirSync(root, { withFileTypes: true })) {
       const path = join(root, entry.name)
       if (
