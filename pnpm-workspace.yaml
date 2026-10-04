@@ -15,9 +15,9 @@ onlyBuiltDependencies:
 overrides:
   '@electron/get': 5.1.0
 allowBuilds:
-  electron: true
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': true
+  electron: set this to true or false
   electron-winstaller: true
   esbuild: true
   koffi: true

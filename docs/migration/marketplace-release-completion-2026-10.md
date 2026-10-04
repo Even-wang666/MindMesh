@@ -10,7 +10,7 @@ Team 卡片增加成员数量与成员预览。预览由本地 curated manifest 
 
 ## CI 既有失败与修复
 
-读取 `acb9e46` 对应 CI 的实际任务日志：Windows package 在 `electronDist` 不存在时失败；Ubuntu capability test 在请求浏览器 patch 时收到明确的 Chromium 不可用错误。前者是 `allowBuilds` 中缺少 Electron，补入已列为受信构建依赖的 Electron；不开放第三方插件 build scripts。后者是当前 browser availability 仅支持 Windows Edge，测试现对不可用环境断言错误，保留可用环境中 MCP 插入及会话工具的完整断言。不新增 Linux 浏览器产品支持。
+读取 `acb9e46` 对应 CI 的实际任务日志：Windows package 在 `electronDist` 不存在时失败；Ubuntu capability test 在请求浏览器 patch 时收到明确的 Chromium 不可用错误。首次尝试增加 Electron build 许可，远程任务仍在同一位置失败；核对实际 Electron 44 package 后确认它已没有 postinstall，改为构建 job 显式执行官方 `install-electron` CLI，撤回无效的许可改动。不开放第三方插件 build scripts。浏览器 availability 当前仅支持 Windows Edge，测试现对不可用环境断言错误，保留可用环境中 MCP 插入及会话工具的完整断言。不新增 Linux 浏览器产品支持。
 
 ## 独立安装验收
 
@@ -24,4 +24,4 @@ Team 卡片增加成员数量与成员预览。预览由本地 curated manifest 
 
 完整本机串行测试 31 个文件通过，299 项通过、3 项既有可选集成跳过。typecheck、format/lint、build、DSH 依赖检查通过。Standards 硬规范/启发式问题 0，Spec 代码缺漏/错误/范围扩大 0；远程独立 VM Gate 仍等待实际结果。
 
-新增真实 Electron 展示检查与远程独立 VM 任务尚在执行。最终提交与 run URL/结论在验收结束后补记；不能以 workflow 已配置代替实际通过。
+本机 Agent/Team 的真实 Electron 双轮展示、安装/Open、实际 DSH 对话、状态/用户编辑保留及 sandbox/CSP 验证均通过。远程独立 VM 任务尚在执行。最终 run URL/结论在验收结束后补记；不能以 workflow 已配置代替实际通过。
