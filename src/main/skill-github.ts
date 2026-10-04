@@ -167,7 +167,7 @@ async function githubJson(url: string): Promise<unknown> {
   return response.json()
 }
 
-async function downloadFile(
+export async function downloadFile(
   url: string,
   destination: string,
   onProgress?: (receivedBytes: number, totalBytes?: number) => void,

@@ -1,5 +1,7 @@
 import type { ModelProviderId } from './contracts'
 
+export const DEFAULT_AGENT_MODEL = { provider: 'deepseek-official', model: 'deepseek-flash' } as const
+
 export type ModelProviderDefinition = {
   id: Exclude<ModelProviderId, 'custom'>
   name: string

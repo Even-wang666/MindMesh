@@ -3,11 +3,25 @@ import { marketplaceKinds, type MarketplaceCatalog, type MarketplaceKind } from 
 
 const labels: Record<MarketplaceKind, string> = { agents: '智能体', teams: '团队', plugins: '插件' }
 
-export function MarketplacePage(): React.JSX.Element {
+export function MarketplacePage({ onOpenAgent = () => {} }: { onOpenAgent?: (id: string) => void | Promise<void> }): React.JSX.Element {
   const [kind, setKind] = useState<MarketplaceKind>('agents')
   const [catalog, setCatalog] = useState<MarketplaceCatalog | null>(null)
   const [loading, setLoading] = useState(true)
   const [refresh, setRefresh] = useState(0)
+  const [operation, setOperation] = useState<{ key: string; pending: boolean; error?: string } | null>(null)
+  async function install(key: string, revision: string): Promise<void> {
+    setOperation({ key, pending: true })
+    try {
+      const agent = await window.mindmesh.marketplace.installAgent(key, revision)
+      setCatalog((current) => current ? { ...current, items: current.items.map((item) => item.key === key ? { ...item, installedAgentId: agent.id } : item) } : current)
+      setOperation(null)
+    } catch { setOperation({ key, pending: false, error: '安装智能体失败，请刷新目录后重试。' }) }
+  }
+  async function open(key: string, id: string): Promise<void> {
+    setOperation({ key, pending: true })
+    try { await onOpenAgent(id); setOperation(null) }
+    catch { setOperation({ key, pending: false, error: '打开智能体失败，请刷新目录后重试。' }) }
+  }
   useEffect(() => {
     let active = true
     setLoading(true)
@@ -46,6 +60,13 @@ export function MarketplacePage(): React.JSX.Element {
       {!loading && <div className="catalog-grid">{catalog?.items.map((item) => <article key={item.key}>
         <h3>{item.name}</h3><p>{item.description}</p><small>来源：{item.source}</small>
         {item.revision && <small>版本：{item.revision}</small>}{item.license && <small>许可：{item.license}</small>}
+        {item.kind === 'agents' && item.source === 'agency' && item.revision && <>
+          <button className="secondary-button compact marketplace-install" disabled={operation?.pending === true}
+            onClick={() => item.installedAgentId ? void open(item.key, item.installedAgentId) : void install(item.key, item.revision!)}>
+            {operation?.key === item.key && operation.pending ? '处理中…' : item.installedAgentId ? '已安装 · 打开' : '安装智能体'}
+          </button>
+          {operation?.key === item.key && operation.error && <p className="form-error" role="alert">{operation.error}</p>}
+        </>}
       </article>)}</div>}
     </section>
   </div>

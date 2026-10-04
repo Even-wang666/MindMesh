@@ -1,5 +1,15 @@
 import type { MarketplaceCatalog, MarketplaceKind } from './marketplace'
 
+export type AgentSource = {
+  source: string
+  sourceId: string
+  revision: string
+  repository: string
+  content: string
+  license: string
+  licenseText: string
+}
+
 export type Agent = {
   id: string
   name: string
@@ -12,6 +22,7 @@ export type Agent = {
   /** 思考强度档位（如 off/low/medium/high/max），缺省表示跟随模型服务商默认值 */
   reasoningEffort?: string
   createdAt: string
+  source?: AgentSource
 }
 
 export type Space = {
@@ -121,7 +132,7 @@ export type SaveModelProviderInput = {
   model?: string
 }
 
-export type CreateAgentInput = Omit<Agent, 'id' | 'createdAt'>
+export type CreateAgentInput = Omit<Agent, 'id' | 'createdAt' | 'source'>
 export type CreateSpaceInput = Omit<Space, 'id' | 'createdAt'>
 
 export type ChatDelta = {
@@ -138,6 +149,7 @@ export type ChatProgress = Pick<Message, 'scope' | 'scopeId'> & { agentName: str
 export type MindMeshApi = {
   marketplace: {
     list(kind: MarketplaceKind, refresh?: boolean): Promise<MarketplaceCatalog>
+    installAgent(key: string, revision: string): Promise<Agent>
   }
   agents: {
     list(): Promise<Agent[]>

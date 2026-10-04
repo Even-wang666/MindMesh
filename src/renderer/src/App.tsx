@@ -134,7 +134,11 @@ export function App(): React.JSX.Element {
         {view === 'agents' && <AgentsPage agents={agents} onCreate={() => setAgentWizard(true)} onDetail={setDetailAgentId} />}
         {view === 'skills' && <CatalogPage kind="skills" />}
         {view === 'tools' && <CatalogPage kind="tools" />}
-        {view === 'marketplace' && <MarketplacePage />}
+        {view === 'marketplace' && <MarketplacePage onOpenAgent={async (id) => {
+          await refresh()
+          setSelectedAgentId(id)
+          setView('chats')
+        }} />}
         {view === 'settings' && <SettingsPage runtime={runtime} profile={profile} busy={busy} onProfileChange={setProfile} onRuntimeChange={setRuntime} onProviderChange={refreshModels} />}
       </section>
       {agentWizard && <AgentWizard onClose={() => setAgentWizard(false)} onSaved={async () => { setAgentWizard(false); await refresh() }} />}
@@ -803,5 +807,5 @@ function AgentDrawer({ agent, onClose, onChat, onEdit, onRemove }: {
       onConfirm: () => onRemove(target.id),
     })
   }
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="agent-drawer" onMouseDown={(event) => event.stopPropagation()}><header><Avatar name={agent.name} large /><div><h2>{agent.name}</h2><p>{agent.role}</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header><section><span className="eyebrow">身份设定</span><p>{agent.persona}</p></section><section><span className="eyebrow">模型</span><p><em>{agent.model}</em></p></section><section><span className="eyebrow">技能</span><div className="tags">{agent.skills.map((item) => <i key={item}>{skillDisplayName(item)}</i>)}</div></section><section><span className="eyebrow">工具</span><div className="tags">{agent.tools.map((item) => <i key={item}>{item}</i>)}</div></section><footer><button className="primary-button" onClick={() => onChat(agent.id)}>开始对话</button><button className="secondary-button" onClick={() => onEdit(agent.id)}>编辑智能体</button><button className="danger-button" onClick={requestRemove}><Trash2 size={15} />删除智能体</button></footer></aside></div>
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="agent-drawer" onMouseDown={(event) => event.stopPropagation()}><header><Avatar name={agent.name} large /><div><h2>{agent.name}</h2><p>{agent.role}</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header><section><span className="eyebrow">身份设定</span><p>{agent.persona}</p></section>{agent.source && <section><details><summary>来源与许可</summary><p>{agent.source.repository} · {agent.source.sourceId}</p><p>版本：{agent.source.revision} · {agent.source.license}</p><pre className="source-license">{agent.source.licenseText}</pre></details></section>}<section><span className="eyebrow">模型</span><p><em>{agent.model}</em></p></section><section><span className="eyebrow">技能</span><div className="tags">{agent.skills.map((item) => <i key={item}>{skillDisplayName(item)}</i>)}</div></section><section><span className="eyebrow">工具</span><div className="tags">{agent.tools.map((item) => <i key={item}>{item}</i>)}</div></section><footer><button className="primary-button" onClick={() => onChat(agent.id)}>开始对话</button><button className="secondary-button" onClick={() => onEdit(agent.id)}>编辑智能体</button><button className="danger-button" onClick={requestRemove}><Trash2 size={15} />删除智能体</button></footer></aside></div>
 }

@@ -10,7 +10,8 @@ import electron from 'electron'
 const workspace = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const userData = mkdtempSync(join(tmpdir(), 'mindmesh-e2e-'))
 const executable = process.env.MINDMESH_E2E_EXE ?? electron
-const securityOnly = process.argv.includes('--security-only')
+const agencyOnly = process.argv.includes('--agency-agents')
+const securityOnly = process.argv.includes('--security-only') || agencyOnly
 const keepUserData = process.env.MINDMESH_E2E_KEEP_USER_DATA === '1'
 const key = process.env.DEEPSEEK_API_KEY
 const providerOverride = process.env.MINDMESH_E2E_PROVIDER
@@ -121,6 +122,30 @@ async function runRound(round) {
       }
       assert.equal(await evaluate(`window.mindmesh.marketplace.list('../bad').then(() => false, () => true)`), true)
       console.log('Electron Marketplace navigation, tabs and validated IPC: OK')
+      if (agencyOnly) {
+        const catalog = await evaluate(`window.mindmesh.marketplace.list('agents', true)`)
+        assert.equal(catalog.state, 'fresh', catalog.error)
+        assert.ok(catalog.items.length > 0)
+        const item = catalog.items[0]
+        assert.ok(catalog.items.every(entry => entry.revision === item.revision))
+        await evaluate(`document.querySelector('#marketplace-agents').click()`)
+        await until(() => evaluate(`Boolean(document.querySelector('.marketplace-install'))`))
+        await evaluate(`document.querySelector('.marketplace-install').click()`)
+        await until(() => evaluate(`document.querySelector('.marketplace-install')?.textContent.includes('已安装')`))
+        const installed = await evaluate(`window.mindmesh.agents.list().then(agents => agents.find(agent => agent.source?.sourceId === ${JSON.stringify(item.sourceId)}))`)
+        assert.ok(installed)
+        assert.deepEqual(installed.tools, [])
+        assert.deepEqual(installed.skills, [])
+        assert.equal(installed.source.revision, item.revision)
+        assert.match(installed.source.licenseText, /MIT License/)
+        assert.ok(installed.persona.length > 0)
+        assert.equal((await evaluate(`window.mindmesh.marketplace.installAgent(${JSON.stringify(item.key)}, ${JSON.stringify(item.revision)})`)).id, installed.id)
+        await evaluate(`document.querySelector('.marketplace-install').click()`)
+        await until(() => evaluate(`document.querySelector('.chat-page h1')?.textContent === ${JSON.stringify(installed.name)}`))
+        const messages = await evaluate(`window.mindmesh.chat.sendPrivate(${JSON.stringify(installed.id)}, 'Agency installation smoke')`)
+        assert.ok(messages.some(message => message.authorId === installed.id && message.content.length > 0))
+        console.log(`Electron Agency pinned catalog (${catalog.items.length} templates), install/Open and private conversation: OK`)
+      }
       await evaluate('setTimeout(() => window.close(), 100)')
       await until(() => app.exitCode !== null, 20_000)
       console.log('Electron sandboxed preload and CSP: OK')

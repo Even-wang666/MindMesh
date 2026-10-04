@@ -11,6 +11,43 @@ function setup(list: ReturnType<typeof vi.fn>): void {
 }
 
 describe('Marketplace page', () => {
+  it('installs the displayed revision, exposes Open and keeps an installation failure retryable', async () => {
+    const item = { kind: 'agents', source: 'agency', sourceId: 'engineering/writer.md', key: '["agents","agency","engineering/writer.md"]',
+      revision: 'a'.repeat(40), name: 'Writer', description: 'Writes', license: 'MIT' }
+    const installAgent = vi.fn().mockRejectedValueOnce(new Error('sensitive raw error')).mockResolvedValue({ id: 'installed' })
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: {
+      marketplace: { list: vi.fn(async () => ({ kind: 'agents', state: 'fresh', items: [item], fetchedAt: null })), installAgent },
+    } })
+    const open = vi.fn()
+    render(<MarketplacePage onOpenAgent={open} />)
+    fireEvent.click(await screen.findByRole('button', { name: '安装智能体' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('安装智能体失败')
+    expect(screen.queryByText('sensitive raw error')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '安装智能体' }))
+    const button = await screen.findByRole('button', { name: '已安装 · 打开' })
+    expect(installAgent).toHaveBeenLastCalledWith(item.key, item.revision)
+    fireEvent.click(button)
+    await waitFor(() => expect(open).toHaveBeenCalledWith('installed'))
+    expect(installAgent).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not put a completed install onto a different tab', async () => {
+    let finish!: (agent: { id: string }) => void
+    const item = { kind: 'agents', source: 'agency', sourceId: 'engineering/writer.md', key: 'writer', revision: 'a'.repeat(40), name: 'Writer', description: '' }
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: { marketplace: {
+      list: vi.fn(async (kind) => ({ kind, state: 'fresh', items: kind === 'agents' ? [item] : [], fetchedAt: null })),
+      installAgent: vi.fn(() => new Promise<{ id: string }>((resolve) => { finish = resolve })),
+    } } })
+    render(<MarketplacePage />)
+    fireEvent.click(await screen.findByRole('button', { name: '安装智能体' }))
+    expect(screen.getByRole('button', { name: '处理中…' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('tab', { name: '团队' }))
+    await screen.findByText('暂无团队')
+    await act(async () => { finish({ id: 'installed' }) })
+    expect(screen.getByText('暂无团队')).toBeInTheDocument()
+    expect(screen.queryByText('Writer')).toBeNull()
+  })
+
   it('shows loading and empty states, switches tabs and forces refresh', async () => {
     const list = vi.fn(async (kind) => ({ kind, state: 'fresh', items: [], fetchedAt: null }))
     setup(list)

@@ -26,8 +26,10 @@ describe('preload chat boundary', () => {
     electron.invoke.mockClear()
     await api.marketplace.list('teams')
     await api.marketplace.list('plugins', true)
+    await api.marketplace.installAgent('["agents","agency","path"]', 'a'.repeat(40))
     expect(electron.invoke.mock.calls).toEqual([
       ['marketplace:list', 'teams', false], ['marketplace:list', 'plugins', true],
+      ['marketplace:installAgent', '["agents","agency","path"]', 'a'.repeat(40)],
     ])
     electron.invoke.mockClear()
   })

@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { ChevronRight, CircleHelp, X } from 'lucide-react'
 import type { Agent, CatalogItem, CreateAgentInput, ModelOption, Space } from '../../shared/contracts'
-import { getModelProviderDefinition } from '../../shared/model-providers'
+import { DEFAULT_AGENT_MODEL, getModelProviderDefinition } from '../../shared/model-providers'
 import { createSkillReference } from '../../shared/skill-reference'
 import { Avatar, Field } from './Ui'
 
 const defaultAgent: CreateAgentInput = {
-  name: '', role: '', persona: '', provider: 'deepseek-official', model: 'deepseek-flash', skills: [], tools: [],
+  name: '', role: '', persona: '', ...DEFAULT_AGENT_MODEL, skills: [], tools: [],
 }
 
 export function AgentWizard({ initialAgent, onClose, onSaved }: {

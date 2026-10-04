@@ -30,7 +30,7 @@ const agent: Agent = {
 function mockApi(): MindMeshApi {
   let storedProfile: UserProfile = { name: '你', avatar: null }
   return {
-    marketplace: { list: vi.fn(async (kind) => ({ kind, items: [], state: 'fresh' as const, fetchedAt: null })) },
+    marketplace: { list: vi.fn(async (kind) => ({ kind, items: [], state: 'fresh' as const, fetchedAt: null })), installAgent: vi.fn() },
     agents: { list: vi.fn(async () => [agent]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
     spaces: { list: vi.fn(async () => []), create: vi.fn(), update: vi.fn(), remove: vi.fn(), updateContext: vi.fn() },
     chat: {
@@ -63,6 +63,20 @@ function mockApi(): MindMeshApi {
 }
 
 describe('chat details', () => {
+  it('opens an installed marketplace agent in its normal conversation', async () => {
+    const api = mockApi()
+    api.marketplace.list = vi.fn(async () => ({ kind: 'agents' as const, state: 'fresh' as const, fetchedAt: null, items: [
+      { kind: 'agents' as const, source: 'agency', sourceId: 'engineering/writer.md', key: 'writer', name: 'Template Writer', description: '',
+        revision: 'a'.repeat(40), installedAgentId: agent.id },
+    ] }))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '市场' }))
+    fireEvent.click(await screen.findByRole('button', { name: '已安装 · 打开' }))
+    await waitFor(() => expect(document.querySelector('.chat-page h1')).toHaveTextContent(agent.name))
+    expect(api.agents.list).toHaveBeenCalledTimes(2)
+  })
+
   it('opens an in-app URL form when GitHub import is clicked', async () => {
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: mockApi() })
     render(<App />)

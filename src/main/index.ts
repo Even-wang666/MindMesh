@@ -12,6 +12,7 @@ import type { SkillInstallProgress } from '../shared/contracts'
 import { runPluginDeveloperRequest } from './plugins/plugin-dev'
 import { PluginSetManager } from './plugins/plugin-set'
 import { MarketplaceCatalogService } from './marketplace'
+import { AgencyProvider, installAgencyAgent } from './agency-provider'
 
 let mainWindow: BrowserWindow | null = null
 let services: MindMeshServices | null = null
@@ -55,8 +56,19 @@ function createWindow(): void {
 }
 
 function registerIpc(current: MindMeshServices, dataDir: string): void {
-  const marketplace = new MarketplaceCatalogService(dataDir)
-  ipcMain.handle('marketplace:list', (_event, kind, refresh) => marketplace.list(kind, refresh))
+  const agency = new AgencyProvider(dataDir)
+  const marketplace = new MarketplaceCatalogService(dataDir, [agency,
+    { kind: 'teams', source: 'mindmesh-curated', load: async () => [] },
+    { kind: 'plugins', source: 'dsh', load: async () => [] },
+  ])
+  ipcMain.handle('marketplace:list', async (_event, kind, refresh) => {
+    const result = await marketplace.list(kind, refresh)
+    return { ...result, items: result.items.map((item) => ({ ...item,
+      installedAgentId: item.kind === 'agents' ? current.db.findAgentBySource(item.source, item.sourceId)?.id : undefined })) }
+  })
+  ipcMain.handle('marketplace:installAgent', async (_event, key, revision) => {
+    return installAgencyAgent(key, revision, agency, marketplace, current.db)
+  })
   ipcMain.handle('agents:list', () => current.listAgents())
   ipcMain.handle('agents:create', (_event, input) => current.createAgent(input))
   ipcMain.handle('agents:update', (_event, id, input) => current.updateAgent(id, input))

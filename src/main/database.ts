@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { Agent, ChatImageAttachment, CreateAgentInput, CreateSpaceInput, Message, Space, UserProfile } from '../shared/contracts'
+import type { Agent, AgentSource, ChatImageAttachment, CreateAgentInput, CreateSpaceInput, Message, Space, UserProfile } from '../shared/contracts'
+import { DEFAULT_AGENT_MODEL } from '../shared/model-providers'
+import type { AgencyTemplate } from './agency-provider'
 import { createSkillReference } from '../shared/skill-reference'
 import { getAgentCapabilityBaseHash, getAgentCapabilityHash } from './agent-capability'
 import { pluginSetRevision, type InstalledPlugin, type PluginArtifact, type PluginSetSnapshot } from './plugins/plugin-set'
@@ -27,7 +29,6 @@ function normalizeAgentInput(input: CreateAgentInput): CreateAgentInput {
     throw new Error('技能和工具数据无效')
   }
   const normalized = {
-    ...input,
     name: input.name.trim(),
     role: input.role.trim(),
     persona: input.persona.trim(),
@@ -128,24 +129,32 @@ export class MindMeshDatabase {
     this.db.exec('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     const row = this.db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get() as { value: string } | undefined
     const version = Number(row?.value ?? 0)
-    if (!Number.isInteger(version) || version < 0 || version > 2) throw new Error('Unsupported database schema version')
-    if (version === 2) return
+    if (!Number.isInteger(version) || version < 0 || version > 3) throw new Error('Unsupported database schema version')
+    if (version === 3) return
     // VACUUM INTO captures a consistent SQLite snapshot, including WAL, before migration.
     const backup = `${path}.before-schema-${version}.sqlite`
     if (path !== ':memory:' && !existsSync(backup)) this.db.prepare('VACUUM INTO ?').run(backup)
     this.db.exec('BEGIN IMMEDIATE')
     try {
       if (version < 1) this.migrate()
-      this.db.exec(`CREATE TABLE installed_plugins (
+      if (version < 2) {
+        this.db.exec(`CREATE TABLE installed_plugins (
         package_name TEXT PRIMARY KEY, resolved_version TEXT NOT NULL,
         enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), config_json TEXT NOT NULL,
         compatibility TEXT NOT NULL DEFAULT 'sdk-compatible', source TEXT NOT NULL DEFAULT 'npm',
         installed_at TEXT NOT NULL, updated_at TEXT NOT NULL
       )`)
-      const meta = this.db.prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)')
-      meta.run('schema_version', '2')
-      meta.run('runtime_schema_version', '2')
-      meta.run('plugin_set_generation', '0')
+        const meta = this.db.prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)')
+        meta.run('runtime_schema_version', '2')
+        meta.run('plugin_set_generation', '0')
+      }
+      this.db.exec(`CREATE TABLE agent_sources (
+        agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+        source TEXT NOT NULL, source_id TEXT NOT NULL, revision TEXT NOT NULL,
+        repository TEXT NOT NULL, content TEXT NOT NULL, license TEXT NOT NULL, license_text TEXT NOT NULL,
+        UNIQUE(source, source_id)
+      )`)
+      this.db.prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)').run('schema_version', '3')
       this.db.exec('COMMIT')
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
@@ -403,7 +412,40 @@ export class MindMeshDatabase {
       skills: JSON.parse(skills),
       tools: JSON.parse(tools),
       reasoningEffort: reasoningEffort ?? undefined,
+      ...this.agentSourceFields(row.id),
     }
+  }
+
+  private agentSourceFields(id: string): { source?: AgentSource } {
+    const row = this.db.prepare(`SELECT source, source_id AS sourceId, revision, repository, content,
+      license, license_text AS licenseText FROM agent_sources WHERE agent_id = ?`).get(id) as AgentSource | undefined
+    return row ? { source: row } : {}
+  }
+
+  findAgentBySource(source: string, sourceId: string): Agent | undefined {
+    const row = this.db.prepare('SELECT agent_id AS id FROM agent_sources WHERE source = ? AND source_id = ?')
+      .get(source, sourceId) as { id: string } | undefined
+    return row ? this.getAgent(row.id) : undefined
+  }
+
+  installAgencyAgent(template: AgencyTemplate): Agent {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const provenance = template.provenance
+      const existing = this.findAgentBySource(provenance.source, provenance.sourceId)
+      if (existing) { this.db.exec('COMMIT'); return existing }
+      const names = new Set(this.listAgents().map((agent) => agent.name))
+      let name = template.name
+      for (let suffix = 2; names.has(name); suffix += 1) name = `${template.name} (${suffix})`
+      const agent = this.createAgent({ name, role: template.description, persona: template.persona,
+        ...DEFAULT_AGENT_MODEL, skills: [], tools: [] })
+      this.db.prepare(`INSERT INTO agent_sources(agent_id, source, source_id, revision, repository, content, license, license_text)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(agent.id, provenance.source, provenance.sourceId, provenance.revision,
+          provenance.repository, provenance.content, provenance.license, provenance.licenseText)
+      const installed = this.getAgent(agent.id)!
+      this.db.exec('COMMIT')
+      return installed
+    } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
 
   createAgent(input: CreateAgentInput, id: string = randomUUID()): Agent {
