@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, readdirSync } from 'node:fs'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import { tmpdir } from 'node:os'
 import assert from 'node:assert/strict'
@@ -121,6 +121,17 @@ try {
       updateRemove: 'passed',
     })
   )
+} catch (error) {
+  // Only this loopback fixture's declarative inputs; never user configuration or credentials.
+  const artifacts = join(root, 'data', 'plugin-artifacts')
+  if (existsSync(artifacts)) {
+    for (const artifact of readdirSync(artifacts)) {
+      for (const name of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']) {
+        console.error(`[fixture-install-input] ${artifact}/${name}: ${readFileSync(join(artifacts, artifact, name), 'utf8').slice(0, 16384)}`)
+      }
+    }
+  }
+  throw error
 } finally {
   await registry.close()
   await model.close()
