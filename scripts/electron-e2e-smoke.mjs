@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import electron from 'electron'
+import { startPluginModelFixture } from './plugin-model-fixture.mjs'
 
 const workspace = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const userData = mkdtempSync(join(tmpdir(), 'mindmesh-e2e-'))
@@ -130,21 +131,37 @@ async function runRound(round) {
         assert.ok(catalog.items.every(entry => entry.revision === item.revision))
         await evaluate(`document.querySelector('#marketplace-agents').click()`)
         await until(() => evaluate(`Boolean(document.querySelector('.marketplace-install'))`))
-        await evaluate(`document.querySelector('.marketplace-install').click()`)
-        await until(() => evaluate(`document.querySelector('.marketplace-install')?.textContent.includes('已安装')`))
+        const alreadyInstalled = await evaluate(`document.querySelector('.marketplace-install').textContent.includes('已安装')`)
+        if (!alreadyInstalled) {
+          await evaluate(`document.querySelector('.marketplace-install').click()`)
+          await until(() => evaluate(`document.querySelector('.marketplace-install')?.textContent.includes('已安装')`))
+        }
         const installed = await evaluate(`window.mindmesh.agents.list().then(agents => agents.find(agent => agent.source?.sourceId === ${JSON.stringify(item.sourceId)}))`)
         assert.ok(installed)
         assert.deepEqual(installed.tools, [])
         assert.deepEqual(installed.skills, [])
+        if (round === 1) {
+          assert.equal(installed.provider, 'deepseek-official')
+          assert.equal(installed.model, 'deepseek-flash')
+        } else {
+          assert.equal(installed.provider, 'custom', '重复安装不能覆盖用户的模型修改')
+        }
         assert.equal(installed.source.revision, item.revision)
         assert.match(installed.source.licenseText, /MIT License/)
         assert.ok(installed.persona.length > 0)
         assert.equal((await evaluate(`window.mindmesh.marketplace.installAgent(${JSON.stringify(item.key)}, ${JSON.stringify(item.revision)})`)).id, installed.id)
         await evaluate(`document.querySelector('.marketplace-install').click()`)
         await until(() => evaluate(`document.querySelector('.chat-page h1')?.textContent === ${JSON.stringify(installed.name)}`))
+        await evaluate(`window.mindmesh.settings.saveModelProvider({ id: 'custom', name: 'Agency smoke fixture',
+          baseUrl: ${JSON.stringify(agencyModel.url)}, model: 'fixture-model', apiKey: 'fixture-key' })`)
+        await evaluate(`window.mindmesh.agents.update(${JSON.stringify(installed.id)}, {
+          ...${JSON.stringify(installed)}, provider: 'custom', model: 'fixture-model' })`)
+        const requestCount = agencyModel.requests.length
         const messages = await evaluate(`window.mindmesh.chat.sendPrivate(${JSON.stringify(installed.id)}, 'Agency installation smoke')`)
-        assert.ok(messages.some(message => message.authorId === installed.id && message.content.length > 0))
-        console.log(`Electron Agency pinned catalog (${catalog.items.length} templates), install/Open and private conversation: OK`)
+        assert.ok(messages.some(message => message.authorId === installed.id && message.content === 'core-without-plugin'))
+        assert.ok(agencyModel.requests.length > requestCount, '真实 SDK 必须到达本地模型 HTTP 边界')
+        assert.ok(agencyModel.requests.at(-1).messages.some(message => typeof message.content === 'string' && message.content.includes(installed.persona)))
+        console.log(`Electron Agency pinned catalog (${catalog.items.length} templates, ${item.revision}), install/Open and real DSH private conversation round ${round}: OK`)
       }
       await evaluate('setTimeout(() => window.close(), 100)')
       await until(() => app.exitCode !== null, 20_000)
@@ -288,10 +305,12 @@ async function runRound(round) {
   }
 }
 
+const agencyModel = agencyOnly ? await startPluginModelFixture() : null
 try {
   await runRound(1)
   if (process.env.MINDMESH_E2E_RESTART === '1') await runRound(2)
 } finally {
+  await agencyModel?.close()
   const tempRoot = resolve(tmpdir()) + sep
   if (keepUserData) console.error(`Electron user data preserved: ${userData}`)
   else if (resolve(userData).startsWith(tempRoot)) rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })

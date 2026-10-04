@@ -10,6 +10,7 @@
 - PR 4 Plugin 控制面与 staging：版本化 SQLite migration 与备份、插件 desired state/generation、串行全集合验证、随包 pnpm、真实安装/dump/SDK 初始化、required peer 检查及仅开发者入口。详见 [Plugin 控制面验收与回滚](../migration/plugin-control-plane-2026-10.md)。
 - PR 5 Extended Runtime：full 捕获已验证 enabled 集合并用冻结 lockfile 重建；core 物理隔离、插件 generation 与 Session 切换、历史恢复、失败重试和真实工具调用。详见 [Extended Runtime 验收](../migration/extended-runtime-2026-10.md)。
 - PR 6 Marketplace 基础：共享来源身份/key、Main 规范化目录与持久缓存、固定 IPC/Preload、市场导航和智能体/团队/插件三个页签；包含 loading/error/stale cache、刷新与切页竞态处理。真实内容和安装留到 PR 7–9。详见 [Marketplace 基础验收](../migration/marketplace-foundation-2026-10.md)。
+- PR 7 Agency Agents：官方目录按单一 commit 读取并缓存原文/完整许可；schema 3 来源关联迁移、安装去重/重名处理、空工具/技能与向导默认模型、Installed/Open 和用户编辑保护。详见 [Agency Agents 验收与回滚](../migration/agency-agents-2026-10.md)。
 
 - 项目内 Conda Python 3.11 环境。
 - DeepSeek Harness 源码浅克隆与精确提交记录。
@@ -55,7 +56,7 @@
 
 ## 下一阶段
 
-- 按执行规划进入 PR 7 Agency Agents：固定 commit 的内容 provider/cache、Agent 来源迁移、安装/Open、来源去重和重名处理、安全 tools=[] 默认值及来源/许可持久化；随后 PR 8 Team、PR 9 Plugin Catalog UI。
+- 按执行规划进入 PR 8 Team：curated manifests、数据库原子安装、复用来源 Agent、Space 来源映射和 Installed/Open；验证失败全部回滚、已有 Agent 保留及重启后的成员顺序。随后 PR 9 Plugin Catalog UI。
 
 - 使用各服务的独立测试凭据继续验收 OpenAI、Anthropic、MiniMax、智谱、通义千问、阶跃星辰及自定义 OpenAI 兼容服务；当前 CI 已纳入无密钥安全冒烟，带密钥的模型请求仍由发布前人工验收。
 - SDK 暂无可供桌面应用直接列举工具 Registry 的接口；工具页当前展示受 MindMesh 支持的七项工具，实际启用状态由 Harness 补丁控制。

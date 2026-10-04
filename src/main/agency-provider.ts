@@ -1,6 +1,8 @@
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createReadStream, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { t as listTar } from 'tar'
 import { parseDocument } from 'yaml'
 import type { Agent, AgentSource } from '../shared/contracts'
@@ -10,6 +12,7 @@ import type { MindMeshDatabase } from './database'
 import { downloadFile } from './skill-github'
 
 export const AGENCY_REPOSITORY = 'msitarzewski/agency-agents'
+// ponytail: reviewed division allowlist; add new upstream divisions when their format is supported.
 const divisions = new Set(['academic', 'design', 'engineering', 'finance', 'game-development', 'gis', 'healthcare',
   'marketing', 'paid-media', 'product', 'project-management', 'research', 'sales', 'security', 'spatial-computing',
   'specialized', 'support', 'testing'])
@@ -48,13 +51,19 @@ export class AgencyProvider implements MarketplaceProvider {
 
   async load(): Promise<unknown> {
     const response = await fetch(`https://api.github.com/repos/${AGENCY_REPOSITORY}/commits/main`, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'MindMesh' },
+      headers: { Accept: 'application/vnd.github.sha', 'User-Agent': 'MindMesh' },
       signal: AbortSignal.timeout(15_000), redirect: 'error',
     })
-    if (!response.ok) throw new Error('Agency revision 请求失败')
-    const commit: unknown = await response.json()
-    const revision = commit && typeof commit === 'object' ? (commit as Record<string, unknown>).sha : undefined
-    if (typeof revision !== 'string' || !/^[a-f0-9]{40}$/.test(revision)) throw new Error('Agency revision 无效')
+    if (!response.ok || !response.body) throw new Error('Agency revision 请求失败')
+    let revision = ''
+    let revisionBytes = 0
+    for await (const chunk of Readable.fromWeb(response.body as never)) {
+      revisionBytes += chunk.length
+      if (revisionBytes > 80) throw new Error('Agency revision 响应过大')
+      revision += chunk.toString('utf8')
+    }
+    revision = revision.trim()
+    if (!/^[a-f0-9]{40}$/.test(revision)) throw new Error('Agency revision 无效')
     const temporary = mkdtempSync(join(tmpdir(), 'mindmesh-agency-'))
     try {
       const archive = join(temporary, 'agency.tar.gz')
@@ -63,24 +72,33 @@ export class AgencyProvider implements MarketplaceProvider {
       let entries = 0
       let expanded = 0
       let contentBytes = 0
-      await listTar({ file: archive, gzip: true,
+      const seen = new Set<string>()
+      const parser = listTar({ gzip: true, strict: true,
         filter: (path, entry) => {
           entries += 1
           expanded += entry.size
-          if (entries > 10_000 || expanded > 256 * 1024 * 1024) throw new Error('Agency 归档规模过大')
+          if (entries > 10_000 || expanded > 256 * 1024 * 1024) {
+            parser.abort(new Error('Agency 归档规模过大'))
+            return false
+          }
           const parts = path.split('/')
           return parts.length === 2 && parts[1] === 'LICENSE'
             || parts.length === 3 && divisions.has(parts[1]) && /^[a-z0-9][a-z0-9-]*\.md$/.test(parts[2])
         },
         onReadEntry: (entry) => {
-          if (entry.type !== 'File' || entry.size > MAX_CONTENT_BYTES) throw new Error('Agency 文件无效或过大')
+          if (entry.type !== 'File' || entry.size > MAX_CONTENT_BYTES || seen.has(entry.path)) {
+            parser.abort(new Error('Agency 文件无效或过大'))
+            return
+          }
+          seen.add(entry.path)
           contentBytes += entry.size
-          if (contentBytes > MAX_SNAPSHOT_BYTES / 2) throw new Error('Agency 内容规模过大')
+          if (contentBytes > MAX_SNAPSHOT_BYTES / 2) { parser.abort(new Error('Agency 内容规模过大')); return }
           const chunks: Buffer[] = []
           entry.on('data', (chunk: Buffer) => chunks.push(chunk))
           entry.on('end', () => { files[entry.path.split('/').slice(1).join('/')] = Buffer.concat(chunks).toString('utf8') })
         },
       })
+      await pipeline(createReadStream(archive), parser)
       const licenseText = files.LICENSE
       if (!licenseText) throw new Error('Agency 许可缺失')
       const templates = Object.entries(files).filter(([path]) => path !== 'LICENSE')
@@ -89,6 +107,7 @@ export class AgencyProvider implements MarketplaceProvider {
       const snapshot = JSON.stringify({ revision, files })
       if (Buffer.byteLength(snapshot) > MAX_SNAPSHOT_BYTES) throw new Error('Agency 快照过大')
       mkdirSync(this.directory, { recursive: true })
+      // ponytail: retain pinned snapshots for cached revisions; add pruning if disk use becomes material.
       const path = join(this.directory, `${revision}.json`)
       writeFileSync(`${path}.tmp`, snapshot, 'utf8')
       renameSync(`${path}.tmp`, path)

@@ -2,6 +2,8 @@
 
 日期：2026-10-04。基线：PR 5 `d6fd004`。
 
+后续：PR 6 `611deba` 已按用户授权推送到 `origin/main`；PR 7 接入真实 Agency provider 和安装/Open，见 [Agency Agents 验收](./agency-agents-2026-10.md)。本页保留 PR 6 验收范围。
+
 ## 范围与运行路径
 
 新增「市场」一级导航入口和智能体、团队、插件三个页签。Renderer 仅调用 `window.mindmesh.marketplace.list(kind, refresh)`；Preload 使用固定 `marketplace:list` channel，Main 校验目录类型和 refresh 布尔值。不接受 Renderer 指定的 URL、包命令或 provider 回调。

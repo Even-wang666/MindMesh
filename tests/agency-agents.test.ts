@@ -27,24 +27,39 @@ afterEach(() => {
   }
 })
 
-async function fixture(path: string): Promise<ReturnType<typeof vi.fn>> {
+async function fixture(path: string, templateContent = content): Promise<ReturnType<typeof vi.fn>> {
   const rootName = `agency-agents-${revision}`
   const root = join(path, rootName)
   mkdirSync(join(root, 'engineering'), { recursive: true })
   mkdirSync(join(root, 'scripts'))
-  writeFileSync(join(root, sourceId), content)
+  writeFileSync(join(root, sourceId), templateContent)
   writeFileSync(join(root, 'engineering', 'engineering-reviewer.md'), content.replace('Writer', 'Reviewer'))
   writeFileSync(join(root, 'scripts', 'malicious.md'), content)
   writeFileSync(join(root, 'LICENSE'), license)
   const archive = join(path, 'archive.tar.gz')
   await createTar({ cwd: path, file: archive, gzip: true }, [rootName])
   const fetchMock = vi.fn(async (url: string) => url.includes('/commits/main')
-    ? Response.json({ sha: revision }) : new Response(new Uint8Array(readFileSync(archive))))
+    ? new Response(revision) : new Response(new Uint8Array(readFileSync(archive))))
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
 }
 
 describe('Agency pinned content and installs', () => {
+  it('bounds the SHA response before parsing or downloading', async () => {
+    const path = directory()
+    const fetchMock = vi.fn(async () => new Response('a'.repeat(81)))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(new AgencyProvider(path).load()).rejects.toThrow('响应过大')
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('rejects oversized archive content as a controlled failure without publishing a snapshot', async () => {
+    const path = directory()
+    await fixture(path, content + 'x'.repeat(65_536))
+    await expect(new AgencyProvider(path).load()).rejects.toThrow(/文件无效或过大/)
+    expect(existsSync(join(path, 'marketplace-cache', 'agency', `${revision}.json`))).toBe(false)
+  })
+
   it('pins one commit for the entire archive, retains licensed content, and installs offline after restart', async () => {
     const path = directory()
     const fetchMock = await fixture(path)
@@ -82,7 +97,9 @@ describe('Agency pinned content and installs', () => {
     const manual = db.createAgent({ name: 'Writer', role: 'manual', persona: 'manual persona', provider: 'deepseek-official', model: 'deepseek-flash', skills: [], tools: ['Shell'] })
     const installed = db.installAgencyAgent(template)
     expect(installed.name).toBe('Writer (2)')
-    db.updateAgent(installed.id, { ...installed, name: 'Edited Writer', persona: 'user edit', tools: [] })
+    const editedInput = { ...installed, name: 'Edited Writer', persona: 'user edit', tools: [],
+      source: { ...installed.source!, sourceId: 'forged' } }
+    expect(db.updateAgent(installed.id, editedInput).source?.sourceId).toBe(sourceId)
     expect(db.installAgencyAgent({ ...template, persona: 'upstream new persona' })).toMatchObject({ id: installed.id, persona: 'user edit', name: 'Edited Writer' })
     db.close()
     db = new MindMeshDatabase(file)
