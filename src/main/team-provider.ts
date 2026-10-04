@@ -44,7 +44,20 @@ export const teamProvider = {
   kind: 'teams' as const,
   source: 'mindmesh-curated',
   load: async () =>
-    curatedTeams.map((team) => ({ ...team, revision: teamRevision(team), license: 'MIT' })),
+    curatedTeams.map((team) => ({
+      ...team,
+      revision: teamRevision(team),
+      license: 'MIT',
+      team: {
+        members: team.members.map((path) =>
+          path
+            .split('/')[1]
+            .replace(/^[^-]+-/, '')
+            .replace(/\.md$/, '')
+            .replaceAll('-', ' ')
+        ),
+      },
+    })),
 }
 
 export async function installTeam(

@@ -5,13 +5,12 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import electron from 'electron'
 import { startPluginModelFixture } from './plugin-model-fixture.mjs'
 import { startPluginFixtureRegistry } from './plugin-fixture-registry.mjs'
 
 const workspace = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const userData = mkdtempSync(join(tmpdir(), 'mindmesh-e2e-'))
-const executable = process.env.MINDMESH_E2E_EXE ?? electron
+const executable = process.env.MINDMESH_E2E_EXE ?? (await import('electron')).default
 const agencyOnly = process.argv.includes('--agency-agents')
 const teamsOnly = process.argv.includes('--teams')
 const pluginUi = process.argv.includes('--plugin-marketplace')
@@ -87,7 +86,8 @@ async function runRound(round) {
   const port = await freePort()
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
-  if (pluginUi) env.PATH = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
+  if (pluginUi || process.env.MINDMESH_E2E_NO_EXTERNAL_PNPM === '1')
+    env.PATH = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
   const args = [`--remote-debugging-port=${port}`, `--user-data-dir=${userData}`]
   if (pluginUi) args.push(`--plugin-market-fixture=${join(userData, 'plugin-market-fixture.json')}`)
   const app = spawn(executable, process.env.MINDMESH_E2E_EXE ? args : ['.', ...args], {
@@ -343,6 +343,17 @@ async function runRound(round) {
         )
         await evaluate(`document.querySelector('#marketplace-teams').click()`)
         await until(() => evaluate(`Boolean(document.querySelector('.marketplace-install'))`))
+        assert.equal(item.team.members.length, 3)
+        assert.ok(
+          await evaluate(
+            `document.querySelector('.catalog-grid').textContent.includes('成员：3 位智能体')`
+          )
+        )
+        assert.ok(
+          await evaluate(
+            `document.querySelector('.catalog-grid').textContent.includes('成员预览：')`
+          )
+        )
         if (round === 1) {
           await evaluate(`document.querySelector('.marketplace-install').click()`)
           await until(() =>
@@ -419,6 +430,22 @@ async function runRound(round) {
         assert.ok(catalog.items.every((entry) => entry.revision === item.revision))
         await evaluate(`document.querySelector('#marketplace-agents').click()`)
         await until(() => evaluate(`Boolean(document.querySelector('.marketplace-install'))`))
+        await evaluate(`(() => {
+          const input = document.querySelector('input[type="search"]');
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(item.name)});
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        })()`)
+        await until(() =>
+          evaluate(
+            `document.querySelector('.catalog-grid h3')?.textContent === ${JSON.stringify(item.name)}`
+          )
+        )
+        assert.ok(
+          await evaluate(`document.querySelector('.catalog-grid').textContent.includes('分类：')`)
+        )
+        assert.ok(
+          await evaluate(`document.querySelector('.catalog-grid').textContent.includes('免费')`)
+        )
         const alreadyInstalled = await evaluate(
           `document.querySelector('.marketplace-install').textContent.includes('已安装')`
         )

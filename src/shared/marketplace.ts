@@ -9,6 +9,8 @@ export type MarketplaceItem = MarketplaceIdentity & {
   license?: string
   installedAgentId?: string
   installedSpaceId?: string
+  category?: string
+  team?: { members: string[] }
   plugin?: { packageName?: string; version?: string; warnings: string[] }
 }
 export type MarketplaceCatalog = {

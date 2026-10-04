@@ -15,7 +15,7 @@ import { c as createTar } from 'tar'
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
 import type { Agent } from '../src/shared/contracts'
 import { createSkillReference } from '../src/shared/skill-reference'
-import { prepareAgentCapabilities } from '../src/main/capabilities'
+import { prepareAgentCapabilities, playwrightBrowserAvailable } from '../src/main/capabilities'
 import {
   installSkillBundle,
   installSkillFromGitHub,
@@ -524,6 +524,16 @@ describe('Harness capability binding', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-capabilities-browser-'))
     try {
       const home = join(directory, 'harness', 'browser')
+      if (!playwrightBrowserAvailable()) {
+        expect(() =>
+          prepareAgentCapabilities({ ...agent, skills: [], tools: ['浏览器'] }, directory, home)
+        ).toThrow(
+          process.platform === 'win32'
+            ? '未检测到可用的 Microsoft Edge 浏览器'
+            : '当前平台尚未配置 Playwright Chromium 浏览器'
+        )
+        return
+      }
       const path = prepareAgentCapabilities(
         {
           ...agent,

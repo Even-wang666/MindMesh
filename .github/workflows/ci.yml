@@ -31,7 +31,7 @@ jobs:
 
   windows-package:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -42,7 +42,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm package:dir
+      - run: pnpm build
+      - run: pnpm exec electron-builder --win nsis --config.electronDist=node_modules/electron/dist --publish never
       - run: pnpm check:package-deps
       - name: Smoke-test plugins without external pnpm
         shell: pwsh
@@ -60,3 +61,70 @@ jobs:
           $env:MINDMESH_E2E_EXE = Join-Path $PWD 'release\win-unpacked\MindMesh.exe'
           $env:MINDMESH_E2E_RESTART = '1'
           node scripts/electron-e2e-smoke.mjs --plugin-marketplace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-candidate
+          path: release/MindMesh Setup*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-clean-install:
+    needs: windows-package
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release-candidate
+          path: installer
+      - name: Prepare standalone smoke harness (no application dependencies)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path smoke/scripts | Out-Null
+          Copy-Item scripts/electron-e2e-smoke.mjs,scripts/plugin-smoke.mjs,scripts/plugin-fixture-registry.mjs,scripts/plugin-model-fixture.mjs smoke/scripts
+          npm install --prefix smoke --no-package-lock --ignore-scripts --no-audit --no-fund tar@7.5.22
+          if ($LASTEXITCODE -ne 0) { throw 'Smoke harness install failed' }
+          foreach ($name in @('electron', 'pnpm', '@deepseek-ai')) {
+            if (Test-Path -LiteralPath (Join-Path 'smoke/node_modules' $name)) { throw "Unexpected application dependency: $name" }
+          }
+          if (Test-Path -LiteralPath 'node_modules') { throw 'Clean job must not install project dependencies' }
+      - name: Install and validate release on fresh Windows VM
+        shell: pwsh
+        run: |
+          $installPath = Join-Path $env:RUNNER_TEMP 'mm-release'
+          if (Test-Path -LiteralPath $installPath) { throw 'Install path already exists' }
+          $installer = (Get-ChildItem -LiteralPath installer -Filter '*.exe' | Select-Object -First 1).FullName
+          $install = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$installPath") -WindowStyle Hidden -PassThru -Wait
+          if ($install.ExitCode -ne 0) { throw "Installer exit $($install.ExitCode)" }
+          $app = Join-Path $installPath 'MindMesh.exe'
+          if (-not (Test-Path -LiteralPath $app)) { throw 'Installed executable missing' }
+          $node = (Get-Command node).Source
+          $env:MINDMESH_E2E_EXE = $app
+          $env:MINDMESH_PLUGIN_SMOKE_EXE = $app
+          $env:MINDMESH_E2E_RESTART = '1'
+          $env:MINDMESH_E2E_NO_EXTERNAL_PNPM = '1'
+          $env:PATH = Join-Path $env:SystemRoot 'System32'
+          & (Join-Path $env:SystemRoot 'System32/where.exe') pnpm 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'External pnpm must be unavailable' }
+          foreach ($mode in @('--agency-agents', '--teams', '--plugin-marketplace')) {
+            & $node smoke/scripts/electron-e2e-smoke.mjs $mode
+            if ($LASTEXITCODE -ne 0) { throw "Installed UI smoke failed: $mode" }
+          }
+          & $node smoke/scripts/plugin-smoke.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Installed core/full permission smoke failed' }
+          'Clean Windows installation, Agent/Team/Plugin UI, restart, Full Access and core isolation passed.' | Add-Content $env:GITHUB_STEP_SUMMARY
+      - name: Uninstall isolated test installation
+        if: always()
+        shell: pwsh
+        run: |
+          $installPath = Join-Path $env:RUNNER_TEMP 'mm-release'
+          $uninstaller = Join-Path $installPath 'Uninstall MindMesh.exe'
+          if (Test-Path -LiteralPath $uninstaller) {
+            $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -WindowStyle Hidden -PassThru -Wait
+            if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exit $($uninstall.ExitCode)" }
+          }
+          if (Test-Path -LiteralPath (Join-Path $installPath 'MindMesh.exe')) { throw 'Uninstall left executable behind' }

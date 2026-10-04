@@ -20,6 +20,8 @@ export function MarketplacePage({
   const [catalog, setCatalog] = useState<MarketplaceCatalog | null>(null)
   const [loading, setLoading] = useState(true)
   const [refresh, setRefresh] = useState(0)
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState('')
   const [operation, setOperation] = useState<{
     key: string
     pending: boolean
@@ -102,6 +104,20 @@ export function MarketplacePage({
     }
   }, [kind, refresh])
 
+  const categories = [
+    ...new Set(
+      catalog?.items.map((item) => item.category).filter((value): value is string => !!value)
+    ),
+  ].sort()
+  const filteredItems =
+    catalog?.items.filter(
+      (item) =>
+        (!category || item.category === category) &&
+        `${item.name} ${item.description} ${item.category ?? ''}`
+          .toLowerCase()
+          .includes(query.trim().toLowerCase())
+    ) ?? []
+
   return (
     <div className="page management-page">
       <header className="page-header">
@@ -146,11 +162,15 @@ export function MarketplacePage({
               event.preventDefault()
               setKind(next)
               setRefresh(0)
+              setQuery('')
+              setCategory('')
               document.getElementById(`marketplace-${next}`)?.focus()
             }}
             onClick={() => {
               setKind(tab)
               setRefresh(0)
+              setQuery('')
+              setCategory('')
             }}
           >
             {labels[tab]}
@@ -183,13 +203,48 @@ export function MarketplacePage({
           </div>
         )}
         {kind === 'plugins' && <PluginMarketplace items={catalog?.items ?? []} />}
+        {kind === 'agents' && !loading && catalog?.items.length !== 0 && (
+          <div className="marketplace-filters">
+            <label>
+              搜索智能体
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索名称、用途或分类"
+              />
+            </label>
+            <label>
+              分类
+              <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                <option value="">全部分类</option>
+                {categories.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+        {!loading && kind === 'agents' && !!catalog?.items.length && filteredItems.length === 0 && (
+          <p role="status">没有匹配的智能体，请调整搜索或分类。</p>
+        )}
         {!loading && kind !== 'plugins' && (
           <div className="catalog-grid">
-            {catalog?.items.map((item) => (
+            {(kind === 'agents' ? filteredItems : catalog?.items)?.map((item) => (
               <article key={item.key}>
                 <h3>{item.name}</h3>
                 <p>{item.description}</p>
                 <small>来源：{item.source}</small>
+                {item.kind === 'agents' && item.category && <small>分类：{item.category}</small>}
+                {item.kind === 'agents' && item.source === 'agency' && <small>免费</small>}
+                {item.kind === 'teams' && item.team && (
+                  <>
+                    <small>成员：{item.team.members.length} 位智能体</small>
+                    <small>成员预览：{item.team.members.join('、')}</small>
+                  </>
+                )}
                 {item.revision && <small>版本：{item.revision}</small>}
                 {item.license && <small>许可：{item.license}</small>}
                 {((item.kind === 'agents' && item.source === 'agency') ||

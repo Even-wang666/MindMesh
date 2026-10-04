@@ -201,6 +201,7 @@ export class AgencyProvider implements MarketplaceProvider {
         sourceId: template.provenance.sourceId,
         name: template.name,
         description: template.description,
+        category: template.provenance.sourceId.split('/')[0],
         revision,
         license: 'MIT',
       }))

@@ -20,6 +20,61 @@ function setup(list: ReturnType<typeof vi.fn>): void {
 }
 
 describe('Marketplace page', () => {
+  it('searches Agents by name and description, combines category filters and resets on tab switches', async () => {
+    const agent = {
+      kind: 'agents',
+      source: 'agency',
+      sourceId: 'engineering/frontend.md',
+      key: 'frontend',
+      name: 'Frontend Developer',
+      description: 'Builds interfaces',
+      category: 'engineering',
+    }
+    const team = {
+      kind: 'teams',
+      source: 'mindmesh-curated',
+      sourceId: 'web',
+      key: 'web',
+      name: 'Web team',
+      description: 'Delivery',
+      team: { members: ['frontend developer', 'api tester'] },
+    }
+    setup(
+      vi.fn(async (kind) => ({
+        kind,
+        state: 'fresh',
+        fetchedAt: null,
+        items:
+          kind === 'agents'
+            ? [
+                agent,
+                {
+                  ...agent,
+                  key: 'writer',
+                  sourceId: 'marketing/writer.md',
+                  name: 'Writer',
+                  description: 'Writes copy',
+                  category: 'marketing',
+                },
+              ]
+            : [team],
+      }))
+    )
+    render(<MarketplacePage />)
+    expect(await screen.findByText('Frontend Developer')).toBeInTheDocument()
+    expect(screen.getAllByText('免费')).toHaveLength(2)
+    fireEvent.change(screen.getByLabelText('搜索智能体'), { target: { value: 'INTERFACES' } })
+    expect(screen.queryByText('Writer')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('分类'), { target: { value: 'marketing' } })
+    expect(screen.getByRole('status')).toHaveTextContent('没有匹配')
+    fireEvent.click(screen.getByRole('tab', { name: '团队' }))
+    expect(await screen.findByText('成员：2 位智能体')).toBeInTheDocument()
+    expect(screen.getByText('成员预览：frontend developer、api tester')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '智能体' }))
+    expect(await screen.findByText('Frontend Developer')).toBeInTheDocument()
+    expect(screen.getByLabelText('搜索智能体')).toHaveValue('')
+    expect(screen.getByLabelText('分类')).toHaveValue('')
+  })
   it('installs a Team and opens its Space, with Installed/Open restored on remount', async () => {
     const item = {
       kind: 'teams',

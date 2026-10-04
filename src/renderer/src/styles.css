@@ -2297,6 +2297,17 @@ em,
   color: var(--text-secondary);
   font-size: 12px;
 }
+.marketplace-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-5);
+}
+.marketplace-filters label {
+  display: grid;
+  gap: var(--sp-2);
+  flex: 1 1 240px;
+}
 .source-license {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

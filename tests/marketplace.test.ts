@@ -26,6 +26,70 @@ const row = {
 }
 
 describe('Marketplace foundation', () => {
+  it('reloads an older curated cache so member previews appear immediately after upgrade', async () => {
+    const path = directory()
+    mkdirSync(join(path, 'marketplace-cache'))
+    writeFileSync(
+      join(path, 'marketplace-cache', 'teams.json'),
+      JSON.stringify({
+        kind: 'teams',
+        fetchedAt: new Date().toISOString(),
+        items: [{ ...row, source: 'mindmesh-curated' }],
+      })
+    )
+    const load = vi.fn(async () => [
+      { ...row, team: { members: ['frontend developer', 'api tester'] } },
+    ])
+    const service = new MarketplaceCatalogService(path, [
+      { kind: 'teams', source: 'mindmesh-curated', load },
+    ])
+    expect((await service.list('teams')).items[0].team?.members).toHaveLength(2)
+    expect(load).toHaveBeenCalledOnce()
+    expect(
+      (
+        await new MarketplaceCatalogService(path, [
+          { kind: 'teams', source: 'mindmesh-curated', load },
+        ]).list('teams')
+      ).items[0].team?.members
+    ).toHaveLength(2)
+    expect(load).toHaveBeenCalledOnce()
+  })
+  it('bounds display metadata, derives cached Agency categories and preserves Team previews', () => {
+    expect(
+      normalizeMarketplaceItems(
+        [{ ...row, sourceId: 'engineering/writer.md' }],
+        'agents',
+        'agency'
+      )[0].category
+    ).toBe('engineering')
+    const team = normalizeMarketplaceItems(
+      [{ ...row, team: { members: [' Writer\u0000 ', null, 'x'.repeat(300)] } }],
+      'teams',
+      'curated'
+    )[0]
+    expect(team.team?.members).toEqual(['Writer', 'x'.repeat(160)])
+    expect(
+      normalizeMarketplaceItems(
+        [{ ...row, team: { members: Array(21).fill('x') } }],
+        'teams',
+        'curated'
+      )[0].team
+    ).toBeUndefined()
+    expect(
+      normalizeMarketplaceItems(
+        [{ ...row, category: 'x'.repeat(100), team: { members: ['x'] } }],
+        'agents',
+        'other'
+      )[0]
+    ).toMatchObject({ category: 'x'.repeat(80) })
+    expect(
+      normalizeMarketplaceItems(
+        [{ ...row, category: 'x', team: { members: ['x'] } }],
+        'plugins',
+        'other'
+      )[0]
+    ).not.toHaveProperty('team')
+  })
   it('round trips arbitrary source IDs without source or kind collisions', () => {
     const identity = { kind: 'agents' as const, source: 'source:one', sourceId: 'same:id/中文' }
     expect(parseMarketplaceKey(marketplaceKey(identity))).toEqual(identity)

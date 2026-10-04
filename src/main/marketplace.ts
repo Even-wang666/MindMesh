@@ -76,6 +76,26 @@ export function normalizeMarketplaceItems(
       description: text(row.description, 2_000) ?? '',
       revision: text(row.revision, 160),
       license: text(row.license, 160),
+      ...(kind === 'agents'
+        ? {
+            category:
+              text(row.category, 80) ??
+              (source === 'agency' ? text(sourceId.split('/')[0], 80) : undefined),
+          }
+        : {}),
+      ...(kind === 'teams' &&
+      row.team &&
+      typeof row.team === 'object' &&
+      Array.isArray((row.team as { members?: unknown }).members) &&
+      (row.team as { members: unknown[] }).members.length <= 20
+        ? {
+            team: {
+              members: (row.team as { members: unknown[] }).members
+                .map((member) => text(member, 160))
+                .filter((member): member is string => !!member),
+            },
+          }
+        : {}),
       ...(plugin ? { plugin } : {}),
     })
   }
@@ -141,6 +161,12 @@ export class MarketplaceCatalogService {
         !Number.isFinite(Date.parse(raw.fetchedAt)) ||
         !Array.isArray(raw.items) ||
         raw.items.length > (kind === 'plugins' ? 10_000 : 2_000) * providers.length
+      )
+        return undefined
+      // Older curated summaries lack member previews; reload the local provider once.
+      if (
+        kind === 'teams' &&
+        raw.items.some((row: MarketplaceItem) => row?.source === 'mindmesh-curated' && !row.team)
       )
         return undefined
       const items = providers.flatMap((provider) =>
