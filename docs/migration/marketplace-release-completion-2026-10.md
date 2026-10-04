@@ -24,6 +24,12 @@ Team 卡片增加成员数量与成员预览。预览由本地 curated manifest 
 
 ## 结果
 
-完整本机串行测试 31 个文件通过，299 项通过、3 项既有可选集成跳过。typecheck、format/lint、build、DSH 依赖检查通过。Standards 硬规范/启发式问题 0，Spec 代码缺漏/错误/范围扩大 0；远程独立 VM Gate 仍等待实际结果。
+完整本机串行测试 31 个文件通过，299 项通过、3 项既有可选集成跳过；新增脱敏原因回归后，最终 CI 完整测试 31 文件、300 项通过、3 项跳过。原生路径修复的真实插件 integration 及相关四文件 11 项本机测试通过。typecheck、format/lint、build、DSH 依赖检查通过。Standards 硬规范/启发式问题 0，Spec 代码缺漏/错误/范围扩大 0。
 
-本机 Agent/Team 的真实 Electron 双轮展示、安装/Open、实际 DSH 对话、状态/用户编辑保留及 sandbox/CSP 验证均通过。远程独立 VM 任务尚在执行。最终 run URL/结论在验收结束后补记；不能以 workflow 已配置代替实际通过。
+本机 Agent/Team 的真实 Electron 双轮展示、安装/Open、实际 DSH 对话、状态/用户编辑保留及 sandbox/CSP 验证均通过。
+
+最终代码提交 `2ee739a1a3d19ffa0e7fbc330d8c885767577c25` 的 [GitHub Actions 37208483147](https://github.com/Even-wang666/MindMesh/actions/runs/37208483147) 已完成，overall conclusion 为 **success**。`check`、`windows-package`、`windows-clean-install` 三个 job 全部成功。Windows packaged 依赖检查覆盖 585 个运行实例，required failures 0；RUNNER~1 环境下的实际 frozen 重建及插件工具调用通过，确认原生路径修复有效。
+
+独立安装 job 使用全新 Windows Server 2025（10.0.26100）VM，无项目 node_modules，harness 不含 Electron/DSH/pnpm。NSIS 安装到短路径成功，外部 pnpm 不可用；267 个固定 commit Agency 模板的搜索/分类/免费展示、安装/Open 和真实私聊双轮通过；Team 成员数量/预览、来源复用、有序三成员 DSH Space 对话及 Open 双轮通过；Plugin 界面兼容检查、安装/更新/启停/移除门槛、真实 Full Access 工具调用、重启后的取消保护通过。各轮 sandbox/CSP 均通过，独立 CLI 再验证 chat/workspace 的物理插件隔离以及更新/移除。
+
+`Uninstall isolated test installation` 步骤成功，安装主程序移除检查通过。用户选择的全新 GitHub Windows VM 发布 Gate 已实际完成；测试模型使用 loopback fixture，不将该记录表述为新增第三方模型服务的带密钥验收。后续仅文档提交不改变已验收代码。

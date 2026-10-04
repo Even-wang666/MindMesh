@@ -1,6 +1,6 @@
 # PR 9：Plugin Catalog UI
 
-日期：2026-10-04。基线：PR 8 `dc41a21`，已按用户要求 push 到 `origin/main`。本阶段代码保存在本地。
+日期：2026-10-04。基线：PR 8 `dc41a21`，已按用户要求 push 到 `origin/main`。PR 9 代码 `77f487c` 和后续展示/发布验收修复均已按用户要求 push。
 
 ## 目录与本机检查
 
@@ -38,4 +38,4 @@ SQLite schema 仍为 PR 8 的 4，Runtime schema 仍为 2，无新增依赖或�
 
 NSIS 静默安装到短路径隔离目录 `C:\Temp\mm-pr9-105b` 成功；安装版同样完成上述全部插件流程和双轮重启，实际 Full Access 工具调用、取消保护、sandbox/CSP 均通过。随后静默卸载成功，主程序已移除，未发现该安装目录或本轮隔离用户目录的残留进程。
 
-Standards/Spec 双路审查已完成：发现并修复「上游缺少合法版本隐藏已安装控制」问题，回归测试和增量复审通过。剩余代码问题 0。干净 VM 发布 Gate 尚未验证：当前设备没有 Hyper-V/VirtualBox 命令或虚拟机环境，隔离本机安装不能代替干净 VM 验收。
+Standards/Spec 双路审查已完成：发现并修复「上游缺少合法版本隐藏已安装控制」问题，回归测试和增量复审通过。剩余代码问题 0。后续按用户选择使用 GitHub Actions 全新 Windows VM 完成发布 Gate：[37208483147](https://github.com/Even-wang666/MindMesh/actions/runs/37208483147) 的完整检查、打包和独立安装 job 全部成功，安装版三类市场双轮、插件真实工具调用、core 物理隔离及卸载通过。见 [展示补齐与独立 Windows 验收](marketplace-release-completion-2026-10.md)。
