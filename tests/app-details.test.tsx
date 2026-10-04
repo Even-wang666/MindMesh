@@ -30,6 +30,7 @@ const agent: Agent = {
 function mockApi(): MindMeshApi {
   let storedProfile: UserProfile = { name: '你', avatar: null }
   return {
+    marketplace: { list: vi.fn(async (kind) => ({ kind, items: [], state: 'fresh' as const, fetchedAt: null })) },
     agents: { list: vi.fn(async () => [agent]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
     spaces: { list: vi.fn(async () => []), create: vi.fn(), update: vi.fn(), remove: vi.fn(), updateContext: vi.fn() },
     chat: {

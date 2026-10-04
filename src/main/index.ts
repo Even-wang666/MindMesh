@@ -11,6 +11,7 @@ import { installNavigationGuards } from './navigation'
 import type { SkillInstallProgress } from '../shared/contracts'
 import { runPluginDeveloperRequest } from './plugins/plugin-dev'
 import { PluginSetManager } from './plugins/plugin-set'
+import { MarketplaceCatalogService } from './marketplace'
 
 let mainWindow: BrowserWindow | null = null
 let services: MindMeshServices | null = null
@@ -54,6 +55,8 @@ function createWindow(): void {
 }
 
 function registerIpc(current: MindMeshServices, dataDir: string): void {
+  const marketplace = new MarketplaceCatalogService(dataDir)
+  ipcMain.handle('marketplace:list', (_event, kind, refresh) => marketplace.list(kind, refresh))
   ipcMain.handle('agents:list', () => current.listAgents())
   ipcMain.handle('agents:create', (_event, input) => current.createAgent(input))
   ipcMain.handle('agents:update', (_event, id, input) => current.updateAgent(id, input))

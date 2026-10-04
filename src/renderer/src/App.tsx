@@ -24,8 +24,9 @@ import { SettingsPage } from './SettingsPage'
 import { getProviderLogo } from './ProviderLogos'
 import { useChatController } from './useChatController'
 import { DirectoryConfirm, ImagePicker } from './FilePicker'
+import { MarketplacePage } from './MarketplacePage'
 
-type View = 'chats' | 'spaces' | 'agents' | 'skills' | 'tools' | 'settings'
+type View = 'chats' | 'spaces' | 'agents' | 'skills' | 'tools' | 'marketplace' | 'settings'
 const defaultProfile: UserProfile = { name: '你', avatar: null }
 
 export function App(): React.JSX.Element {
@@ -133,6 +134,7 @@ export function App(): React.JSX.Element {
         {view === 'agents' && <AgentsPage agents={agents} onCreate={() => setAgentWizard(true)} onDetail={setDetailAgentId} />}
         {view === 'skills' && <CatalogPage kind="skills" />}
         {view === 'tools' && <CatalogPage kind="tools" />}
+        {view === 'marketplace' && <MarketplacePage />}
         {view === 'settings' && <SettingsPage runtime={runtime} profile={profile} busy={busy} onProfileChange={setProfile} onRuntimeChange={setRuntime} onProviderChange={refreshModels} />}
       </section>
       {agentWizard && <AgentWizard onClose={() => setAgentWizard(false)} onSaved={async () => { setAgentWizard(false); await refresh() }} />}
@@ -184,6 +186,7 @@ function PrimaryNav({ view, onView, runtime }: { view: View; onView: (view: View
       { id: 'agents', label: '智能体', icon: Bot },
       { id: 'skills', label: '技能', icon: Library },
       { id: 'tools', label: '工具', icon: Wrench },
+      { id: 'marketplace', label: '市场', icon: Boxes },
     ] },
   ]
   const runtimeTone = runtime?.state === 'error' ? 'dot danger' : runtime?.state === 'demo' ? 'dot warn' : 'dot'

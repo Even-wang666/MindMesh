@@ -1,3 +1,5 @@
+import type { MarketplaceCatalog, MarketplaceKind } from './marketplace'
+
 export type Agent = {
   id: string
   name: string
@@ -134,6 +136,9 @@ export type ChatDelta = {
 export type ChatProgress = Pick<Message, 'scope' | 'scopeId'> & { agentName: string }
 
 export type MindMeshApi = {
+  marketplace: {
+    list(kind: MarketplaceKind, refresh?: boolean): Promise<MarketplaceCatalog>
+  }
   agents: {
     list(): Promise<Agent[]>
     create(input: CreateAgentInput): Promise<Agent>

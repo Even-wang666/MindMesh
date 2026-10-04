@@ -3,6 +3,7 @@ import type { ChatDelta, ChatProgress, MindMeshApi, SkillInstallProgress } from 
 import { validateChatContent } from '../shared/chat-content'
 
 const api: MindMeshApi = {
+  marketplace: { list: (kind, refresh = false) => ipcRenderer.invoke('marketplace:list', kind, refresh) },
   agents: {
     list: () => ipcRenderer.invoke('agents:list'),
     create: (input) => ipcRenderer.invoke('agents:create', input),

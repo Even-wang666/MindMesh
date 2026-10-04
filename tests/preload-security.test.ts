@@ -22,6 +22,15 @@ beforeAll(async () => {
 })
 
 describe('preload chat boundary', () => {
+  it('forwards only catalog kind and refresh over marketplace IPC', async () => {
+    electron.invoke.mockClear()
+    await api.marketplace.list('teams')
+    await api.marketplace.list('plugins', true)
+    expect(electron.invoke.mock.calls).toEqual([
+      ['marketplace:list', 'teams', false], ['marketplace:list', 'plugins', true],
+    ])
+    electron.invoke.mockClear()
+  })
   it('rejects oversized content before invoking main-process IPC', () => {
     expect(() => api.chat.sendPrivate('agent', 'a'.repeat(MAX_CHAT_CONTENT_BYTES + 1))).toThrow('64 KiB')
     expect(() => api.chat.sendSpace('space', 'a'.repeat(MAX_CHAT_CONTENT_BYTES + 1))).toThrow('64 KiB')

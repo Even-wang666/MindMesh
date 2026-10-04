@@ -111,6 +111,16 @@ async function runRound(round) {
     if (securityOnly) {
       const policy = await evaluate('document.querySelector(\'meta[http-equiv="Content-Security-Policy"]\')?.content')
       assert.match(policy, /script-src 'self'/)
+      await evaluate('document.querySelector(\'[data-nav="marketplace"]\').click()')
+      for (const kind of ['agents', 'teams', 'plugins']) {
+        await until(() => evaluate(`Boolean(document.querySelector('#marketplace-${kind}'))`))
+        await evaluate(`document.querySelector('#marketplace-${kind}').click()`)
+        await until(() => evaluate(`document.querySelector('#marketplace-panel')?.getAttribute('aria-busy') === 'false'`))
+        assert.equal(await evaluate(`window.mindmesh.marketplace.list('${kind}', true).then(x => x.kind)`), kind)
+        assert.equal(await evaluate(`document.querySelector('#marketplace-${kind}').getAttribute('aria-selected')`), 'true')
+      }
+      assert.equal(await evaluate(`window.mindmesh.marketplace.list('../bad').then(() => false, () => true)`), true)
+      console.log('Electron Marketplace navigation, tabs and validated IPC: OK')
       await evaluate('setTimeout(() => window.close(), 100)')
       await until(() => app.exitCode !== null, 20_000)
       console.log('Electron sandboxed preload and CSP: OK')

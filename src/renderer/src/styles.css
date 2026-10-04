@@ -397,6 +397,7 @@ h1 { letter-spacing: -.032em; }
 .nav-item[data-nav='skills'] { --nav-tone-rgb: var(--p-nav-tone-skills-rgb); }
 .nav-item[data-nav='tools'] { --nav-tone-rgb: var(--p-nav-tone-tools-rgb); }
 .nav-item[data-nav='settings'] { --nav-tone-rgb: var(--p-nav-tone-settings-rgb); }
+.nav-item[data-nav='marketplace'] { --nav-tone-rgb: var(--p-nav-tone-default-rgb); }
 
 .nav-item:hover { color: var(--text-primary); background: var(--nav-wash-1); }
 .nav-item:hover .nav-icon { color: rgb(var(--p-nav-ink-rgb)); }
@@ -1653,6 +1654,9 @@ em,
 }
 .skill-install-progress progress { width: min(320px, 100%); accent-color: var(--mm-color-iris); }
 
+.marketplace-tabs { display: flex; gap: var(--sp-3); margin-bottom: var(--sp-5); }
+.marketplace-tabs [aria-selected='true'] { color: var(--text-primary); border-color: currentColor; }
+.marketplace-cache { color: var(--text-secondary); font-size: 12px; }
 .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: var(--sp-5); }
 .catalog-grid article {
   min-height: 212px;
