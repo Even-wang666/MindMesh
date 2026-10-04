@@ -5,6 +5,39 @@ import { expect, test, vi } from 'vitest'
 import { redactPluginDiagnostic } from '../src/main/plugins/plugin-diagnostics'
 import { DshCliRunner } from '../src/main/plugins/dsh-cli-runner'
 import { runPluginDeveloperRequest } from '../src/main/plugins/plugin-dev'
+import { DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
+import { RuntimeFailure } from '../src/main/runtime-errors'
+
+test('developer runtime failures expose the redacted materialization cause', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mindmesh-plugin-diagnostics-'))
+  const resultFile = join(root, 'result.json'),
+    requestFile = join(root, 'request.json')
+  writeFileSync(
+    requestFile,
+    JSON.stringify({
+      dataDirectory: join(root, 'data'),
+      resultFile,
+      runtime: { permission: 'full', baseUrl: 'http://127.0.0.1:1234/v1' },
+    })
+  )
+  const run = vi
+    .spyOn(DeepSeekHarnessAdapter.prototype, 'run')
+    .mockRejectedValue(
+      new RuntimeFailure('materialization', new Error('composition mismatch apiKey=fixture-secret'))
+    )
+  try {
+    await expect(
+      runPluginDeveloperRequest(requestFile, new AbortController().signal)
+    ).rejects.toThrow('composition mismatch')
+    const result = readFileSync(resultFile, 'utf8')
+    expect(result).toContain('composition mismatch')
+    expect(result).toContain('[REDACTED]')
+    expect(result).not.toContain('fixture-secret')
+  } finally {
+    run.mockRestore()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test('redacts JSON, quoted and unquoted credentials and explicit secret values', () => {
   const message = `failed {"apiKey":"json-fixture", "access_token":"token-fixture"} api_key='quoted-fixture' password=plain-fixture Bearer bearer-fixture sk-key-fixture known-fixture`

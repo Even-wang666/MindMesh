@@ -101,7 +101,9 @@ export async function runPluginDeveloperRequest(file: string, signal: AbortSigna
       JSON.stringify({ ok: true, ...result, ...(runtime ? { runtime } : {}) }, null, 2)
     )
   } catch (error) {
-    const message = redactPluginDiagnostic(error)
+    const message = redactPluginDiagnostic(
+      error instanceof Error && error.cause ? `${error}; caused by ${error.cause}` : error
+    )
     writeFileSync(request.resultFile, JSON.stringify({ ok: false, error: message }, null, 2))
     throw new Error(message, { cause: error })
   } finally {
