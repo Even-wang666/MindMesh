@@ -9,11 +9,13 @@ import { installSkillBundle, installSkillFromGitHub, listSkillCatalog, playwrigh
 import { appendRuntimeError } from './runtime-errors'
 import { installNavigationGuards } from './navigation'
 import type { SkillInstallProgress } from '../shared/contracts'
+import { runPluginDeveloperRequest } from './plugins/plugin-dev'
 
 let mainWindow: BrowserWindow | null = null
 let services: MindMeshServices | null = null
 let quitReady = false
 let shutdownTask: Promise<void> | null = null
+let pluginDeveloperTask: Promise<void> | null = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -124,8 +126,20 @@ app.on('second-instance', () => {
   mainWindow?.focus()
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!primaryInstance) return
+  const pluginRequest = process.argv.find((arg) => arg.startsWith('--plugin-dev='))?.slice('--plugin-dev='.length)
+  if (pluginRequest) {
+    const controller = new AbortController()
+    app.on('before-quit', () => controller.abort())
+    try {
+      pluginDeveloperTask = runPluginDeveloperRequest(pluginRequest, controller.signal)
+      await pluginDeveloperTask
+      app.exit(0)
+    }
+    catch (error) { console.error(String(error)); app.exit(1) }
+    return
+  }
   app.setAppUserModelId('com.mindmesh.desktop')
   const dataDir = join(app.getPath('userData'), 'mindmesh-data')
   const bundledSkills = app.isPackaged ? join(process.resourcesPath, 'skills') : join(process.cwd(), 'resources', 'skills')
@@ -158,6 +172,7 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   shutdownTask ??= (async () => {
     try {
+      await pluginDeveloperTask?.catch(() => {})
       await services?.shutdown()
     } finally {
       try { services?.db.close() }

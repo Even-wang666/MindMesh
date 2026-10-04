@@ -42,6 +42,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm package:dir
       - run: pnpm check:package-deps
+      - name: Smoke-test plugins without external pnpm
+        shell: pwsh
+        run: |
+          $env:MINDMESH_PLUGIN_SMOKE_EXE = Join-Path $PWD 'release\win-unpacked\MindMesh.exe'
+          node scripts/plugin-smoke.mjs
       - name: Smoke-test the packaged security boundary
         shell: pwsh
         run: |

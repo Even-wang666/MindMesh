@@ -180,6 +180,9 @@ importers:
       png-to-ico:
         specifier: ^3.0.1
         version: 3.0.2
+      pnpm:
+        specifier: 11.7.0
+        version: 11.7.0
       sharp:
         specifier: ^0.34.4
         version: 0.34.4
@@ -5609,6 +5612,11 @@ packages:
   pngjs@7.0.0:
     resolution: {integrity: sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==}
     engines: {node: '>=14.19.0'}
+
+  pnpm@11.7.0:
+    resolution: {integrity: sha512-GcyFLBIMcSV2DyRD7mvgyltA+fUFmN4aCaHxd1A+AQ5Xwjx3ZG4B52HeWb+HT7IqM5jDOrlpH8E+uUa28PTWIA==}
+    engines: {node: '>=22.13'}
+    hasBin: true
 
   postcss@8.5.28:
     resolution: {integrity: sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==}
@@ -12771,6 +12779,8 @@ snapshots:
       pngjs: 7.0.0
 
   pngjs@7.0.0: {}
+
+  pnpm@11.7.0: {}
 
   postcss@8.5.28:
     dependencies:

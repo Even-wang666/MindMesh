@@ -18,6 +18,7 @@
     "poc:harness": "node scripts/harness-smoke.mjs",
     "poc:harness:electron": "electron scripts/harness-electron-smoke.cjs",
     "smoke:electron": "node scripts/electron-e2e-smoke.mjs",
+    "smoke:plugins": "node scripts/plugin-smoke.mjs",
     "smoke:security": "pnpm build && node scripts/electron-e2e-smoke.mjs --security-only",
     "check:package-deps": "node scripts/check-packaged-deps.mjs",
     "typecheck": "tsc --noEmit",
@@ -86,6 +87,7 @@
     "electron-vite": "^4.0.0",
     "jsdom": "^26.0.0",
     "png-to-ico": "^3.0.1",
+    "pnpm": "11.7.0",
     "sharp": "^0.34.4",
     "typescript": "^5.7.3",
     "vite": "^7.0.0",
@@ -103,6 +105,14 @@
       "THIRD_PARTY_NOTICES.md"
     ],
     "extraResources": [
+      {
+        "from": "scripts/plugin-resolution-probe.mjs",
+        "to": "plugin-resolution-probe.mjs"
+      },
+      {
+        "from": "node_modules/pnpm",
+        "to": "package-manager/pnpm"
+      },
       {
         "from": "resources/skills",
         "to": "skills"

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { Agent, ChatImageAttachment, CreateAgentInput, CreateSpaceInput, Message, Space, UserProfile } from '../shared/contracts'
 import { createSkillReference } from '../shared/skill-reference'
 import { getAgentCapabilityBaseHash, getAgentCapabilityHash } from './agent-capability'
+import { pluginSetRevision, type InstalledPlugin, type PluginArtifact, type PluginSetSnapshot } from './plugins/plugin-set'
 
 type AgentRow = Omit<Agent, 'skills' | 'tools' | 'reasoningEffort'> & { skills: string; tools: string; reasoningEffort: string | null }
 type SpaceRow = Omit<Space, 'memberIds'>
@@ -117,8 +118,73 @@ export class MindMeshDatabase {
     mkdirSync(dirname(path), { recursive: true })
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
-    this.migrate()
-    this.seed()
+    try {
+      this.migrateVersioned(path)
+      this.seed()
+    } catch (error) { this.db.close(); throw error }
+  }
+
+  private migrateVersioned(path: string): void {
+    this.db.exec('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+    const row = this.db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get() as { value: string } | undefined
+    const version = Number(row?.value ?? 0)
+    if (!Number.isInteger(version) || version < 0 || version > 2) throw new Error('Unsupported database schema version')
+    if (version === 2) return
+    // VACUUM INTO captures a consistent SQLite snapshot, including WAL, before migration.
+    const backup = `${path}.before-schema-${version}.sqlite`
+    if (path !== ':memory:' && !existsSync(backup)) this.db.prepare('VACUUM INTO ?').run(backup)
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      if (version < 1) this.migrate()
+      this.db.exec(`CREATE TABLE installed_plugins (
+        package_name TEXT PRIMARY KEY, resolved_version TEXT NOT NULL,
+        enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), config_json TEXT NOT NULL,
+        compatibility TEXT NOT NULL DEFAULT 'sdk-compatible', source TEXT NOT NULL DEFAULT 'npm',
+        installed_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      )`)
+      const meta = this.db.prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)')
+      meta.run('schema_version', '2')
+      meta.run('runtime_schema_version', '2')
+      meta.run('plugin_set_generation', '0')
+      this.db.exec('COMMIT')
+    } catch (error) { this.db.exec('ROLLBACK'); throw error }
+  }
+
+  readPluginSet(): PluginSetSnapshot {
+    const ownsTransaction = !this.db.isTransaction
+    if (ownsTransaction) this.db.exec('BEGIN')
+    try {
+      const snapshot = this.readPluginSetRows()
+      if (ownsTransaction) this.db.exec('COMMIT')
+      return snapshot
+    } catch (error) { if (ownsTransaction) this.db.exec('ROLLBACK'); throw error }
+  }
+
+  private readPluginSetRows(): PluginSetSnapshot {
+    const plugins = (this.db.prepare('SELECT * FROM installed_plugins ORDER BY package_name').all() as Array<Record<string, string | number>>).map((row) => ({
+      packageName: String(row.package_name), version: String(row.resolved_version), enabled: Boolean(row.enabled),
+      config: JSON.parse(String(row.config_json)), installedAt: String(row.installed_at), updatedAt: String(row.updated_at),
+    }))
+    const meta = this.db.prepare('SELECT value FROM app_meta WHERE key = ?')
+    const generation = Number((meta.get('plugin_set_generation') as { value: string }).value)
+    const artifact = meta.get('plugin_set_artifact') as { value: string } | undefined
+    return { generation, revision: pluginSetRevision(plugins), plugins, artifact: artifact ? JSON.parse(artifact.value) : null }
+  }
+
+  commitPluginSet(expectedGeneration: number, plugins: InstalledPlugin[], artifact: PluginArtifact): PluginSetSnapshot {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      if (this.readPluginSet().generation !== expectedGeneration) throw new Error('Plugin set changed during validation')
+      this.db.exec('DELETE FROM installed_plugins')
+      const insert = this.db.prepare('INSERT INTO installed_plugins(package_name, resolved_version, enabled, config_json, installed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      for (const plugin of plugins) insert.run(plugin.packageName, plugin.version, Number(plugin.enabled), JSON.stringify(plugin.config), plugin.installedAt, plugin.updatedAt)
+      const meta = this.db.prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)')
+      meta.run('plugin_set_generation', String(expectedGeneration + 1))
+      meta.run('plugin_set_artifact', JSON.stringify(artifact))
+      const committed = this.readPluginSetRows()
+      this.db.exec('COMMIT')
+      return committed
+    } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
 
   private migrate(): void {

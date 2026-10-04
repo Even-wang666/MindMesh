@@ -1,0 +1,43 @@
+import { spawn } from 'node:child_process'
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { join, resolve, relative, isAbsolute } from 'node:path'
+import { tmpdir } from 'node:os'
+import assert from 'node:assert/strict'
+import { startPluginFixtureRegistry } from './plugin-fixture-registry.mjs'
+
+const root = mkdtempSync(join(tmpdir(), 'mindmesh-plugin-smoke-'))
+const registry = await startPluginFixtureRegistry(root)
+const exe = process.env.MINDMESH_PLUGIN_SMOKE_EXE ?? resolve('node_modules/electron/dist/electron.exe')
+const packaged = Boolean(process.env.MINDMESH_PLUGIN_SMOKE_EXE)
+let count = 0
+async function run(change) {
+  const requestFile = join(root, `request-${++count}.json`), resultFile = join(root, `result-${count}.json`)
+  writeFileSync(requestFile, JSON.stringify({ dataDirectory: join(root, 'data'), resultFile, fixtureRegistry: registry.url, change }))
+  await new Promise((resolveRun, reject) => {
+    const env = { ...process.env, PATH: join(process.env.SystemRoot ?? 'C:\\Windows', 'System32') }
+    delete env.ELECTRON_RUN_AS_NODE
+    const child = spawn(exe, [...(packaged ? [] : ['.']), `--user-data-dir=${join(root, 'electron-profile')}`, `--plugin-dev=${requestFile}`], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    let tail = ''
+    child.stdout.on('data', (data) => { tail = (tail + data).slice(-8192) })
+    child.stderr.on('data', (data) => { tail = (tail + data).slice(-8192) })
+    const timer = setTimeout(() => { child.kill(); reject(new Error('Plugin smoke timed out')) }, 180_000)
+    child.on('error', reject)
+    child.on('close', (code) => { clearTimeout(timer); code === 0 ? resolveRun() : reject(new Error(`Plugin developer CLI exited ${code}: ${tail}`)) })
+  })
+  return JSON.parse(readFileSync(resultFile, 'utf8'))
+}
+try {
+  const installed = await run({ kind: 'install', packageName: 'mindmesh-fixture-plugin', version: '1.0.0' })
+  assert.equal(installed.ok, true); assert.equal(installed.generation, 1)
+  assert.match(readFileSync(join(installed.artifact.directory, 'pnpm-lock.yaml'), 'utf8'), /1\.0\.0/)
+  assert.equal((await run()).revision, installed.revision)
+  assert.equal((await run({ kind: 'disable', packageName: 'mindmesh-fixture-plugin' })).plugins[0].enabled, false)
+  assert.equal((await run({ kind: 'enable', packageName: 'mindmesh-fixture-plugin' })).plugins[0].enabled, true)
+  assert.equal(existsSync(join(root, 'script-ran')), false)
+  console.log(JSON.stringify({ mode: packaged ? 'packaged' : 'development', externalPnpm: false, install: 'passed', restart: 'passed', disableEnable: 'passed' }))
+} finally {
+  await registry.close()
+  const delta = relative(tmpdir(), root)
+  if (!delta.startsWith('mindmesh-plugin-smoke-') || delta.includes('..') || isAbsolute(delta)) throw new Error('Unsafe smoke cleanup path')
+  rmSync(root, { recursive: true, force: true })
+}

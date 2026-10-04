@@ -7,6 +7,7 @@
 - 下一阶段 PR 1A 基线与 PR 1B DSH `0.2.0-rc.2` 升级已完成，详见 `docs/migration/` 验收记录。
 - PR 2 Runtime V2：显式权限与 schema/DSH/Skill/Provider/workspace revision、冻结运行快照、新 namespace 的独立 Home 物化、逐 Session 历史恢复、七天磁盘保留和 Electron 单实例锁。详见 [Runtime V2 验收与迁移](../migration/runtime-v2-2026-10.md)。
 - PR 3 Runtime Supervisor：starting 去重、acquire/release、stale/retire、按 Provider/context/request 定向回收、安全错误诊断及 Session 条件写回。详见 [Supervisor 验收](../migration/runtime-supervisor-2026-10.md)。
+- PR 4 Plugin 控制面与 staging：版本化 SQLite migration 与备份、插件 desired state/generation、串行全集合验证、随包 pnpm、真实安装/dump/SDK 初始化、required peer 检查及仅开发者入口。详见 [Plugin 控制面验收与回滚](../migration/plugin-control-plane-2026-10.md)。
 
 - 项目内 Conda Python 3.11 环境。
 - DeepSeek Harness 源码浅克隆与精确提交记录。
@@ -52,7 +53,7 @@
 
 ## 下一阶段
 
-- 按执行规划进入 PR 4 Plugin 控制面与 staging：版本化 DB migration、插件 desired state、受控包管理及隔离兼容验证。
+- 按执行规划进入 PR 5 Extended 接入：full 权限加载已验证的 enabled 插件集合；chat/workspace 的 profile 物理不含第三方插件；打通 generation/session 切换、失败恢复及真实插件工具调用。
 
 - 使用各服务的独立测试凭据继续验收 OpenAI、Anthropic、MiniMax、智谱、通义千问、阶跃星辰及自定义 OpenAI 兼容服务；当前 CI 已纳入无密钥安全冒烟，带密钥的模型请求仍由发布前人工验收。
 - SDK 暂无可供桌面应用直接列举工具 Registry 的接口；工具页当前展示受 MindMesh 支持的七项工具，实际启用状态由 Harness 补丁控制。
