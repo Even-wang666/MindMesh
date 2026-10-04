@@ -23,7 +23,7 @@ export function classifyRuntimeFailure(error: unknown): RuntimeFailureKind {
 
 export function runtimeFailureDetail(kind: RuntimeFailureKind): string {
   const details: Record<RuntimeFailureKind, string> = {
-    materialization: '运行配置准备失败，请检查所选技能和本地文件后重试。',
+    materialization: '运行配置准备失败，请检查所选技能、扩展和本地文件后重试；也可切换为仅对话或工作目录权限。',
     startup: '模型运行服务启动失败，请检查模型服务配置后重试。',
     'transport-closed': '模型连接已中断，请重试；若持续失败，请重新启动应用。',
     protocol: '模型连接返回了无效响应，请重试；若持续失败，请重新启动应用。',

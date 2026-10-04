@@ -73,6 +73,15 @@ describe('Runtime V2 identity', () => {
     for (const hash of ['base', 'base:skills', original.capabilityHash]) expect(getAgentCapabilityBaseHash(hash)).toBe('base')
   })
 
+  it('versions plugin composition only for full permission', () => {
+    const directory = temporaryDirectory()
+    const input = { baseHash: 'base', skillRevision: 'skills', workspace: directory, providerRevision: 'provider', dshVersion: '0.2' }
+    for (const permission of ['chat', 'workspace'] as const) {
+      expect(getRuntimeIdentity({ ...input, permission, pluginRevision: 'one' }).key).toBe(getRuntimeIdentity({ ...input, permission, pluginRevision: 'two' }).key)
+    }
+    expect(getRuntimeIdentity({ ...input, permission: 'full', pluginRevision: 'one' }).key).not.toBe(getRuntimeIdentity({ ...input, permission: 'full', pluginRevision: 'two' }).key)
+  })
+
   it('captures provider configuration once, keeps revisions stable across restart, and hides credentials', async () => {
     const directory = temporaryDirectory()
     let provider = { id: 'custom', name: 'Custom', apiKey: 'secret-one', baseUrl: 'https://one.invalid', model: 'm1' }
@@ -90,38 +99,38 @@ describe('Runtime V2 identity', () => {
       await adapter.run(customAgent, 'hello', undefined, undefined, [], first)
       expect(launches[0].env.MINDMESH_CUSTOM_API_KEY).toBe('secret-one')
       const home = launches[0].dshHome
-      expect(readFileSync(join(home, 'settings.yaml'), 'utf8')).toContain('https://one.invalid')
+      expect(readFileSync(join(home, 'provider-settings.yaml'), 'utf8')).toContain('https://one.invalid')
       expect(readFileSync(join(home, 'metadata.json'), 'utf8')).not.toMatch(/secret-one|secret-two|changed-after-prepare/)
       expect(Object.isFrozen(first.agent.tools)).toBe(true)
       expect(Object.isFrozen(first.skillIds)).toBe(true)
     } finally { await adapter.shutdownAll() }
   })
 
-  it('reuses intact homes, rebuilds altered composition without copying sessions, and preserves legacy state', () => {
+  it('reuses intact homes, rebuilds altered composition without copying sessions, and preserves legacy state', async () => {
     const directory = temporaryDirectory()
     const request = new DeepSeekHarnessAdapter(directory, directory, settings).prepareRun(agent, 'chat')
     const materializer = new RuntimeHomeMaterializer(directory)
     const legacy = join(directory, 'harness', 'old')
     mkdirSync(legacy, { recursive: true })
     writeFileSync(join(legacy, 'session'), 'old history')
-    const first = materializer.ensure(request)
+    const first = await materializer.ensure(request)
     writeFileSync(join(first.dshHome, 'session'), 'new history')
-    expect(materializer.ensure(request).created).toBe(false)
+    expect((await materializer.ensure(request)).created).toBe(false)
     expect(readFileSync(join(first.dshHome, 'session'), 'utf8')).toBe('new history')
     writeFileSync(first.capabilityPatch, 'altered')
-    expect(materializer.ensure(request).created).toBe(true)
+    expect((await materializer.ensure(request)).created).toBe(true)
     expect(existsSync(join(first.dshHome, 'session'))).toBe(false)
     const preserved = readdirSync(join(directory, 'runtime-v2')).find((name) => name.includes('.invalid-'))!
     expect(readFileSync(join(directory, 'runtime-v2', preserved, 'session'), 'utf8')).toBe('new history')
     expect(readFileSync(join(legacy, 'session'), 'utf8')).toBe('old history')
   })
 
-  it('protects active, referenced and incomplete homes while removing expired unreferenced homes', () => {
+  it('protects active, referenced and incomplete homes while removing expired unreferenced homes', async () => {
     const directory = temporaryDirectory()
     const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
     const materializer = new RuntimeHomeMaterializer(directory)
     const requests = ['active', 'referenced', 'orphan'].map((persona) => adapter.prepareRun({ ...agent, persona }, 'chat'))
-    const homes = requests.map((request) => materializer.ensure(request).dshHome)
+    const homes = (await Promise.all(requests.map((request) => materializer.ensure(request)))).map((home) => home.dshHome)
     const incomplete = join(directory, 'runtime-v2', 'a'.repeat(64))
     mkdirSync(incomplete)
     vi.useFakeTimers()
@@ -131,7 +140,7 @@ describe('Runtime V2 identity', () => {
     expect(existsSync(incomplete)).toBe(true)
   })
 
-  it('checks copied Skill bytes and refuses a ready Home when the source changed after preparation', () => {
+  it('checks copied Skill bytes and refuses a ready Home when the source changed after preparation', async () => {
     const directory = temporaryDirectory()
     const skill = join(directory, 'skills', 'sample')
     mkdirSync(skill, { recursive: true })
@@ -141,15 +150,15 @@ describe('Runtime V2 identity', () => {
     const skilled = { ...agent, skills: ['sample'] }
     const first = adapter.prepareRun(skilled, 'chat')
     const materializer = new RuntimeHomeMaterializer(directory)
-    const home = materializer.ensure(first).dshHome
+    const home = (await materializer.ensure(first)).dshHome
     expect(readFileSync(join(home, 'selected-skills', 'sample', 'REFERENCE.md'), 'utf8')).toBe('first')
     writeFileSync(join(skill, 'REFERENCE.md'), 'second')
     const second = adapter.prepareRun(skilled, 'chat')
     expect(second.identity.key).not.toBe(first.identity.key)
     writeFileSync(join(skill, 'REFERENCE.md'), 'third')
-    expect(() => materializer.ensure(second)).toThrow('Skill content changed')
+    await expect(materializer.ensure(second)).rejects.toThrow('Skill content changed')
     expect(existsSync(join(directory, 'runtime-v2', second.identity.key, 'metadata.json'))).toBe(false)
-    expect(materializer.ensure(first).created).toBe(false)
+    expect((await materializer.ensure(first)).created).toBe(false)
   })
 
   it('recovers private and Space history when an existing session loses its home', async () => {

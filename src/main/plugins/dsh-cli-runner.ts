@@ -43,7 +43,8 @@ export class DshCliRunner {
     writeFileSync(launcher, `import { runCli } from ${JSON.stringify(pathToFileURL(this.dshBin).href)};\nprocess.argv = [process.execPath, ${JSON.stringify(this.dshBin)}, ...process.argv.slice(2)];\nawait runCli({packageManager:{command:process.execPath,args:[${JSON.stringify(this.packageManager.cli)}],env:process.env}});\n`)
     return new Promise((resolve, reject) => {
       const args = options.args[0] === '--mindmesh-resolution'
-        ? [this.packageManager.resolutionProbe, this.dshBin, ...options.args.slice(1)] : [launcher, ...options.args]
+        ? [this.packageManager.resolutionProbe, this.dshBin, ...options.args.slice(1)]
+        : options.args[0] === '--mindmesh-pnpm' ? [this.packageManager.cli, ...options.args.slice(1)] : [launcher, ...options.args]
       const child = spawn(process.execPath, args, { cwd: options.cwd, env: options.env, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
       let output = '', stderr = '', lineBuffer = '', initialized = false, failure: Error | null = null
       let bytes = 0

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { join, resolve } from 'node:path'
 import type { Agent, ChatPermission } from '../shared/contracts'
 import type { ModelProviderRuntimeConfig } from './model-provider-settings'
+import type { PluginArtifact } from './plugins/plugin-set'
 
 export const RUNTIME_SCHEMA_VERSION = 2
 export type RuntimeFlavor = 'core' | 'extended'
@@ -15,6 +16,11 @@ export type RuntimeIdentity = {
   permission: ChatPermission
   workspaceIdentity: string
   skillRevision: string
+  pluginRevision?: string
+}
+export type RuntimePlugins = {
+  revision: string; desiredRevision: string; artifact: Readonly<PluginArtifact> | null
+  packages: readonly Readonly<{ packageName: string; version: string; configJson: string }>[]
 }
 export type RuntimeRequest = {
   agent: Agent
@@ -23,6 +29,7 @@ export type RuntimeRequest = {
   providers: readonly ModelProviderRuntimeConfig[]
   skillIds: readonly string[]
   dshBin: string
+  plugins?: Readonly<RuntimePlugins>
 }
 
 export function providerRuntimeRevision(providers: readonly ModelProviderRuntimeConfig[], dataDirectory: string): string {
@@ -39,7 +46,7 @@ export function providerRuntimeRevision(providers: readonly ModelProviderRuntime
 
 export function getRuntimeIdentity(input: {
   baseHash: string; skillRevision: string; workspace: string; permission: ChatPermission
-  providerRevision: string; dshVersion: string; schemaVersion?: number
+  providerRevision: string; dshVersion: string; schemaVersion?: number; pluginRevision?: string
 }): RuntimeIdentity {
   if (!['chat', 'workspace', 'full'].includes(input.permission)) throw new Error('权限级别无效')
   const schemaVersion = input.schemaVersion ?? RUNTIME_SCHEMA_VERSION
@@ -48,9 +55,11 @@ export function getRuntimeIdentity(input: {
   const workspaceIdentity = process.platform === 'win32' ? path.toLowerCase() : path
   const environment = createHash('sha256').update(JSON.stringify([
     schemaVersion, input.dshVersion, flavor, input.permission, input.providerRevision, workspaceIdentity,
+    ...(flavor === 'extended' ? [input.pluginRevision ?? 'none'] : []),
   ])).digest('hex')
   const capabilityHash = `${input.baseHash}:${input.skillRevision}:${environment}`
   const key = createHash('sha256').update(JSON.stringify([schemaVersion, input.dshVersion, flavor, capabilityHash, workspaceIdentity])).digest('hex')
   return Object.freeze({ key, capabilityHash, schemaVersion, dshVersion: input.dshVersion, flavor,
-    permission: input.permission, workspaceIdentity, skillRevision: input.skillRevision })
+    permission: input.permission, workspaceIdentity, skillRevision: input.skillRevision,
+    ...(flavor === 'extended' ? { pluginRevision: input.pluginRevision ?? 'none' } : {}) })
 }

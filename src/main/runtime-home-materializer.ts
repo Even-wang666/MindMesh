@@ -6,6 +6,8 @@ import type { RuntimeIdentity, RuntimeRequest } from './runtime-revision'
 import type { ModelProviderRuntimeConfig } from './model-provider-settings'
 import { skillBundlesRevision } from './skills'
 import { getModelProviderDefinition, MODEL_CATALOG } from '../shared/model-providers'
+import { materializePlugins, pluginHomeDigest } from './plugins/plugin-runtime'
+import { parseDocument } from 'yaml'
 
 const RETENTION_MS = 7 * 24 * 60 * 60_000
 type Metadata = { identity: RuntimeIdentity; state: 'ready'; composition: string; lastUsedAt: number }
@@ -14,7 +16,8 @@ type Metadata = { identity: RuntimeIdentity; state: 'ready'; composition: string
 export class RuntimeHomeMaterializer {
   constructor(private readonly dataDirectory: string) {}
 
-  ensure(request: RuntimeRequest): { dshHome: string; capabilityPatch: string; created: boolean } {
+  async ensure(request: RuntimeRequest, signal?: AbortSignal): Promise<{ dshHome: string; capabilityPatch: string; created: boolean }> {
+    signal?.throwIfAborted()
     const root = join(this.dataDirectory, 'runtime-v2')
     mkdirSync(root, { recursive: true })
     if (!/^[a-f0-9]{64}$/.test(request.identity.key)) throw new Error('Invalid runtime home key')
@@ -26,7 +29,8 @@ export class RuntimeHomeMaterializer {
       try {
         const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as Metadata
         if (metadata.state === 'ready' && JSON.stringify(metadata.identity) === JSON.stringify(request.identity)
-          && metadata.composition === this.composition(home)
+          && metadata.composition === this.composition(home, Boolean(request.plugins))
+          && (request.plugins || this.coreProfileIntact(home))
           && skillBundlesRevision(request.skillIds.map((id) => join(home, 'selected-skills', id))) === request.identity.skillRevision) {
           this.markLastUsed(request.identity.key)
           return { dshHome: home, capabilityPatch: patch, created: false }
@@ -36,11 +40,26 @@ export class RuntimeHomeMaterializer {
       renameSync(home, `${home}.invalid-${randomUUID()}`)
     }
     mkdirSync(home)
-    writeFileSync(join(home, 'settings.yaml'), buildProviderSettingsYaml(request.providers))
+    // settings.yaml is a legacy DSH import that renames itself and mutates the profile.
+    // Keep our provider input separate and supply it through the app-owned patch instead.
+    const providers = buildProviderSettingsYaml(request.providers)
+    writeFileSync(join(home, 'provider-settings.yaml'), providers)
     prepareAgentCapabilities(request.agent, this.dataDirectory, home)
+    const providerPatch = ['- id: llm-pi-ai', '  config:', ...providers.trimEnd().split('\n').slice(1).map((line) => `  ${line}`)].join('\n')
+    writeFileSync(patch, `${readFileSync(patch, 'utf8')}\n${providerPatch}\n`)
+    const patchContent = readFileSync(patch, 'utf8')
     const copiedRevision = skillBundlesRevision(request.skillIds.map((id) => join(home, 'selected-skills', id)))
     if (copiedRevision !== request.identity.skillRevision) throw new Error('Skill content changed while preparing runtime')
-    const metadata: Metadata = { identity: request.identity, state: 'ready', composition: this.composition(home), lastUsedAt: Date.now() }
+    try { await materializePlugins(this.dataDirectory, home, request, signal) }
+    catch (error) {
+      writeFileSync(join(home, 'materialization-failure.json'), JSON.stringify({ at: new Date().toISOString(),
+        kind: 'materialization', cancelled: Boolean(signal?.aborted), diagnostics: 'plugin-diagnostics' }))
+      throw error
+    }
+    signal?.throwIfAborted()
+    if (readFileSync(patch, 'utf8') !== patchContent || readFileSync(join(home, 'provider-settings.yaml'), 'utf8') !== providers
+      || skillBundlesRevision(request.skillIds.map((id) => join(home, 'selected-skills', id))) !== copiedRevision) throw new Error('Plugin mutated application composition')
+    const metadata: Metadata = { identity: request.identity, state: 'ready', composition: this.composition(home, Boolean(request.plugins)), lastUsedAt: Date.now() }
     writeFileSync(metadataPath, JSON.stringify(metadata), { mode: 0o600 })
     return { dshHome: home, capabilityPatch: patch, created: true }
   }
@@ -72,9 +91,21 @@ export class RuntimeHomeMaterializer {
     }
   }
 
-  private composition(home: string): string {
-    return createHash('sha256').update(readFileSync(join(home, 'settings.yaml')))
-      .update(readFileSync(join(home, 'capabilities.cordis.patch.yml'))).digest('hex')
+  private composition(home: string, plugins: boolean): string {
+    return createHash('sha256').update(readFileSync(join(home, 'provider-settings.yaml')))
+      .update(readFileSync(join(home, 'capabilities.cordis.patch.yml'))).update(plugins ? pluginHomeDigest(home) : '').digest('hex')
+  }
+
+  private coreProfileIntact(home: string): boolean {
+    const profile = join(home, 'profiles', 'sdk')
+    if (!existsSync(profile)) return true
+    const manifest = JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8'))
+    if (JSON.stringify(manifest.dsh?.profile?.bundles) !== JSON.stringify(['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-sdk-app'])
+      || Object.keys(manifest.dependencies ?? {}).length || Object.keys(manifest.devDependencies ?? {}).length) return false
+    const document = parseDocument(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8'))
+    if (document.errors.length || JSON.stringify(document.toJS()) !== '[]') return false
+    const modules = join(profile, 'node_modules')
+    return !existsSync(modules) || readdirSync(modules).every((name) => name === '.dsh-module-fallback')
   }
 }
 

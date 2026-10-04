@@ -9,6 +9,7 @@ import { getRuntimeIdentity, providerRuntimeRevision, type RuntimeRequest } from
 import { RuntimeSupervisor, type RuntimeOwner } from './runtime-supervisor'
 import { randomUUID } from 'node:crypto'
 import { runtimeFailureDetail } from './runtime-errors'
+import type { PluginSetManager } from './plugins/plugin-set'
 
 export { getAgentCapabilityHash } from './agent-capability'
 export { buildProviderSettingsYaml } from './runtime-home-materializer'
@@ -21,12 +22,18 @@ export class SessionResumeUnsupportedError extends Error {
 
 export class DeepSeekHarnessAdapter {
   private readonly supervisor: RuntimeSupervisor
+  private readonly unsubscribePlugins?: () => void
+  private observedPluginRevision?: string
 
   constructor(
     private workspace: string,
     private readonly dataDirectory: string,
     private readonly providerSettings: ModelProviderSettings,
-  ) { this.supervisor = new RuntimeSupervisor(dataDirectory) }
+    private readonly pluginSet?: PluginSetManager,
+  ) {
+    this.supervisor = new RuntimeSupervisor(dataDirectory)
+    this.unsubscribePlugins = pluginSet?.onChange(() => { void this.supervisor.invalidatePlugins().catch(() => {}) })
+  }
 
   get workspacePath(): string { return this.workspace }
 
@@ -49,11 +56,17 @@ export class DeepSeekHarnessAdapter {
     }
     const skills = resolveSelectedSkills(effective.skills, this.dataDirectory)
     const runtime = getDshRuntimeInfo()
+    const plugins = permission === 'full' ? this.pluginSet?.runtimeSnapshot() : undefined
+    const pluginRevision = plugins ? `${plugins.revision}:${plugins.artifact?.digest ?? 'missing'}` : 'none'
+    if (permission === 'full') {
+      if (this.observedPluginRevision !== undefined && this.observedPluginRevision !== pluginRevision) void this.supervisor.invalidatePlugins().catch(() => {})
+      this.observedPluginRevision = pluginRevision
+    }
     const identity = getRuntimeIdentity({ baseHash: getAgentCapabilityHash(effective), skillRevision: skillBundlesRevision(skills.map((skill) => skill.directory)),
-      workspace: this.workspace, permission, providerRevision: providerRuntimeRevision(providers, this.dataDirectory), dshVersion: runtime.version })
+      workspace: this.workspace, permission, providerRevision: providerRuntimeRevision(providers, this.dataDirectory), dshVersion: runtime.version, pluginRevision })
     return Object.freeze({ agent: Object.freeze(effective), workspace: this.workspace, identity,
       providers: Object.freeze(providers.map((value) => Object.freeze(value))),
-      skillIds: Object.freeze(skills.map((skill) => skill.id)), dshBin: runtime.dshBin })
+      skillIds: Object.freeze(skills.map((skill) => skill.id)), dshBin: runtime.dshBin, ...(plugins ? { plugins } : {}) })
   }
 
   capabilityHash(agent: Agent, permission: ChatPermission = 'chat'): string {
@@ -179,5 +192,5 @@ export class DeepSeekHarnessAdapter {
     return `我是 ${agent.name}，当前处于本地演示模式。\n\n我已经收到：${lastLine}\n\n配置该智能体对应的模型服务后，这里会由 ${agent.model} 通过统一 Harness Runtime 返回真实结果。`
   }
 
-  shutdownAll(): Promise<void> { return this.supervisor.shutdownAll() }
+  shutdownAll(): Promise<void> { this.unsubscribePlugins?.(); return this.supervisor.shutdownAll() }
 }

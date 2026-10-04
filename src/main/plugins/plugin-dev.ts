@@ -1,8 +1,10 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { MindMeshDatabase } from '../database'
 import { PluginSetManager } from './plugin-set'
 import { PluginManager, PluginStaging, type PluginChange } from './plugin-manager'
+import { DeepSeekHarnessAdapter } from '../harness-adapter'
+import type { ModelProviderSettings } from '../model-provider-settings'
 
 /** Explicit developer CLI only; there is no renderer IPC for plugin mutation in PR4. */
 export async function runPluginDeveloperRequest(file: string, signal: AbortSignal): Promise<void> {
@@ -17,11 +19,31 @@ export async function runPluginDeveloperRequest(file: string, signal: AbortSigna
     || typeof change.packageName !== 'string'
     || ['install', 'update'].includes(change.kind) && typeof change.version !== 'string')) throw new Error('Invalid plugin change')
   if (request.fixtureRegistry !== undefined && typeof request.fixtureRegistry !== 'string') throw new Error('Invalid fixture registry')
+  if (request.runtime && (!['chat', 'workspace', 'full'].includes(request.runtime.permission)
+    || typeof request.runtime.baseUrl !== 'string' || !/^http:\/\/127\.0\.0\.1:\d+\/v1$/.test(request.runtime.baseUrl))) throw new Error('Runtime smoke requires a loopback model fixture and explicit permission')
   const db = new MindMeshDatabase(join(request.dataDirectory, 'mindmesh.sqlite'))
   try {
-    const manager = new PluginManager(new PluginSetManager(db), new PluginStaging(request.dataDirectory, process.resourcesPath, request.fixtureRegistry))
+    const set = new PluginSetManager(db)
+    const manager = new PluginManager(set, new PluginStaging(request.dataDirectory, process.resourcesPath, request.fixtureRegistry))
     const result = change ? await manager.change(change as PluginChange, signal) : manager.snapshot()
-    writeFileSync(request.resultFile, JSON.stringify({ ok: true, ...result }, null, 2))
+    let runtime
+    if (request.runtime) {
+      const provider = { id: 'custom', name: 'Fixture', apiKey: 'fixture-key', baseUrl: request.runtime.baseUrl, model: 'fixture-model' }
+      const settings = { getProvider: () => provider, configuredProviders: () => [provider] } as unknown as ModelProviderSettings
+      const workspace = join(request.dataDirectory, 'runtime-smoke-workspace')
+      mkdirSync(workspace, { recursive: true })
+      const adapter = new DeepSeekHarnessAdapter(workspace, request.dataDirectory, settings, set)
+      const abort = (): void => { void adapter.shutdownAll().catch(() => {}) }
+      signal.addEventListener('abort', abort, { once: true })
+      try {
+        signal.throwIfAborted()
+        const agent = { id: 'plugin-smoke', name: 'Plugin smoke', role: '', persona: '', provider: 'custom', model: 'fixture-model', tools: ['Shell'], skills: [], createdAt: '' }
+        const snapshot = adapter.prepareRun(agent, request.runtime.permission)
+        const reply = await adapter.run(agent, 'call the fixture tool', undefined, undefined, [], snapshot)
+        runtime = { text: reply.text, key: snapshot.identity.key, flavor: snapshot.identity.flavor }
+      } finally { signal.removeEventListener('abort', abort); await adapter.shutdownAll() }
+    }
+    writeFileSync(request.resultFile, JSON.stringify({ ok: true, ...result, ...(runtime ? { runtime } : {}) }, null, 2))
   } catch (error) {
     writeFileSync(request.resultFile, JSON.stringify({ ok: false, error: String(error) }, null, 2))
     throw error

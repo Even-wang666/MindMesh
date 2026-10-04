@@ -22,6 +22,7 @@ export type RuntimeDiagnostic = {
 type RuntimeEntry = {
   request: RuntimeRequest; state: RuntimeState; stale: boolean; lastUsedAt: number
   harness?: DeepSeekHarness; start: Promise<void>; closing?: Promise<void>
+  prepareAbort: AbortController
   retired: Promise<void>; finishRetirement: () => void
   leases: Map<symbol, RuntimeOwner>; owners: Map<string, string>; sessions: Set<string>
   lastError?: RuntimeDiagnostic['lastError']
@@ -69,12 +70,12 @@ export class RuntimeSupervisor {
       let finishRetirement!: () => void
       entry = { request, state: 'preparing', stale: false, lastUsedAt: Date.now(),
         start: Promise.resolve(), retired: new Promise<void>((done) => { finishRetirement = done }),
-        finishRetirement, leases: new Map(), owners: new Map(), sessions: new Set() }
+        finishRetirement, prepareAbort: new AbortController(), leases: new Map(), owners: new Map(), sessions: new Set() }
       this.entries.set(key, entry)
       const starting = entry
       entry.start = Promise.resolve().then(async () => {
         let home
-        try { home = this.homes.ensure(request) }
+        try { home = await this.homes.ensure(request, starting.prepareAbort.signal) }
         catch (error) { throw new RuntimeFailure('materialization', error) }
         starting.state = 'starting'
         const environment = Object.fromEntries(Object.entries(process.env).filter(
@@ -135,6 +136,7 @@ export class RuntimeSupervisor {
   }
 
   async invalidateWorkspace(): Promise<void> { await this.markStale(() => true) }
+  async invalidatePlugins(): Promise<void> { await this.markStale((entry) => entry.request.identity.flavor === 'extended') }
 
   async forgetOwner(agentId?: string, contextPrefix?: string): Promise<void> {
     for (const entry of this.entries.values()) {
@@ -151,6 +153,7 @@ export class RuntimeSupervisor {
     if (candidates.length !== 1) return false
     const entry = candidates[0]
     entry.stale = true
+    entry.prepareAbort.abort()
     await this.retire(entry)
     return this.entries.get(entry.request.identity.key) !== entry
   }
@@ -189,6 +192,7 @@ export class RuntimeSupervisor {
 
   private retire(entry: RuntimeEntry): Promise<void> {
     entry.stale = true
+    entry.prepareAbort.abort()
     entry.closing ??= (async () => {
       await entry.start.catch(() => undefined)
       try {

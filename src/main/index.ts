@@ -10,6 +10,7 @@ import { appendRuntimeError } from './runtime-errors'
 import { installNavigationGuards } from './navigation'
 import type { SkillInstallProgress } from '../shared/contracts'
 import { runPluginDeveloperRequest } from './plugins/plugin-dev'
+import { PluginSetManager } from './plugins/plugin-set'
 
 let mainWindow: BrowserWindow | null = null
 let services: MindMeshServices | null = null
@@ -151,7 +152,7 @@ app.whenReady().then(async () => {
   if (app.isPackaged) mkdirSync(defaultWorkspace, { recursive: true })
   const workspace = savedWorkspace && existsSync(savedWorkspace) && statSync(savedWorkspace).isDirectory()
     ? savedWorkspace : defaultWorkspace
-  const harness = new DeepSeekHarnessAdapter(workspace, dataDir, providerSettings)
+  const harness = new DeepSeekHarnessAdapter(workspace, dataDir, providerSettings, new PluginSetManager(db))
   try { harness.cleanupUnusedHomes(db.referencedCapabilityHashes()) }
   catch { /* Cache cleanup must not prevent the app from starting. */ }
   services = new MindMeshServices(db, harness, providerSettings, () => mainWindow?.webContents,

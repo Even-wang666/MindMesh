@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync, readdirSync, realpathSync, existsSync, rmSync, lstatSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, readdirSync, existsSync, rmSync, lstatSync } from 'node:fs'
 import { join } from 'node:path'
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
 import { parseDocument } from 'yaml'
@@ -7,6 +7,7 @@ import { prepareAgentCapabilities, toolCatalog } from '../capabilities'
 import { getDshRuntimeInfo } from '../dsh-runtime'
 import { buildProviderSettingsYaml } from '../runtime-home-materializer'
 import { BundledPackageManager, DshCliRunner, stagingEnvironment } from './dsh-cli-runner'
+import { pluginPackageDigests } from './plugin-inventory'
 import { PluginSetManager, pluginSetRevision, validatePluginSpec, type InstalledPlugin, type PluginArtifact, type PluginSetSnapshot } from './plugin-set'
 
 export type PluginChange = { kind: 'install' | 'update'; packageName: string; version: string }
@@ -49,7 +50,7 @@ export class PluginStaging {
       const enabled = plugins.filter((plugin) => plugin.enabled).sort((a, b) => a.packageName.localeCompare(b.packageName))
       if (enabled.length) await run(['plugin', '--profile', 'sdk', 'add', '--save-exact', '--ignore-scripts', '--config.auto-install-peers=false', `--registry=${this.fixtureRegistry ?? 'https://registry.npmjs.org/'}`, ...enabled.map((plugin) => `${plugin.packageName}@${plugin.version}`)], 'install')
       const profile = join(home, 'profiles', 'sdk')
-      this.rejectBuildScripts(join(profile, 'node_modules'))
+      pluginPackageDigests(join(profile, 'node_modules'))
       for (const plugin of enabled) {
         const installed = JSON.parse(readFileSync(join(profile, 'node_modules', plugin.packageName, 'package.json'), 'utf8'))
         if (installed.name !== plugin.packageName || installed.version !== plugin.version || !installed.dsh?.bundle?.patch) throw new Error(`Plugin exact version or bundle missing: ${plugin.packageName}`)
@@ -95,7 +96,7 @@ export class PluginStaging {
         const source = join(profile, file)
         if (existsSync(source)) files[file] = readFileSync(source, 'utf8')
       }
-      files['composition.json'] = JSON.stringify({ runtimeVersion: this.version, pnpmVersion: '11.7.0', revision, enabled: enabled.map(({ packageName, version, config }) => ({ packageName, version, config })), packageDigests: this.packageDigests(join(profile, 'node_modules')), resolution }, null, 2)
+      files['composition.json'] = JSON.stringify({ runtimeVersion: this.version, pnpmVersion: '11.7.0', registry: this.fixtureRegistry ?? 'https://registry.npmjs.org/', revision, enabled: enabled.map(({ packageName, version, config }) => ({ packageName, version, config })), packageDigests: pluginPackageDigests(join(profile, 'node_modules')), resolution }, null, 2)
       const digest = createHash('sha256').update(JSON.stringify(files)).digest('hex')
       for (const [name, content] of Object.entries(files)) writeFileSync(join(artifactDirectory, name), content)
       writeFileSync(join(directory, 'result.json'), JSON.stringify({ status: 'validated', revision, digest }))
@@ -107,34 +108,7 @@ export class PluginStaging {
     }
   }
 
-  private packageDigests(modules: string): Array<{ name: string; version: string; manifestDigest: string }> {
-    const packages: Array<{ name: string; version: string; manifestDigest: string }> = []
-    const seen = new Set<string>()
-    const visit = (directory: string): void => {
-      if (!existsSync(directory)) return
-      for (const entry of readdirSync(directory, { withFileTypes: true })) {
-        if (entry.name === '.bin' || entry.name === '.dsh-module-fallback') continue
-        const path = join(directory, entry.name)
-        if (entry.name.startsWith('@') || entry.name === '.pnpm') { visit(path); continue }
-        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
-        const actual = realpathSync(path)
-        if (seen.has(actual)) continue
-        seen.add(actual)
-        const manifestPath = join(actual, 'package.json')
-        if (existsSync(manifestPath)) {
-          const text = readFileSync(manifestPath, 'utf8'), manifest = JSON.parse(text)
-          // Install scripts must never run automatically; reject even if ignore-scripts allowed installation.
-          if (['preinstall', 'install', 'postinstall', 'prepare'].some((name) => manifest.scripts?.[name]) || existsSync(join(actual, 'binding.gyp'))) throw new Error(`Plugin build script requires approval: ${manifest.name}`)
-          packages.push({ name: manifest.name, version: manifest.version, manifestDigest: createHash('sha256').update(text).digest('hex') })
-        }
-        visit(join(actual, 'node_modules'))
-      }
-    }
-    visit(modules)
-    return packages.sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`))
-  }
 
-  private rejectBuildScripts(modules: string): void { this.packageDigests(modules) }
 }
 
 /** Serializes all mutations; only a validated full candidate set can enter the DB. */
