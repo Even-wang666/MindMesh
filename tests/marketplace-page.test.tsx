@@ -14,6 +14,55 @@ function setup(list: ReturnType<typeof vi.fn>): void {
 }
 
 describe('Marketplace page', () => {
+  it('installs a Team and opens its Space, with Installed/Open restored on remount', async () => {
+    const item = {
+      kind: 'teams',
+      source: 'mindmesh-curated',
+      sourceId: 'web-delivery',
+      key: '["teams","mindmesh-curated","web-delivery"]',
+      name: 'Web 交付团队',
+      description: '',
+      revision: 'b'.repeat(64),
+    }
+    const installTeam = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('secret'))
+      .mockResolvedValue({ id: 'team-space' })
+    const list = vi.fn(async (kind) => ({
+      kind,
+      state: 'fresh',
+      fetchedAt: null,
+      items: kind === 'teams' ? [item] : [],
+    }))
+    Object.defineProperty(window, 'mindmesh', {
+      configurable: true,
+      value: { marketplace: { list, installTeam } },
+    })
+    const open = vi.fn().mockRejectedValueOnce(new Error('secret')).mockResolvedValue(undefined)
+    const page = render(<MarketplacePage onOpenSpace={open} />)
+    fireEvent.click(screen.getByRole('tab', { name: '团队' }))
+    fireEvent.click(await screen.findByRole('button', { name: '安装团队' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('安装团队失败')
+    fireEvent.click(screen.getByRole('button', { name: '安装团队' }))
+    fireEvent.click(await screen.findByRole('button', { name: '已安装 · 打开' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('打开团队失败')
+    fireEvent.click(screen.getByRole('button', { name: '已安装 · 打开' }))
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(2))
+    expect(open).toHaveBeenLastCalledWith('team-space')
+    expect(installTeam).toHaveBeenLastCalledWith(item.key, item.revision)
+    page.unmount()
+    list.mockImplementation(async (kind) => ({
+      kind,
+      state: 'fresh',
+      fetchedAt: null,
+      items: kind === 'teams' ? [{ ...item, installedSpaceId: 'team-space' }] : [],
+    }))
+    render(<MarketplacePage onOpenSpace={open} />)
+    fireEvent.click(screen.getByRole('tab', { name: '团队' }))
+    fireEvent.click(await screen.findByRole('button', { name: '已安装 · 打开' }))
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(3))
+    expect(installTeam).toHaveBeenCalledTimes(2)
+  })
   it('installs the displayed revision, exposes Open and keeps an installation failure retryable', async () => {
     const item = {
       kind: 'agents',

@@ -293,6 +293,11 @@ export function App(): React.JSX.Element {
           {view === 'tools' && <CatalogPage kind="tools" />}
           {view === 'marketplace' && (
             <MarketplacePage
+              onOpenSpace={async (id) => {
+                await refresh()
+                setSelectedSpaceId(id)
+                setView('spaces')
+              }}
               onOpenAgent={async (id) => {
                 await refresh()
                 setSelectedAgentId(id)

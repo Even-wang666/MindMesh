@@ -230,6 +230,7 @@ describe('Agency pinned content and installs', () => {
     initial.close()
     const raw = new DatabaseSync(file)
     raw.exec('DROP TABLE agent_sources')
+    raw.exec('DROP TABLE space_sources')
     raw.prepare("UPDATE app_meta SET value = '2' WHERE key = 'schema_version'").run()
     raw.prepare("UPDATE app_meta SET value = '7' WHERE key = 'plugin_set_generation'").run()
     raw.close()

@@ -12,7 +12,8 @@ const workspace = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const userData = mkdtempSync(join(tmpdir(), 'mindmesh-e2e-'))
 const executable = process.env.MINDMESH_E2E_EXE ?? electron
 const agencyOnly = process.argv.includes('--agency-agents')
-const securityOnly = process.argv.includes('--security-only') || agencyOnly
+const teamsOnly = process.argv.includes('--teams')
+const securityOnly = process.argv.includes('--security-only') || agencyOnly || teamsOnly
 const keepUserData = process.env.MINDMESH_E2E_KEEP_USER_DATA === '1'
 const key = process.env.DEEPSEEK_API_KEY
 const providerOverride = process.env.MINDMESH_E2E_PROVIDER
@@ -167,6 +168,93 @@ async function runRound(round) {
         true
       )
       console.log('Electron Marketplace navigation, tabs and validated IPC: OK')
+      if (teamsOnly) {
+        const catalog = await evaluate(`window.mindmesh.marketplace.list('teams', true)`)
+        assert.equal(catalog.state, 'fresh', catalog.error)
+        assert.ok(catalog.items.length > 0)
+        const item = catalog.items[0]
+        // Preinstall a source Agent to prove Team install reuses it without changing edits.
+        const agentsCatalog = await evaluate(`window.mindmesh.marketplace.list('agents')`)
+        const firstItem = agentsCatalog.items.find(
+          (agent) => agent.sourceId === 'engineering/engineering-frontend-developer.md'
+        )
+        assert.ok(firstItem)
+        const reused = await evaluate(
+          `window.mindmesh.marketplace.installAgent(${JSON.stringify(firstItem.key)}, ${JSON.stringify(firstItem.revision)})`
+        )
+        await evaluate(
+          `window.mindmesh.agents.update(${JSON.stringify(reused.id)}, { ...${JSON.stringify(reused)}, persona: 'Team smoke user persona' })`
+        )
+        await evaluate(`document.querySelector('#marketplace-teams').click()`)
+        await until(() => evaluate(`Boolean(document.querySelector('.marketplace-install'))`))
+        if (round === 1) {
+          await evaluate(`document.querySelector('.marketplace-install').click()`)
+          await until(() =>
+            evaluate(
+              `document.querySelector('.marketplace-install')?.textContent.includes('已安装')`
+            )
+          )
+        } else {
+          assert.equal(
+            await evaluate(
+              `document.querySelector('.marketplace-install').textContent.includes('已安装')`
+            ),
+            true
+          )
+        }
+        const installed = await evaluate(
+          `window.mindmesh.marketplace.installTeam(${JSON.stringify(item.key)}, ${JSON.stringify(item.revision)})`
+        )
+        assert.equal(installed.memberIds.length, 3)
+        assert.equal(installed.memberIds[0], reused.id)
+        const members = await evaluate(
+          `window.mindmesh.agents.list().then(agents => ${JSON.stringify(installed.memberIds)}.map(id => agents.find(agent => agent.id === id)))`
+        )
+        assert.equal(members[0].persona, 'Team smoke user persona')
+        assert.deepEqual(
+          members.map((agent) => agent.source.sourceId),
+          [
+            'engineering/engineering-frontend-developer.md',
+            'engineering/engineering-backend-architect.md',
+            'testing/testing-api-tester.md',
+          ]
+        )
+        assert.ok(members.every((agent) => agent.tools.length === 0 && agent.skills.length === 0))
+        if (round > 1) assert.equal(installed.context, 'Team smoke user context')
+        await evaluate(`document.querySelector('.marketplace-install').click()`)
+        await until(() =>
+          evaluate(
+            `document.querySelector('.space-page h1')?.textContent === ${JSON.stringify(installed.name)}`
+          )
+        )
+        await evaluate(
+          `window.mindmesh.spaces.updateContext(${JSON.stringify(installed.id)}, 'Team smoke user context')`
+        )
+        await evaluate(
+          `window.mindmesh.settings.saveModelProvider({ id: 'custom', name: 'Team smoke fixture', baseUrl: ${JSON.stringify(agencyModel.url)}, model: 'fixture-model', apiKey: 'fixture-key' })`
+        )
+        for (const member of members) {
+          await evaluate(
+            `window.mindmesh.agents.update(${JSON.stringify(member.id)}, { ...${JSON.stringify(member)}, provider: 'custom', model: 'fixture-model' })`
+          )
+        }
+        const requestCount = agencyModel.requests.length
+        const content = `${members.map((member) => `@${member.name}`).join(' ')} Team installation smoke round ${round}`
+        const messages = await evaluate(
+          `window.mindmesh.chat.sendSpace(${JSON.stringify(installed.id)}, ${JSON.stringify(content)})`
+        )
+        assert.deepEqual(
+          messages
+            .filter((message) => message.content === 'core-without-plugin')
+            .slice(-3)
+            .map((message) => message.authorId),
+          installed.memberIds
+        )
+        assert.equal(agencyModel.requests.length - requestCount, 3)
+        console.log(
+          `Electron Team install, source reuse, ordered real DSH Space conversation and Open round ${round}: OK`
+        )
+      }
       if (agencyOnly) {
         const catalog = await evaluate(`window.mindmesh.marketplace.list('agents', true)`)
         assert.equal(catalog.state, 'fresh', catalog.error)
@@ -459,7 +547,7 @@ async function runRound(round) {
   }
 }
 
-const agencyModel = agencyOnly ? await startPluginModelFixture() : null
+const agencyModel = agencyOnly || teamsOnly ? await startPluginModelFixture() : null
 try {
   await runRound(1)
   if (process.env.MINDMESH_E2E_RESTART === '1') await runRound(2)

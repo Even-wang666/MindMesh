@@ -55,6 +55,7 @@ function mockApi(): MindMeshApi {
     marketplace: {
       list: vi.fn(async (kind) => ({ kind, items: [], state: 'fresh' as const, fetchedAt: null })),
       installAgent: vi.fn(),
+      installTeam: vi.fn(),
     },
     agents: { list: vi.fn(async () => [agent]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
     spaces: {

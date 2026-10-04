@@ -20,6 +20,7 @@ import { PluginSetManager } from './plugins/plugin-set'
 import { redactPluginDiagnostic } from './plugins/plugin-diagnostics'
 import { MarketplaceCatalogService } from './marketplace'
 import { AgencyProvider, installAgencyAgent } from './agency-provider'
+import { teamProvider, installTeam } from './team-provider'
 
 let mainWindow: BrowserWindow | null = null
 let services: MindMeshServices | null = null
@@ -66,7 +67,7 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   const agency = new AgencyProvider(dataDir)
   const marketplace = new MarketplaceCatalogService(dataDir, [
     agency,
-    { kind: 'teams', source: 'mindmesh-curated', load: async () => [] },
+    teamProvider,
     { kind: 'plugins', source: 'dsh', load: async () => [] },
   ])
   ipcMain.handle('marketplace:list', async (_event, kind, refresh) => {
@@ -79,11 +80,18 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
           item.kind === 'agents'
             ? current.db.findAgentBySource(item.source, item.sourceId)?.id
             : undefined,
+        installedSpaceId:
+          item.kind === 'teams'
+            ? current.db.findSpaceBySource(item.source, item.sourceId)?.id
+            : undefined,
       })),
     }
   })
   ipcMain.handle('marketplace:installAgent', async (_event, key, revision) => {
     return installAgencyAgent(key, revision, agency, marketplace, current.db)
+  })
+  ipcMain.handle('marketplace:installTeam', async (_event, key, revision) => {
+    return installTeam(key, revision, agency, marketplace, current.db)
   })
   ipcMain.handle('agents:list', () => current.listAgents())
   ipcMain.handle('agents:create', (_event, input) => current.createAgent(input))

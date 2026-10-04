@@ -11,6 +11,7 @@ const api: MindMeshApi = {
   marketplace: {
     list: (kind, refresh = false) => ipcRenderer.invoke('marketplace:list', kind, refresh),
     installAgent: (key, revision) => ipcRenderer.invoke('marketplace:installAgent', key, revision),
+    installTeam: (key, revision) => ipcRenderer.invoke('marketplace:installTeam', key, revision),
   },
   agents: {
     list: () => ipcRenderer.invoke('agents:list'),

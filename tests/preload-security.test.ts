@@ -31,10 +31,12 @@ describe('preload chat boundary', () => {
     await api.marketplace.list('teams')
     await api.marketplace.list('plugins', true)
     await api.marketplace.installAgent('["agents","agency","path"]', 'a'.repeat(40))
+    await api.marketplace.installTeam('["teams","mindmesh-curated","web-delivery"]', 'b'.repeat(64))
     expect(electron.invoke.mock.calls).toEqual([
       ['marketplace:list', 'teams', false],
       ['marketplace:list', 'plugins', true],
       ['marketplace:installAgent', '["agents","agency","path"]', 'a'.repeat(40)],
+      ['marketplace:installTeam', '["teams","mindmesh-curated","web-delivery"]', 'b'.repeat(64)],
     ])
     electron.invoke.mockClear()
   })

@@ -32,6 +32,7 @@ export type Space = {
   context: string
   memberIds: string[]
   createdAt: string
+  source?: { source: string; sourceId: string; revision: string; manifest: string }
 }
 
 export type ChatImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
@@ -133,7 +134,7 @@ export type SaveModelProviderInput = {
 }
 
 export type CreateAgentInput = Omit<Agent, 'id' | 'createdAt' | 'source'>
-export type CreateSpaceInput = Omit<Space, 'id' | 'createdAt'>
+export type CreateSpaceInput = Omit<Space, 'id' | 'createdAt' | 'source'>
 
 export type ChatDelta = {
   requestId: string
@@ -150,6 +151,7 @@ export type MindMeshApi = {
   marketplace: {
     list(kind: MarketplaceKind, refresh?: boolean): Promise<MarketplaceCatalog>
     installAgent(key: string, revision: string): Promise<Agent>
+    installTeam(key: string, revision: string): Promise<Space>
   }
   agents: {
     list(): Promise<Agent[]>

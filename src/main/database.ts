@@ -14,6 +14,7 @@ import type {
 } from '../shared/contracts'
 import { DEFAULT_AGENT_MODEL } from '../shared/model-providers'
 import type { AgencyTemplate } from './agency-provider'
+import type { ResolvedTeam } from './team-provider'
 import { createSkillReference } from '../shared/skill-reference'
 import { getAgentCapabilityBaseHash, getAgentCapabilityHash } from './agent-capability'
 import {
@@ -209,9 +210,9 @@ export class MindMeshDatabase {
       | { value: string }
       | undefined
     const version = Number(row?.value ?? 0)
-    if (!Number.isInteger(version) || version < 0 || version > 3)
+    if (!Number.isInteger(version) || version < 0 || version > 4)
       throw new Error('Unsupported database schema version')
-    if (version === 3) return
+    if (version === 4) return
     // VACUUM INTO captures a consistent SQLite snapshot, including WAL, before migration.
     const backup = `${path}.before-schema-${version}.sqlite`
     if (path !== ':memory:' && !existsSync(backup)) this.db.prepare('VACUUM INTO ?').run(backup)
@@ -229,15 +230,21 @@ export class MindMeshDatabase {
         meta.run('runtime_schema_version', '2')
         meta.run('plugin_set_generation', '0')
       }
-      this.db.exec(`CREATE TABLE agent_sources (
+      if (version < 3)
+        this.db.exec(`CREATE TABLE agent_sources (
         agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
         source TEXT NOT NULL, source_id TEXT NOT NULL, revision TEXT NOT NULL,
         repository TEXT NOT NULL, content TEXT NOT NULL, license TEXT NOT NULL, license_text TEXT NOT NULL,
         UNIQUE(source, source_id)
       )`)
+      this.db.exec(`CREATE TABLE space_sources (
+        space_id TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
+        source TEXT NOT NULL, source_id TEXT NOT NULL, revision TEXT NOT NULL, manifest TEXT NOT NULL,
+        UNIQUE(source, source_id)
+      )`)
       this.db
         .prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)')
-        .run('schema_version', '3')
+        .run('schema_version', '4')
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -649,43 +656,47 @@ export class MindMeshDatabase {
   installAgencyAgent(template: AgencyTemplate): Agent {
     this.db.exec('BEGIN IMMEDIATE')
     try {
-      const provenance = template.provenance
-      const existing = this.findAgentBySource(provenance.source, provenance.sourceId)
-      if (existing) {
-        this.db.exec('COMMIT')
-        return existing
-      }
-      const names = new Set(this.listAgents().map((agent) => agent.name))
-      let name = template.name
-      for (let suffix = 2; names.has(name); suffix += 1) name = `${template.name} (${suffix})`
-      const agent = this.createAgent({
-        name,
-        role: template.description,
-        persona: template.persona,
-        ...DEFAULT_AGENT_MODEL,
-        skills: [],
-        tools: [],
-      })
-      this.db
-        .prepare(`INSERT INTO agent_sources(agent_id, source, source_id, revision, repository, content, license, license_text)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(
-          agent.id,
-          provenance.source,
-          provenance.sourceId,
-          provenance.revision,
-          provenance.repository,
-          provenance.content,
-          provenance.license,
-          provenance.licenseText
-        )
-      const installed = this.getAgent(agent.id)!
+      const installed = this.installAgencyAgentRows(template)
       this.db.exec('COMMIT')
       return installed
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
     }
+  }
+
+  private installAgencyAgentRows(template: AgencyTemplate): Agent {
+    const provenance = template.provenance
+    const existing = this.findAgentBySource(provenance.source, provenance.sourceId)
+    if (existing) {
+      return existing
+    }
+    const names = new Set(this.listAgents().map((agent) => agent.name))
+    let name = template.name
+    for (let suffix = 2; names.has(name); suffix += 1) name = `${template.name} (${suffix})`
+    const agent = this.createAgent({
+      name,
+      role: template.description,
+      persona: template.persona,
+      ...DEFAULT_AGENT_MODEL,
+      skills: [],
+      tools: [],
+    })
+    this.db
+      .prepare(`INSERT INTO agent_sources(agent_id, source, source_id, revision, repository, content, license, license_text)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        agent.id,
+        provenance.source,
+        provenance.sourceId,
+        provenance.revision,
+        provenance.repository,
+        provenance.content,
+        provenance.license,
+        provenance.licenseText
+      )
+    const installed = this.getAgent(agent.id)!
+    return installed
   }
 
   createAgent(input: CreateAgentInput, id: string = randomUUID()): Agent {
@@ -772,6 +783,7 @@ export class MindMeshDatabase {
     )
     return rows.map((row) => ({
       ...row,
+      ...this.spaceSourceFields(row.id),
       memberIds: (members.all(row.id) as unknown as Array<{ agentId: string }>).map(
         (item) => item.agentId
       ),
@@ -786,7 +798,87 @@ export class MindMeshDatabase {
     const members = this.db
       .prepare('SELECT agentId FROM space_members WHERE spaceId = ? ORDER BY position ASC')
       .all(id) as unknown as Array<{ agentId: string }>
-    return { ...row, memberIds: members.map((item) => item.agentId) }
+    return { ...row, ...this.spaceSourceFields(id), memberIds: members.map((item) => item.agentId) }
+  }
+
+  private spaceSourceFields(id: string): Pick<Space, 'source'> {
+    const source = this.db
+      .prepare(`SELECT source, source_id AS sourceId, revision, manifest
+      FROM space_sources WHERE space_id = ?`)
+      .get(id) as Space['source']
+    return source ? { source } : {}
+  }
+
+  findSpaceBySource(source: string, sourceId: string): Space | undefined {
+    const row = this.db
+      .prepare('SELECT space_id AS id FROM space_sources WHERE source = ? AND source_id = ?')
+      .get(source, sourceId) as { id: string } | undefined
+    return row ? this.getSpace(row.id) : undefined
+  }
+
+  installTeam(team: ResolvedTeam): Space {
+    if (
+      !team.templates.length ||
+      team.templates.length > 100 ||
+      team.members.length !== team.templates.length ||
+      new Set(team.members).size !== team.members.length ||
+      team.templates.some(
+        (template, index) =>
+          template.provenance.source !== 'agency' ||
+          template.provenance.sourceId !== team.members[index]
+      )
+    )
+      throw new Error('团队成员无效')
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const existing = this.findSpaceBySource('mindmesh-curated', team.sourceId)
+      if (existing) {
+        this.db.exec('COMMIT')
+        return existing
+      }
+      const memberIds = team.templates.map((template) => this.installAgencyAgentRows(template).id)
+      const names = new Set(this.listSpaces().map((space) => space.name))
+      let name = team.name
+      for (let suffix = 2; names.has(name); suffix += 1) name = `${team.name} (${suffix})`
+      const space: Space = {
+        ...normalizeSpaceInput({
+          name,
+          description: team.description,
+          context: team.context,
+          memberIds,
+        }),
+        id: randomUUID(),
+        createdAt: new Date().toISOString(),
+      }
+      this.insertSpaceRows(space)
+      const { templates, ...manifest } = team
+      this.db
+        .prepare(`INSERT INTO space_sources(space_id, source, source_id, revision, manifest)
+        VALUES (?, ?, ?, ?, ?)`)
+        .run(
+          space.id,
+          'mindmesh-curated',
+          team.sourceId,
+          team.revision,
+          JSON.stringify({
+            ...manifest,
+            members: memberIds.map((id) => {
+              const provenance = this.getAgent(id)!.source!
+              return {
+                source: provenance.source,
+                sourceId: provenance.sourceId,
+                revision: provenance.revision,
+              }
+            }),
+          })
+        )
+      const installed = this.getSpace(space.id)!
+      this.db.exec('COMMIT')
+      return installed
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   getUserProfile(): UserProfile {
@@ -852,21 +944,25 @@ export class MindMeshDatabase {
     const space: Space = { ...normalizeSpaceInput(input), id, createdAt: new Date().toISOString() }
     this.db.exec('BEGIN')
     try {
-      this.db
-        .prepare(
-          'INSERT INTO spaces (id, name, description, context, createdAt) VALUES (?, ?, ?, ?, ?)'
-        )
-        .run(space.id, space.name, space.description, space.context, space.createdAt)
-      const addMember = this.db.prepare(
-        'INSERT INTO space_members (spaceId, agentId, position) VALUES (?, ?, ?)'
-      )
-      space.memberIds.forEach((agentId, index) => addMember.run(space.id, agentId, index))
+      this.insertSpaceRows(space)
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
     }
     return space
+  }
+
+  private insertSpaceRows(space: Space): void {
+    this.db
+      .prepare(
+        'INSERT INTO spaces (id, name, description, context, createdAt) VALUES (?, ?, ?, ?, ?)'
+      )
+      .run(space.id, space.name, space.description, space.context, space.createdAt)
+    const addMember = this.db.prepare(
+      'INSERT INTO space_members (spaceId, agentId, position) VALUES (?, ?, ?)'
+    )
+    space.memberIds.forEach((agentId, index) => addMember.run(space.id, agentId, index))
   }
 
   updateSpace(id: string, input: CreateSpaceInput): Space {

@@ -8,6 +8,7 @@ export type MarketplaceItem = MarketplaceIdentity & {
   revision?: string
   license?: string
   installedAgentId?: string
+  installedSpaceId?: string
 }
 export type MarketplaceCatalog = {
   kind: MarketplaceKind
