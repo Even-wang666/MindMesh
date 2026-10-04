@@ -103,6 +103,9 @@ export class ModelProviderSettings {
   }
 
   save(input: SaveModelProviderInput): ModelProviderStatus[] {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('模型服务数据无效')
+    if (typeof input.apiKey !== 'string') throw new Error('API Key 必须是文本')
+    if (input.apiKey.length > 1024) throw new Error('API Key 输入不能超过 1,024 个字符')
     const id = providerIdSchema.parse(input.id)
     const apiKey = input.apiKey.trim()
     const error = getModelProviderApiKeyError(id, apiKey)
@@ -112,10 +115,10 @@ export class ModelProviderSettings {
     let metadata: Omit<SavedProvider, 'apiKey'> = {}
     if (id === 'custom') {
       metadata = z.object({
-        name: z.string().trim().min(1, '请输入服务名称').max(50, '服务名称不能超过 50 个字符'),
-        baseUrl: z.string().trim().url('请输入完整有效的 API Base URL')
+        name: z.string().max(200, '服务名称输入不能超过 200 个字符').trim().min(1, '请输入服务名称').max(50, '服务名称不能超过 50 个字符'),
+        baseUrl: z.string().max(2048, 'API Base URL 不能超过 2,048 个字符').trim().url('请输入完整有效的 API Base URL')
           .refine((value) => /^https?:\/\//.test(value), 'API Base URL 必须以 http:// 或 https:// 开头'),
-        model: z.string().trim().min(1, '请输入模型 ID').max(100, '模型 ID 不能超过 100 个字符'),
+        model: z.string().max(400, '模型 ID 输入不能超过 400 个字符').trim().min(1, '请输入模型 ID').max(100, '模型 ID 不能超过 100 个字符'),
       }).parse(input)
     }
 

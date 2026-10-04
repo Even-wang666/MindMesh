@@ -5,12 +5,14 @@ import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
 import { MindMeshServices } from './services'
-import { installSkillBundle, installSkillFromGitHub, listSkillCatalog, playwrightBrowserAvailable, seedBundledSkills, toolCatalog } from './capabilities'
+import { playwrightBrowserAvailable, toolCatalog } from './capabilities'
+import { installSkillBundle, installSkillFromGitHub, listSkillCatalog, seedBundledSkills } from './skills'
 import { appendRuntimeError } from './runtime-errors'
 import { installNavigationGuards } from './navigation'
 import type { SkillInstallProgress } from '../shared/contracts'
 import { runPluginDeveloperRequest } from './plugins/plugin-dev'
 import { PluginSetManager } from './plugins/plugin-set'
+import { redactPluginDiagnostic } from './plugins/plugin-diagnostics'
 import { MarketplaceCatalogService } from './marketplace'
 import { AgencyProvider, installAgencyAgent } from './agency-provider'
 
@@ -153,7 +155,10 @@ app.whenReady().then(async () => {
       await pluginDeveloperTask
       app.exit(0)
     }
-    catch (error) { console.error(String(error)); app.exit(1) }
+    catch (error) {
+      console.error(redactPluginDiagnostic(error instanceof Error ? error.stack ?? error.message : error))
+      app.exit(1)
+    }
     return
   }
   app.setAppUserModelId('com.mindmesh.desktop')

@@ -1,3 +1,4 @@
+import { mockHarness, mockProviderSettings } from './service-mocks'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -8,8 +9,6 @@ import { AgencyProvider, installAgencyAgent, parseAgencyTemplate } from '../src/
 import { MarketplaceCatalogService } from '../src/main/marketplace'
 import { MindMeshDatabase } from '../src/main/database'
 import { MindMeshServices } from '../src/main/services'
-import type { DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
-import type { ModelProviderSettings } from '../src/main/model-provider-settings'
 
 const revision = 'a'.repeat(40)
 const license = 'MIT License\nCopyright fixture contributors\nPermission fixture notice'
@@ -45,6 +44,26 @@ async function fixture(path: string, templateContent = content): Promise<ReturnT
 }
 
 describe('Agency pinned content and installs', () => {
+  it('accepts maximum-size Agency names and descriptions including a name collision suffix', () => {
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const name = 'x'.repeat(160), description = 'y'.repeat(2000)
+      const template = parseAgencyTemplate(sourceId, `---\nname: ${name}\ndescription: ${description}\n---\nPersona`, revision, license)!
+      db.createAgent({ ...db.listAgents()[0], name })
+      expect(db.installAgencyAgent(template)).toMatchObject({ name: `${name} (2)`, role: description })
+    } finally { db.close() }
+  })
+
+  it('retains an installation failure cause without exposing it in the user message', async () => {
+    const path = directory()
+    const agency = new AgencyProvider(path), catalog = new MarketplaceCatalogService(path, [agency])
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const failure = await installAgencyAgent(null, revision, agency, catalog, db).catch((error: unknown) => error)
+      expect(failure).toMatchObject({ message: '安装智能体失败，请刷新目录后重试。', cause: expect.any(Error) })
+    } finally { db.close() }
+  })
+
   it('bounds the SHA response before parsing or downloading', async () => {
     const path = directory()
     const fetchMock = vi.fn(async () => new Response('a'.repeat(81)))
@@ -150,7 +169,7 @@ describe('Agency pinned content and installs', () => {
     try {
       const agent = db.installAgencyAgent(parseAgencyTemplate(sourceId, content, revision, license)!)
       const run = vi.fn(async (..._args: unknown[]) => ({ text: 'Template reply', sessionId: 'installed-session' }))
-      const services = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter, {} as ModelProviderSettings, () => undefined)
+      const services = new MindMeshServices(db, mockHarness({ run }), mockProviderSettings(), () => undefined)
       const messages = await services.sendPrivate(agent.id, 'Write a sentence')
       expect(run.mock.calls[0][0]).toMatchObject({ id: agent.id, persona: agent.persona, tools: [] })
       expect(messages.at(-1)).toMatchObject({ authorId: agent.id, content: 'Template reply' })

@@ -1,29 +1,29 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { modelsForProvider } from './model-options'
+import { Composer } from './Composer'
+import { MessageList } from './MessageList'
+import { CatalogPage } from './CatalogPage'
+import { AgentDrawer } from './AgentDrawer'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Bot, Boxes, ChevronDown, ChevronRight, Command, Library, MessageCircle, MoreHorizontal, PanelLeftClose, PanelLeftOpen,
-  Plus, Search, Send, Settings, ShieldCheck, Sparkles, Square, Trash2, Wrench, X,
+  Plus, Search, Settings, Trash2, Wrench, X,
 } from 'lucide-react'
 import type {
-  Agent, CatalogItem, ChatImageAttachment, ChatImageMediaType, ChatPermission, ChatRunOptions, Message, ModelOption, RuntimeStatus,
-  SkillInstallProgress, Space, UserProfile,
+  Agent, CatalogItem, ChatImageAttachment, ChatRunOptions, Message, ModelOption, RuntimeStatus,
+  Space, UserProfile,
 } from '../../shared/contracts'
 import {
-  getModelContextWindow, reasoningEffortOptions, supportsImageInput,
+  reasoningEffortOptions, supportsImageInput,
 } from '../../shared/model-providers'
 import { parseMentions } from '../../shared/domain'
 import { parseSkillReference, skillDisplayName } from '../../shared/skill-reference'
-import { getChatContentError } from '../../shared/chat-content'
 import { BrandLogo } from './BrandLogo'
 import { PaneResizer, usePaneShares } from './PaneLayout'
-import { Avatar, Field } from './Ui'
+import { Avatar } from './Ui'
 import { AgentWizard, SpaceWizard } from './Wizards'
 import { ConfirmContext, ConfirmDialog, useConfirm, type ConfirmRequest } from './ConfirmDialog'
 import { SettingsPage } from './SettingsPage'
-import { getProviderLogo } from './ProviderLogos'
 import { useChatController } from './useChatController'
-import { DirectoryConfirm, ImagePicker } from './FilePicker'
 import { MarketplacePage } from './MarketplacePage'
 
 type View = 'chats' | 'spaces' | 'agents' | 'skills' | 'tools' | 'marketplace' | 'settings'
@@ -45,6 +45,10 @@ export function App(): React.JSX.Element {
   const [detailAgentId, setDetailAgentId] = useState<string>('')
   const [editingAgentId, setEditingAgentId] = useState<string>('')
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
+  const [loadError, setLoadError] = useState('')
+  const [modelLoadError, setModelLoadError] = useState('')
+  const [skillLoadError, setSkillLoadError] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
   const appRef = useRef<HTMLElement | null>(null)
   const [shares, setShares] = usePaneShares(appRef)
 
@@ -60,23 +64,34 @@ export function App(): React.JSX.Element {
   )
 
   async function refresh(): Promise<void> {
-    const [nextAgents, nextSpaces, status, nextProfile] = await Promise.all([
-      window.mindmesh.agents.list(), window.mindmesh.spaces.list(), window.mindmesh.runtime.status(), window.mindmesh.settings.profile(),
-    ])
-    setAgents(nextAgents)
-    setSpaces(nextSpaces)
-    setRuntime(status)
-    setProfile(nextProfile)
-    setSelectedAgentId((current) => nextAgents.some((agent) => agent.id === current) ? current : nextAgents[0]?.id || '')
-    setSelectedSpaceId((current) => nextSpaces.some((space) => space.id === current) ? current : nextSpaces[0]?.id || '')
-    void window.mindmesh.catalog.skills()
-      .then((catalog) => setInvocableSkills(catalog.filter((item) => item.status === '仅手动调用')))
-      .catch(() => setInvocableSkills([]))
+    setRefreshing(true)
+    setLoadError('')
+    try {
+      const [nextAgents, nextSpaces, status, nextProfile] = await Promise.all([
+        window.mindmesh.agents.list(), window.mindmesh.spaces.list(), window.mindmesh.runtime.status(), window.mindmesh.settings.profile(),
+      ])
+      setAgents(nextAgents)
+      setSpaces(nextSpaces)
+      setRuntime(status)
+      setProfile(nextProfile)
+      setSelectedAgentId((current) => nextAgents.some((agent) => agent.id === current) ? current : nextAgents[0]?.id || '')
+      setSelectedSpaceId((current) => nextSpaces.some((space) => space.id === current) ? current : nextSpaces[0]?.id || '')
+      void refreshSkills()
+    } catch (cause) {
+      setLoadError(cause instanceof Error && cause.message ? cause.message : '应用数据加载失败，请重试。')
+    } finally { setRefreshing(false) }
+  }
+
+  async function refreshSkills(): Promise<void> {
+    setSkillLoadError('')
+    try { setInvocableSkills((await window.mindmesh.catalog.skills()).filter((item) => item.status === '仅手动调用')) }
+    catch (cause) { setSkillLoadError(cause instanceof Error && cause.message ? cause.message : '技能目录加载失败，请重试。') }
   }
 
   async function refreshModels(): Promise<void> {
+    setModelLoadError('')
     try { setModels(await window.mindmesh.catalog.models()) }
-    catch { setModels([]) }
+    catch (cause) { setModelLoadError(cause instanceof Error && cause.message ? cause.message : '模型目录加载失败，请重试。') }
   }
 
   useEffect(() => {
@@ -114,10 +129,15 @@ export function App(): React.JSX.Element {
       )}
       {hasList && <PaneResizer index={1} appRef={appRef} onShares={setShares} onReset={resetShares} />}
       <section className={hasList ? 'content has-list' : 'content'}>
+        {[
+          { id: 'data', error: loadError, retry: refresh, label: '重新加载' },
+          { id: 'models', error: modelLoadError, retry: refreshModels, label: '重试模型目录' },
+          { id: 'skills', error: skillLoadError, retry: refreshSkills, label: '重试技能目录' },
+        ].map((item) => item.error && <div key={item.id} className="form-error" role="alert">{item.error}<button className="secondary-button compact" disabled={item.id === 'data' && refreshing} onClick={() => void item.retry()}>{item.label}</button></div>)}
         {view === 'chats' && (
           selectedAgent
             ? <ChatPanel key={selectedAgent.id} agent={selectedAgent} models={models} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} invocableSkills={invocableSkills} progress={progress?.scope === 'private' && progress.scopeId === selectedAgent.id ? progress.agentName : undefined} onSend={send} onStop={stop} onDetail={() => setDetailAgentId(selectedAgent.id)} />
-            : <EmptyState onCreate={() => setAgentWizard(true)} />
+            : loadError ? null : <EmptyState onCreate={() => setAgentWizard(true)} />
         )}
         {view === 'spaces' && (selectedSpace ? (
           <SpacePanel key={selectedSpace.id} space={selectedSpace} agents={agents} models={models} messages={messages} profile={profile} busy={busy} streamingText={streamingText} streamingReasoning={streamingReasoning} liveReplyIds={liveReplyIds} progress={progress?.scope === 'space' && progress.scopeId === selectedSpace.id ? progress.agentName : undefined} onSend={send} onStop={stop} onEdit={() => setEditingSpaceId(selectedSpace.id)} onRemove={async (id) => { await window.mindmesh.spaces.remove(id); await refresh() }} onUpdateContext={async (id, context) => {
@@ -418,394 +438,10 @@ function SpacePanel({ space, agents, models, messages, profile, busy, progress, 
   )
 }
 
-function MessageList({ messages, profile, emptyText, progress, streamingText, streamingReasoning, liveReplyIds, starters = [], onStarter }: { messages: Message[]; profile: UserProfile; emptyText: string; progress?: string; streamingText: string; streamingReasoning: string; liveReplyIds: Set<string>; starters?: string[]; onStarter?: (starter: string) => void }): React.JSX.Element {
-  const end = useRef<HTMLDivElement>(null)
-  const hasScrolled = useRef(false)
-  useLayoutEffect(() => {
-    if (!end.current) return
-    end.current.scrollIntoView({ behavior: hasScrolled.current ? 'smooth' : 'auto' })
-    hasScrolled.current = true
-  }, [messages, progress, streamingText, streamingReasoning])
-  if (!messages.length && !progress && !streamingText && !streamingReasoning) return (
-    <div className="conversation-empty">
-      <span className="empty-mark"><BrandLogo size={34} /></span>
-      <h3>{emptyText}</h3>
-      <p>消息仅保存在这台设备上，不会自动上传。</p>
-      {starters.length > 0 && <div className="suggestion-row">{starters.map((starter) => <button key={starter} className="suggestion" onClick={() => onStarter?.(starter)}>{starter}</button>)}</div>}
-    </div>
-  )
-  return <div className="messages">
-    {messages.map((message) => <article key={message.id} className={`message ${message.authorType}`}>
-      <Avatar name={message.authorType === 'user' ? profile.name : message.authorName} image={message.authorType === 'user' ? profile.avatar : null} />
-      <div>
-        <header><strong>{message.authorType === 'user' ? profile.name : message.authorName}</strong>{message.stopped && <span className="stopped-badge">已停止 · 回复可能不完整</span>}<time>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></header>
-        {message.reasoning && <ReasoningDetails content={message.reasoning} initiallyOpen={liveReplyIds.has(message.id)} />}
-        {!!message.attachments?.length && <div className="message-attachments">{message.attachments.map((attachment, index) => <img key={`${attachment.name}-${index}`} src={`data:${attachment.mediaType};base64,${attachment.data}`} alt={attachment.name} />)}</div>}
-        {message.content && <MessageBody content={message.content} animated={liveReplyIds.has(message.id)} />}
-      </div>
-    </article>)}
-    {(progress || streamingText || streamingReasoning) && <article className="message agent">
-      <Avatar name={progress ?? '智能体'} />
-      <div>
-        <header><strong>{progress ?? '智能体'}</strong></header>
-        {streamingReasoning && <ReasoningDetails content={streamingReasoning} initiallyOpen />}
-        {streamingText ? <MessageBody content={streamingText} /> : !streamingReasoning && <div className="chat-progress" role="status"><span className="chat-progress-dot" />思考中…</div>}
-      </div>
-    </article>}
-    <div ref={end} />
-  </div>
-}
-
-function ReasoningDetails({ content, initiallyOpen = false, animated = false }: { content: string; initiallyOpen?: boolean; animated?: boolean }): React.JSX.Element {
-  const [open, setOpen] = useState(initiallyOpen)
-  return <details className="reasoning-details" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary>思考过程</summary><MessageBody content={content} animated={animated} /></details>
-}
-
-function MessageBody({ content, animated = false }: { content: string; animated?: boolean }): React.JSX.Element {
-  const [visible, setVisible] = useState(animated ? '' : content)
-  useEffect(() => {
-    if (!animated || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setVisible(content); return }
-    const characters = Array.from(content)
-    const perFrame = Math.max(1, Math.ceil(characters.length / 60))
-    let count = content.startsWith(visible) ? Array.from(visible).length : 0
-    const timer = window.setInterval(() => {
-      count = Math.min(count + perFrame, characters.length)
-      setVisible(characters.slice(0, count).join(''))
-      if (count === characters.length) window.clearInterval(timer)
-    }, 25)
-    return () => window.clearInterval(timer)
-  }, [animated, content])
-  return <div className="message-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']} components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{visible}</ReactMarkdown></div>
-}
-
-const MAX_IMAGE_BYTES = 32 * 1024 * 1024
-const PERMISSION_LABELS: Record<ChatPermission, string> = {
-  chat: '仅对话',
-  workspace: '允许工作区访问',
-  full: '允许完全访问',
-}
-
-function Composer({ busy, canAttach, placeholder, members = [], value, onChange, onSend, onStop, messages, provider, model, models = [], onModelChange, invocableSkills = [] }: {
-  busy: boolean; canAttach: boolean; placeholder: string; members?: Agent[]; value: string
-  onChange: React.Dispatch<React.SetStateAction<string>>
-  onSend: (value: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions) => Promise<boolean>
-  onStop: () => Promise<boolean>
-  messages: Message[]; provider?: string; model?: string; models?: ModelOption[]; onModelChange?: (model: string) => void
-  invocableSkills?: CatalogItem[]
-}): React.JSX.Element {
-  const [attachments, setAttachments] = useState<ChatImageAttachment[]>([])
-  const [attachmentError, setAttachmentError] = useState('')
-  const [stopError, setStopError] = useState('')
-  const [stopping, setStopping] = useState(false)
-  const [stopAccepted, setStopAccepted] = useState(false)
-  const stopCycle = useRef(0)
-  const [dragging, setDragging] = useState(false)
-  const [permission, setPermission] = useState<ChatPermission>('chat')
-  const [sendError, setSendError] = useState('')
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const [openMenu, setOpenMenu] = useState<'permission' | 'model' | 'context' | null>(null)
-  const selectedModel = models.find((item) => item.id === model)
-    ?? models.find((item) => item.name === displayModelName(model ?? ''))
-  const contextWindow = selectedModel?.contextWindow ?? getModelContextWindow(provider ?? '', model ?? '')
-  const estimatedTokens = estimateContextTokens(messages, value)
-  const contextPercent = contextWindow ? Math.min(100, estimatedTokens / contextWindow * 100) : 0
-  const mention = /@([\p{L}\p{N}_-]*)$/u.exec(value)
-  const matchingMembers = mention ? members.filter((agent) => agent.name.toLowerCase().startsWith(mention[1].toLowerCase())) : []
-  const skillCommandMatch = /(^|\s)\/([a-z0-9-]*)$/u.exec(value)
-  const matchingSkills = skillCommandMatch ? invocableSkills.filter((skill) => skill.id.startsWith(skillCommandMatch[2])) : []
-  const completeSkill = (skill: CatalogItem): void => onChange((draft) => draft.replace(/\/([a-z0-9-]*)$/u, `/${skill.id} `))
-  const addFiles = useCallback(async (files: FileList | File[]): Promise<string | null> => {
-    if (!canAttach) { const error = '目前仅 DeepSeek Flash 支持图片输入'; setAttachmentError(error); return error }
-    setAttachmentError('')
-    const next: ChatImageAttachment[] = []
-    let error = ''
-    let totalBytes = attachments.reduce((sum, attachment) => sum + attachment.bytes, 0)
-    for (const file of Array.from(files)) {
-      const mediaType = await detectImageMediaType(file)
-      if (!mediaType) {
-        error = '仅支持 PNG、JPEG、WebP 或 GIF 图片'
-        continue
-      }
-      if (file.size > MAX_IMAGE_BYTES) { error = '单张图片不能超过 32 MiB'; continue }
-      totalBytes += file.size
-      if (totalBytes > MAX_IMAGE_BYTES) { error = '图片总大小不能超过 32 MiB'; break }
-      try {
-        const dataUrl = await readFileAsDataUrl(file)
-        next.push({ type: 'image', name: file.name, mediaType, data: dataUrl.split(',')[1] ?? '', bytes: file.size })
-      } catch {
-        error = `无法读取 ${file.name}`
-      }
-    }
-    if (error) { setAttachmentError(error); return error }
-    if (next.length > 0) setAttachments((current) => [...current, ...next])
-    return next.length > 0 ? null : '请选择图片'
-  }, [attachments, canAttach])
-  useEffect(() => {
-    let dragDepth = 0
-    const hasFiles = (event: DragEvent): boolean => Array.from(event.dataTransfer?.types ?? []).includes('Files')
-    const enter = (event: DragEvent): void => {
-      if (!hasFiles(event)) return
-      event.preventDefault()
-      if (!canAttach) return
-      dragDepth += 1
-      setDragging(true)
-    }
-    const over = (event: DragEvent): void => {
-      if (!hasFiles(event)) return
-      event.preventDefault()
-      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
-    }
-    const leave = (event: DragEvent): void => {
-      if (!hasFiles(event)) return
-      dragDepth = Math.max(0, dragDepth - 1)
-      if (dragDepth === 0) setDragging(false)
-    }
-    const drop = (event: DragEvent): void => {
-      if (!hasFiles(event)) return
-      event.preventDefault()
-      dragDepth = 0
-      setDragging(false)
-      if (event.dataTransfer?.files.length) void addFiles(event.dataTransfer.files)
-    }
-    window.addEventListener('dragenter', enter)
-    window.addEventListener('dragover', over)
-    window.addEventListener('dragleave', leave)
-    window.addEventListener('drop', drop)
-    return () => {
-      window.removeEventListener('dragenter', enter)
-      window.removeEventListener('dragover', over)
-      window.removeEventListener('dragleave', leave)
-      window.removeEventListener('drop', drop)
-    }
-  }, [addFiles])
-  useEffect(() => {
-    if (!canAttach && attachments.length > 0) setAttachmentError('当前选择的智能体不支持图片输入')
-  }, [attachments.length, canAttach])
-  useEffect(() => {
-    stopCycle.current += 1
-    setStopAccepted(false)
-    setStopping(false)
-    setStopError('')
-  }, [busy])
-  async function submit(): Promise<void> {
-    const current = value
-    const currentAttachments = attachments
-    if (busy || (!current.trim() && currentAttachments.length === 0) || (currentAttachments.length > 0 && !canAttach)) return
-    const validationError = getChatContentError(current)
-    if (validationError) { setSendError(validationError); return }
-    setSendError('')
-    setStopError('')
-    onChange('')
-    setAttachments([])
-    if (!await onSend(current, currentAttachments, onModelChange && model ? { model, permission } : { permission })) {
-      onChange((draft) => draft || current)
-      setAttachments((draft) => draft.length > 0 ? draft : currentAttachments)
-    }
-  }
-  async function stopGeneration(): Promise<void> {
-    if (stopping || stopAccepted) return
-    const cycle = stopCycle.current
-    setStopping(true)
-    setStopError('')
-    try {
-      const stopped = await onStop()
-      if (stopCycle.current !== cycle) return
-      if (stopped) setStopAccepted(true)
-      else setStopError('未能停止生成，请重试。')
-    } catch {
-      if (stopCycle.current === cycle) setStopError('未能停止生成，请重试。')
-    } finally {
-      if (stopCycle.current === cycle) setStopping(false)
-    }
-  }
-  return (
-    <div className="composer-wrap">
-      {dragging && <div className="drop-overlay" role="status">松开即可添加图片</div>}
-      {matchingMembers.length > 0 && <div className="mention-menu"><span className="eyebrow">选择智能体</span>{matchingMembers.map((agent) => <button key={agent.id} onClick={() => onChange((draft) => draft.replace(/@[\p{L}\p{N}_-]*$/u, `@${agent.name} `))}><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></button>)}</div>}
-      {matchingSkills.length > 0 && <div className="mention-menu" id="skill-invoke-menu" role="group" aria-label="手动触发技能"><span className="eyebrow">手动触发技能</span>{matchingSkills.map((skill) => <button key={skill.id} onClick={() => completeSkill(skill)}><span className="skill-menu-mark"><Sparkles size={14} /></span><span><strong>/{skill.id}</strong><small>{skill.description}</small></span></button>)}</div>}
-      <div className="composer">
-        {attachments.length > 0 && <div className="composer-attachments">{attachments.map((attachment, index) => <figure key={`${attachment.name}-${index}`}><img src={`data:${attachment.mediaType};base64,${attachment.data}`} alt={attachment.name} /><figcaption>{attachment.name}</figcaption><button type="button" aria-label={`移除 ${attachment.name}`} onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}><X size={13} /></button></figure>)}</div>}
-      <textarea value={value} onChange={(event) => { setSendError(''); onChange(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (matchingSkills[0]) completeSkill(matchingSkills[0]); else void submit() } }} placeholder={placeholder} aria-controls={matchingSkills.length > 0 ? 'skill-invoke-menu' : undefined} aria-expanded={matchingSkills.length > 0} />
-      {attachmentError && <p className="composer-error" role="alert">{attachmentError}</p>}
-      {sendError && <p className="composer-error" role="alert">{sendError}</p>}
-        {stopError && <p className="composer-error" role="alert">{stopError}</p>}
-        <div className="composer-actions">
-          <div className="composer-tools">
-            <button type="button" className="composer-add" aria-label="添加图片" title={canAttach ? '添加图片' : '目前仅 DeepSeek Flash 支持图片输入'} disabled={busy || !canAttach} onClick={() => setPickerOpen(true)}><Plus size={19} /></button>
-            <div className="composer-control-wrap">
-              <button type="button" className={`composer-control permission ${permission !== 'full' ? 'limited' : ''}`} aria-label={`权限：${PERMISSION_LABELS[permission]}`} aria-expanded={openMenu === 'permission'} onClick={() => setOpenMenu((current) => current === 'permission' ? null : 'permission')}><ShieldCheck size={15} />{PERMISSION_LABELS[permission]}<ChevronRight size={13} /></button>
-              {openMenu === 'permission' && <div className="composer-menu permission-menu">{(Object.keys(PERMISSION_LABELS) as ChatPermission[]).map((item) => <button type="button" key={item} aria-label={PERMISSION_LABELS[item]} className={item === permission ? 'selected' : ''} onClick={() => { setPermission(item); setOpenMenu(null) }}><strong>{PERMISSION_LABELS[item]}</strong><small>{item === 'chat' ? '不使用本地工具' : item === 'workspace' ? '允许文件和网页，不运行 Shell' : '使用智能体已配置的全部工具'}</small></button>)}</div>}
-            </div>
-          </div>
-          <div className="composer-route-controls">
-            <div className="composer-control-wrap">
-              <button type="button" className="context-meter" aria-label={`上下文窗口：约 ${formatTokenCount(estimatedTokens)} / ${contextWindow ? formatTokenCount(contextWindow) : '未知'}`} aria-expanded={openMenu === 'context'} onClick={() => setOpenMenu((current) => current === 'context' ? null : 'context')}><span style={{ '--context-progress': `${contextWindow ? Math.max(2, contextPercent) : 2}%` } as React.CSSProperties} /></button>
-              {openMenu === 'context' && <div className="composer-menu context-menu"><strong>上下文窗口</strong><span>约 {formatTokenCount(estimatedTokens)} / {contextWindow ? formatTokenCount(contextWindow) : '未知'}</span><small>{contextWindow ? '根据当前会话文本估算，实际用量以 API 计费为准。' : '该模型未公布上下文上限；当前用量按会话文本估算。'}</small></div>}
-            </div>
-            <div className="composer-control-wrap">
-              <button type="button" className="composer-control model" aria-label={`选择模型，当前 ${selectedModel?.name ?? '成员模型'}`} aria-expanded={openMenu === 'model'} disabled={!onModelChange} onClick={() => setOpenMenu((current) => current === 'model' ? null : 'model')}>{provider && getProviderLogo(provider) && <img src={getProviderLogo(provider)} alt="" />}{selectedModel?.name ?? '成员模型'}<ChevronRight size={13} /></button>
-              {openMenu === 'model' && <div className="composer-menu model-menu">{models.map((item) => <button type="button" key={item.id} className={item.id === model ? 'selected' : ''} onClick={() => { onModelChange?.(item.id); setOpenMenu(null) }}>{item.name}</button>)}</div>}
-            </div>
-            <button type="button" className="send-button" aria-label={busy ? stopAccepted ? '已停止' : stopping ? '正在停止' : '停止生成' : '发送'} disabled={busy ? stopping || stopAccepted : ((!value.trim() && attachments.length === 0) || (attachments.length > 0 && !canAttach))} onClick={() => busy ? void stopGeneration() : void submit()}>{busy ? <Square size={13} fill="currentColor" /> : <Send size={17} />}</button>
-          </div>
-        </div>
-      </div>
-      {pickerOpen && <ImagePicker title="添加图片" hint="先预览并确认，再添加到当前消息。" multiple confirmLabel="添加到消息" onPick={addFiles} onClose={() => setPickerOpen(false)} />}
-    </div>
-  )
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
-}
-
-async function detectImageMediaType(file: File): Promise<ChatImageMediaType | null> {
-  const signature = await readFileAsArrayBuffer(file.slice(0, 12)).catch(() => null)
-  if (!signature) return null
-  const bytes = new Uint8Array(signature)
-  if (bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value)) return 'image/png'
-  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
-  const ascii = String.fromCharCode(...bytes)
-  if (ascii.startsWith('GIF87a') || ascii.startsWith('GIF89a')) return 'image/gif'
-  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WEBP') return 'image/webp'
-  return null
-}
-
-function readFileAsArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as ArrayBuffer)
-    reader.onerror = () => reject(reader.error)
-    reader.readAsArrayBuffer(blob)
-  })
-}
-
-function displayModelName(model: string): string {
-  if (model === 'deepseek-v4-flash' || model === 'deepseek-v4-flash-vision-exp') return 'DeepSeek V4.1 Flash'
-  return model.split(/[-_]/).map((part) => part ? part[0].toUpperCase() + part.slice(1) : '').join(' ')
-}
-
-function modelsForProvider(provider: string | undefined, selectedModel: string, configuredModel: string | undefined, models: ModelOption[]): ModelOption[] {
-  if (!provider) return []
-  const available = models.filter((item) => item.provider === provider)
-  for (const id of [configuredModel, selectedModel]) {
-    if (id && !available.some((item) => item.id === id)) {
-      available.push({ provider, id, name: displayModelName(id), contextWindow: getModelContextWindow(provider, id) })
-    }
-  }
-  return available.filter((item, index) => available.findIndex((candidate) => candidate.name === item.name) === index)
-}
-
-function estimateContextTokens(messages: Message[], draft: string): number {
-  const characters = [...messages.map((message) => `${message.content}\n${message.reasoning ?? ''}`).join('\n'), ...draft].length
-  return Math.ceil(characters / 2)
-}
-
-function formatTokenCount(value: number): string {
-  if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(1))}M`
-  if (value >= 1_000) return `${Number((value / 1_000).toFixed(1))}K`
-  return String(value)
-}
-
 function EmptyState({ onCreate }: { onCreate: () => void }): React.JSX.Element {
   return <div className="empty-state"><BrandLogo size={76} /><h1>还没有智能体</h1><p>创建第一个智能体，开始你的 Multi-Agent 工作空间。</p><button className="primary-button" onClick={onCreate}><Plus size={17} />创建智能体</button></div>
 }
 
 function AgentsPage({ agents, onCreate, onDetail }: { agents: Agent[]; onCreate: () => void; onDetail: (id: string) => void }): React.JSX.Element {
   return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">AGENTS</span><h1>智能体</h1><p>管理身份、模型、技能和工具。</p></div><button className="primary-button" onClick={onCreate}><Plus size={17} />创建智能体</button></header><div className="table-card"><div className="table-head"><span>智能体</span><span>模型</span><span>能力</span><span>状态</span><span /></div>{agents.map((agent) => <button className="agent-table-row" key={agent.id} onClick={() => onDetail(agent.id)}><span className="agent-cell"><Avatar name={agent.name} /><span><strong>{agent.name}</strong><small>{agent.role}</small></span></span><span><em>{agent.model}</em></span><span className="tags">{agent.skills.slice(0, 2).map((skill) => <i key={skill}>{skillDisplayName(skill)}</i>)}</span><span className="online"><i className="dot" /> 可用</span><MoreHorizontal size={18} /></button>)}</div></div>
-}
-
-function CatalogPage({ kind }: { kind: 'skills' | 'tools' }): React.JSX.Element {
-  const [items, setItems] = useState<CatalogItem[]>([])
-  const [error, setError] = useState('')
-  const [installing, setInstalling] = useState<'local' | 'github' | null>(null)
-  const [progress, setProgress] = useState<SkillInstallProgress | null>(null)
-  const [notice, setNotice] = useState('')
-  const [githubDialogOpen, setGitHubDialogOpen] = useState(false)
-  const [githubUrl, setGitHubUrl] = useState('')
-  const [pendingDir, setPendingDir] = useState<string | null>(null)
-  useEffect(() => { void window.mindmesh.catalog[kind]().then(setItems) }, [kind])
-  useEffect(() => {
-    if (kind !== 'skills') return undefined
-    return window.mindmesh.catalog.onInstallProgress(setProgress)
-  }, [kind])
-  async function pickSkillDir(): Promise<void> {
-    if (installing) return
-    setError('')
-    setNotice('')
-    try {
-      const selected = await window.mindmesh.catalog.pickSkillDir()
-      if (selected) setPendingDir(selected)
-    }
-    catch (caught) { setError(caught instanceof Error ? caught.message : '无法选择技能目录') }
-  }
-  async function installSkill(path: string): Promise<void> {
-    if (installing) return
-    setError('')
-    setNotice('')
-    setInstalling('local')
-    try {
-      setItems(await window.mindmesh.catalog.installSkill(path))
-      setNotice('本地技能导入完成，技能库已刷新。')
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : '技能安装失败'
-      throw new Error(message)
-    } finally { setInstalling(null); setProgress(null) }
-  }
-  async function installGitHubSkill(rawUrl: string): Promise<void> {
-    if (installing) return
-    const url = rawUrl.trim()
-    if (!url) return
-    setGitHubDialogOpen(false)
-    setGitHubUrl('')
-    setError('')
-    setNotice('')
-    setProgress(null)
-    setInstalling('github')
-    try {
-      setItems(await window.mindmesh.catalog.installSkillFromGitHub(url))
-      setNotice('GitHub 技能安装完成，技能库已刷新。')
-    }
-    catch (caught) { setError(caught instanceof Error ? caught.message : 'GitHub 技能安装失败') }
-    finally { setInstalling(null); setProgress(null) }
-  }
-  const progressLabel = installing === 'local'
-    ? '正在导入本地技能…'
-    : progress ? formatSkillInstallProgress(progress) : installing === 'github' ? '正在准备 GitHub 技能安装…' : ''
-  return <div className="page management-page"><header className="page-header"><div><span className="eyebrow">{kind.toUpperCase()}</span><h1>{kind === 'skills' ? '技能库' : '工具'}</h1><p>{kind === 'skills' ? '为智能体添加可复用的工作方法。' : '连接智能体可以使用的实际能力。'}</p></div>{kind === 'skills' && <div className="space-header-actions"><button className="secondary-button compact" disabled={installing !== null} onClick={() => void pickSkillDir()}><Plus size={17} />{installing === 'local' ? '导入中…' : '本地导入'}</button><button className="primary-button compact" disabled={installing !== null} onClick={() => setGitHubDialogOpen(true)}>{installing === 'github' ? '导入中…' : 'GitHub 导入'}</button></div>}</header>{error && <p className="form-error" role="alert">{error}</p>}{progressLabel && <div className="skill-install-progress" role="status"><span>{progressLabel}</span>{progress?.phase === 'downloading' && progress.totalBytes !== undefined && <progress aria-label="GitHub 技能下载进度" value={progress.receivedBytes ?? 0} max={progress.totalBytes} />}</div>}{notice && <p className="form-success" role="status">{notice}</p>}{items.length === 0 ? <div className="empty-state"><span className="empty-mark">{kind === 'skills' ? <Sparkles size={19} /> : <Wrench size={19} />}</span><h1>{kind === 'skills' ? '还没有可用技能' : '还没有可用工具'}</h1><p>安装后会自动出现在这里，并可绑定到智能体。</p></div> : <div className="catalog-grid">{items.map((item) => <article key={item.id}><div className="catalog-icon">{kind === 'skills' ? <Sparkles size={20} /> : <Wrench size={20} />}</div><h3>{item.name}</h3><p>{item.description}</p>{item.diagnostic && <small>{item.diagnostic}</small>}{kind === 'skills' && item.source && <small>{item.integrity === 'untracked' ? '未托管来源' : '可信来源'}：{item.source}{item.license ? ` · ${item.license}${item.licenseSpdx === false ? '（非 SPDX）' : ''}` : ''}{item.integrity === 'modified' ? ' · 内容已变更' : ''}</small>}{item.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}<span className="status-tag">{item.status}</span>{kind === 'skills' && item.status === '仅手动调用' && <small className="skill-invoke-hint">在对话中键入 <code>/{item.id}</code> 手动触发</small>}</article>)}</div>}{pendingDir && <DirectoryConfirm key={pendingDir} title="导入本地技能" path={pendingDir} confirmLabel="确认导入" onReselect={pickSkillDir} onConfirm={() => installSkill(pendingDir)} onClose={() => setPendingDir(null)} />}{githubDialogOpen && <div className="modal-backdrop confirm-backdrop"><form className="confirm-dialog github-import-dialog" role="dialog" aria-modal="true" aria-labelledby="github-import-title" onSubmit={(event) => { event.preventDefault(); void installGitHubSkill(githubUrl) }}><header><div><h2 id="github-import-title">从 GitHub 导入技能</h2><p>粘贴公开 GitHub 仓库或其中的 skill 目录地址。</p></div><button type="button" className="icon-button" aria-label="关闭" onClick={() => setGitHubDialogOpen(false)}><X size={18} /></button></header><Field label="GitHub 地址"><input autoFocus value={githubUrl} onChange={(event) => setGitHubUrl(event.target.value)} placeholder="https://github.com/owner/repo/tree/main/path/to/skill" /></Field><footer><button type="button" className="secondary-button" onClick={() => setGitHubDialogOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={!githubUrl.trim()}>导入</button></footer></form></div>}</div>
-}
-
-function formatSkillInstallProgress(progress: SkillInstallProgress): string {
-  if (progress.phase === 'resolving') return '正在解析 GitHub 地址…'
-  if (progress.phase === 'extracting') return '正在解压归档…'
-  if (progress.phase === 'installing') return '正在安装技能…'
-  if (progress.phase === 'done') return '安装完成'
-  if (progress.receivedBytes === undefined) return '下载仓库归档…'
-  const receivedKiB = Math.ceil(progress.receivedBytes / 1024)
-  const size = progress.totalBytes === undefined
-    ? `${receivedKiB} KiB`
-    : `${receivedKiB} / ${Math.ceil(progress.totalBytes / 1024)} KiB`
-  return `下载仓库归档… ${size}`
-}
-
-function AgentDrawer({ agent, onClose, onChat, onEdit, onRemove }: {
-  agent?: Agent; onClose: () => void; onChat: (id: string) => void; onEdit: (id: string) => void; onRemove: (id: string) => Promise<void>
-}): React.JSX.Element | null {
-  const confirm = useConfirm()
-  if (!agent) return null
-  const target = agent
-  function requestRemove(): void {
-    confirm({
-      title: `确定删除智能体「${target.name}」吗？`,
-      description: '该操作会将其从协作空间移除。',
-      confirmLabel: '确定删除',
-      onConfirm: () => onRemove(target.id),
-    })
-  }
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="agent-drawer" onMouseDown={(event) => event.stopPropagation()}><header><Avatar name={agent.name} large /><div><h2>{agent.name}</h2><p>{agent.role}</p></div><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header><section><span className="eyebrow">身份设定</span><p>{agent.persona}</p></section>{agent.source && <section><details><summary>来源与许可</summary><p>{agent.source.repository} · {agent.source.sourceId}</p><p>版本：{agent.source.revision} · {agent.source.license}</p><pre className="source-license">{agent.source.licenseText}</pre></details></section>}<section><span className="eyebrow">模型</span><p><em>{agent.model}</em></p></section><section><span className="eyebrow">技能</span><div className="tags">{agent.skills.map((item) => <i key={item}>{skillDisplayName(item)}</i>)}</div></section><section><span className="eyebrow">工具</span><div className="tags">{agent.tools.map((item) => <i key={item}>{item}</i>)}</div></section><footer><button className="primary-button" onClick={() => onChat(agent.id)}>开始对话</button><button className="secondary-button" onClick={() => onEdit(agent.id)}>编辑智能体</button><button className="danger-button" onClick={requestRemove}><Trash2 size={15} />删除智能体</button></footer></aside></div>
 }

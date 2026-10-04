@@ -1,3 +1,4 @@
+import { mockProviderSettings } from './service-mocks'
 import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -9,7 +10,6 @@ import { PluginSetManager } from '../src/main/plugins/plugin-set'
 import { PluginManager, PluginStaging } from '../src/main/plugins/plugin-manager'
 import { DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
 import { RuntimeHomeMaterializer } from '../src/main/runtime-home-materializer'
-import type { ModelProviderSettings } from '../src/main/model-provider-settings'
 import { MindMeshServices } from '../src/main/services'
 
 test('full materializes the validated lockfile; core physically contains no third-party plugin', async () => {
@@ -19,8 +19,8 @@ test('full materializes the validated lockfile; core physically contains no thir
   const db = new MindMeshDatabase(join(root, 'data', 'db.sqlite'))
   const set = new PluginSetManager(db)
   const manager = new PluginManager(set, new PluginStaging(join(root, 'data'), undefined, registry.url))
-  const provider = { id: 'custom', name: 'Fixture', apiKey: 'fixture-key', baseUrl: model.url, model: 'fixture-model' }
-  const settings = { getProvider: () => provider, configuredProviders: () => [provider] } as unknown as ModelProviderSettings
+  const provider = { id: 'custom' as const, name: 'Fixture', apiKey: 'fixture-key', baseUrl: model.url, model: 'fixture-model' }
+  const settings = mockProviderSettings({ getProvider: () => provider, configuredProviders: () => [provider] })
   let adapter = new DeepSeekHarnessAdapter(root, join(root, 'data'), settings, set)
   const agent = { id: 'a', name: 'A', role: '', persona: 'Test', provider: 'custom', model: 'fixture-model', skills: [], tools: ['Shell'], createdAt: '' }
   try {

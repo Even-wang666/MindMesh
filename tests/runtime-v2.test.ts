@@ -1,9 +1,9 @@
+import { mockProviderSettings } from './service-mocks'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
-import type { ModelProviderSettings } from '../src/main/model-provider-settings'
 import type { Agent } from '../src/shared/contracts'
 import { getRuntimeIdentity } from '../src/main/runtime-revision'
 import { RuntimeHomeMaterializer } from '../src/main/runtime-home-materializer'
@@ -42,7 +42,7 @@ afterEach(() => {
 
 const agent: Agent = { id: 'a', name: 'A', role: '', persona: 'Test', provider: 'deepseek-official',
   model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '' }
-const settings = { getProvider: () => undefined, configuredProviders: () => [] } as unknown as ModelProviderSettings
+const settings = mockProviderSettings({ getProvider: () => undefined, configuredProviders: () => [] })
 
 describe('Runtime V2 identity', () => {
   it('separates full from chat even when the Agent has no configured tools', () => {
@@ -84,8 +84,8 @@ describe('Runtime V2 identity', () => {
 
   it('captures provider configuration once, keeps revisions stable across restart, and hides credentials', async () => {
     const directory = temporaryDirectory()
-    let provider = { id: 'custom', name: 'Custom', apiKey: 'secret-one', baseUrl: 'https://one.invalid', model: 'm1' }
-    const configured = { getProvider: () => provider, configuredProviders: () => [provider] } as unknown as ModelProviderSettings
+    let provider = { id: 'custom' as const, name: 'Custom', apiKey: 'secret-one', baseUrl: 'https://one.invalid', model: 'm1' }
+    const configured = mockProviderSettings({ getProvider: () => provider, configuredProviders: () => [provider] })
     const adapter = new DeepSeekHarnessAdapter(directory, directory, configured)
     const customAgent = { ...agent, provider: 'custom', model: 'm1' }
     const first = adapter.prepareRun(customAgent, 'chat')
@@ -163,8 +163,8 @@ describe('Runtime V2 identity', () => {
 
   it('recovers private and Space history when an existing session loses its home', async () => {
     const directory = temporaryDirectory()
-    const provider = { id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }
-    const configured = { getProvider: () => provider, configuredProviders: () => [provider] } as unknown as ModelProviderSettings
+    const provider = { id: 'deepseek-official' as const, name: 'DeepSeek', apiKey: 'test-secret' }
+    const configured = mockProviderSettings({ getProvider: () => provider, configuredProviders: () => [provider] })
     const db = new MindMeshDatabase(join(directory, 'mindmesh.sqlite'))
     const adapter = new DeepSeekHarnessAdapter(directory, directory, configured)
     const services = new MindMeshServices(db, adapter, configured, () => undefined)

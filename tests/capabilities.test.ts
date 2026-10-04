@@ -7,7 +7,8 @@ import { c as createTar } from 'tar'
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
 import type { Agent } from '../src/shared/contracts'
 import { createSkillReference } from '../src/shared/skill-reference'
-import { installSkillBundle, installSkillFromGitHub, listSkillCatalog, prepareAgentCapabilities, seedBundledSkills } from '../src/main/capabilities'
+import { prepareAgentCapabilities } from '../src/main/capabilities'
+import { installSkillBundle, installSkillFromGitHub, listSkillCatalog, seedBundledSkills } from '../src/main/skills'
 
 const agent: Agent = {
   id: 'researcher', name: 'Researcher', role: '', persona: '研究员',

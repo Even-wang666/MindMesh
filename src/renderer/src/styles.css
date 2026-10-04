@@ -824,9 +824,22 @@ h1 { letter-spacing: -.032em; }
   min-width: 380px;
   flex: 1 1 0;
   display: flex;
+  flex-direction: column;
   padding: var(--sp-4);
 }
 .content.has-list { padding-left: 0; }
+
+.content > .form-error {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface-raised);
+  border-radius: var(--r-control);
+  overflow-wrap: anywhere;
+}
 
 .page {
   width: 100%;

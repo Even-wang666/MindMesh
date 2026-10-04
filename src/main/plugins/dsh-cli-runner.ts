@@ -2,6 +2,7 @@ import { spawn, execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { redactPluginDiagnostic } from './plugin-diagnostics'
 
 export class BundledPackageManager {
   readonly cli: string
@@ -39,6 +40,11 @@ export class DshCliRunner {
   async run(options: CliRun): Promise<string> {
     options.signal?.throwIfAborted()
     mkdirSync(dirname(options.log), { recursive: true })
+    try { appendFileSync(options.log, '') }
+    catch (error) { throw new Error('Plugin diagnostic log write failed', { cause: error }) }
+    const secrets = Object.entries(options.env).flatMap(([name, value]) =>
+      /key|token|secret|password/i.test(name) && value ? [value] : [])
+    const redact = (value: unknown): string => redactPluginDiagnostic(value, secrets)
     const launcher = join(dirname(options.log), 'dsh-launch.mjs')
     writeFileSync(launcher, `import { runCli } from ${JSON.stringify(pathToFileURL(this.dshBin).href)};\nprocess.argv = [process.execPath, ${JSON.stringify(this.dshBin)}, ...process.argv.slice(2)];\nawait runCli({packageManager:{command:process.execPath,args:[${JSON.stringify(this.packageManager.cli)}],env:process.env}});\n`)
     return new Promise((resolve, reject) => {
@@ -48,6 +54,9 @@ export class DshCliRunner {
       const child = spawn(process.execPath, args, { cwd: options.cwd, env: options.env, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
       let output = '', stderr = '', lineBuffer = '', initialized = false, failure: Error | null = null
       let bytes = 0
+      // Keep stdout/stderr separate until close: credentials may span arbitrary chunks.
+      // The existing shared output limit bounds these buffers to 4 MiB in total.
+      const stdoutLog: Buffer[] = [], stderrLog: Buffer[] = []
       let termination: Promise<void> = Promise.resolve()
       const stop = (error: Error): void => {
         if (failure) return
@@ -56,16 +65,12 @@ export class DshCliRunner {
         else child.kill('SIGKILL')
       }
       const abort = (): void => stop(new Error('Plugin staging cancelled'))
-      const log = (buffer: Buffer): boolean => {
-        try { appendFileSync(options.log, buffer); return true }
-        catch (error) { stop(new Error('Plugin diagnostic log write failed', { cause: error })); return false }
-      }
       const timer = setTimeout(() => stop(new Error('Plugin staging timed out')), options.timeoutMs ?? 120_000)
       options.signal?.addEventListener('abort', abort, { once: true })
       child.stdout.on('data', (buffer: Buffer) => {
         const chunk = buffer.toString('utf8'); bytes += buffer.length
-        if (!log(buffer)) return
         if (bytes > 4 * 1024 * 1024) { stop(new Error('Plugin output limit exceeded')); return }
+        stdoutLog.push(buffer)
         if (output.length < 512 * 1024) output += chunk
         if (!options.initialize) return
         lineBuffer += chunk
@@ -77,7 +82,7 @@ export class DshCliRunner {
             const frame = JSON.parse(line)
             if (!frame || frame.jsonrpc !== '2.0' || !(typeof frame.method === 'string' || 'id' in frame && ('result' in frame || 'error' in frame))) throw new Error('Malformed JSON-RPC frame')
             if (frame.id === 'mindmesh-staging') {
-              if (frame.error) stop(new Error(`SDK initialize failed: ${JSON.stringify(frame.error)}`))
+              if (frame.error) stop(new Error(`SDK initialize failed: ${redact(JSON.stringify(frame.error))}`))
               else { initialized = true; child.stdin.end() }
             }
           } catch { stop(new Error('Plugin polluted SDK stdout')) }
@@ -85,19 +90,22 @@ export class DshCliRunner {
       })
       child.stderr.on('data', (buffer: Buffer) => {
         bytes += buffer.length
-        if (!log(buffer)) return
-        stderr = (stderr + buffer.toString('utf8')).slice(-16_384)
-        if (bytes > 4 * 1024 * 1024) stop(new Error('Plugin output limit exceeded'))
+        if (bytes > 4 * 1024 * 1024) { stop(new Error('Plugin output limit exceeded')); return }
+        stderrLog.push(buffer)
+        stderr += buffer.toString('utf8')
       })
       child.on('error', (error) => { failure = error })
       child.stdin.on('error', () => {})
       child.on('close', async (code) => {
         clearTimeout(timer); options.signal?.removeEventListener('abort', abort)
         await termination
-        if (failure) reject(failure)
-        else if (code !== 0) reject(new Error(`DSH exited ${code}: ${stderr}\n${output.slice(-4096)}`))
+        try {
+          appendFileSync(options.log, redact(Buffer.concat(stdoutLog).toString('utf8')) + redact(Buffer.concat(stderrLog).toString('utf8')))
+        } catch (error) { reject(new Error('Plugin diagnostic log write failed', { cause: error })); return }
+        if (failure) reject(new Error(redact(failure.message), { cause: failure }))
+        else if (code !== 0) reject(new Error(`DSH exited ${code}: ${redact(stderr).slice(-16_384)}\n${redact(output).slice(-4096)}`))
         else if (options.initialize && (!initialized || lineBuffer.trim())) reject(new Error('SDK initialize incomplete or stdout polluted'))
-        else if (/inactive|did not activate|skipped bundle|installation rejected|Ignored build scripts|ERR_PNPM_IGNORED_BUILDS/i.test(stderr + output)) reject(new Error(`Plugin compatibility validation failed: ${stderr.slice(-4096)}`))
+        else if (/inactive|did not activate|skipped bundle|installation rejected|Ignored build scripts|ERR_PNPM_IGNORED_BUILDS/i.test(stderr + output)) reject(new Error(`Plugin compatibility validation failed: ${redact(stderr).slice(-4096)}`))
         else resolve(output)
       })
       if (options.initialize) child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 'mindmesh-staging', method: 'initialize', params: { cwd: options.cwd, provider: 'deepseek-official', model: 'deepseek-v4-flash' } }) + '\n')

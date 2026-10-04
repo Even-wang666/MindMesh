@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { parseDocument } from 'yaml'
+import { z } from 'zod'
 import { prepareAgentCapabilities, toolCatalog } from '../capabilities'
 import { getDshRuntimeInfo } from '../dsh-runtime'
 import type { RuntimeRequest } from '../runtime-revision'
@@ -41,6 +42,15 @@ export async function materializePlugins(dataDirectory: string, home: string, re
   if (artifact.revision !== plugins.desiredRevision || composition.revision !== plugins.desiredRevision
     || composition.runtimeVersion !== runtime.version || composition.pnpmVersion !== '11.7.0'
     || JSON.stringify(composition.enabled) !== JSON.stringify(expected)) throw new Error('Plugin artifact composition mismatch; validate the set again')
+  let stagingRoot: string
+  try {
+    const storedPatch = yaml(files['capabilities.patch.yml'])
+    const entry = z.object({ id: z.literal('skill-filesystem'), config: z.object({
+      customSkillDirs: z.tuple([z.string().min(1).max(4096).refine((path) =>
+        isAbsolute(path) || /^<STAGING_HOME>[\\/]/.test(path))]),
+    }) }).parse(Array.isArray(storedPatch) ? storedPatch[0] : undefined)
+    stagingRoot = dirname(entry.config.customSkillDirs[0])
+  } catch (error) { throw new Error('插件能力配置无效，请重新验证插件。', { cause: error }) }
   const profile = join(home, 'profiles', 'sdk')
   mkdirSync(profile, { recursive: true })
   mkdirSync(join(home, 'tmp'), { recursive: true })
@@ -65,8 +75,6 @@ export async function materializePlugins(dataDirectory: string, home: string, re
   const checkHome = join(home, 'plugin-validation')
   mkdirSync(checkHome)
   const patch = prepareAgentCapabilities({ ...request.agent, skills: [], tools: toolCatalog.filter((tool) => tool.id !== 'browser').map((tool) => tool.name) }, checkHome, checkHome)
-  const storedPatch = yaml(files['capabilities.patch.yml']) as Array<{ config?: { customSkillDirs?: string[] } }>
-  const stagingRoot = dirname(storedPatch[0].config!.customSkillDirs![0])
   const normalize = (text: string, paths: string[]) => {
     for (const path of paths) text = text.replaceAll(JSON.stringify(path).slice(1, -1), '<STAGING_HOME>').replaceAll(path, '<STAGING_HOME>')
     return JSON.stringify(yaml(text))

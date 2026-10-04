@@ -4,7 +4,8 @@ import { MindMeshDatabase } from '../database'
 import { PluginSetManager } from './plugin-set'
 import { PluginManager, PluginStaging, type PluginChange } from './plugin-manager'
 import { DeepSeekHarnessAdapter } from '../harness-adapter'
-import type { ModelProviderSettings } from '../model-provider-settings'
+import type { ModelProviderRuntimeConfig } from '../model-provider-settings'
+import { redactPluginDiagnostic } from './plugin-diagnostics'
 
 /** Explicit developer CLI only; there is no renderer IPC for plugin mutation in PR4. */
 export async function runPluginDeveloperRequest(file: string, signal: AbortSignal): Promise<void> {
@@ -28,8 +29,8 @@ export async function runPluginDeveloperRequest(file: string, signal: AbortSigna
     const result = change ? await manager.change(change as PluginChange, signal) : manager.snapshot()
     let runtime
     if (request.runtime) {
-      const provider = { id: 'custom', name: 'Fixture', apiKey: 'fixture-key', baseUrl: request.runtime.baseUrl, model: 'fixture-model' }
-      const settings = { getProvider: () => provider, configuredProviders: () => [provider] } as unknown as ModelProviderSettings
+      const provider: ModelProviderRuntimeConfig = { id: 'custom', name: 'Fixture', apiKey: 'fixture-key', baseUrl: request.runtime.baseUrl, model: 'fixture-model' }
+      const settings = { getProvider: (id: string) => id === provider.id ? provider : undefined, configuredProviders: () => [provider] }
       const workspace = join(request.dataDirectory, 'runtime-smoke-workspace')
       mkdirSync(workspace, { recursive: true })
       const adapter = new DeepSeekHarnessAdapter(workspace, request.dataDirectory, settings, set)
@@ -45,7 +46,8 @@ export async function runPluginDeveloperRequest(file: string, signal: AbortSigna
     }
     writeFileSync(request.resultFile, JSON.stringify({ ok: true, ...result, ...(runtime ? { runtime } : {}) }, null, 2))
   } catch (error) {
-    writeFileSync(request.resultFile, JSON.stringify({ ok: false, error: String(error) }, null, 2))
-    throw error
+    const message = redactPluginDiagnostic(error)
+    writeFileSync(request.resultFile, JSON.stringify({ ok: false, error: message }, null, 2))
+    throw new Error(message, { cause: error })
   } finally { db.close() }
 }

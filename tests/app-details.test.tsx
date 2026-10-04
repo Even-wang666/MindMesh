@@ -63,6 +63,94 @@ function mockApi(): MindMeshApi {
 }
 
 describe('chat details', () => {
+  it.each(['models', 'skills'] as const)('reports an initial %s catalog failure and retries it', async (kind) => {
+    const api = mockApi()
+    const load = vi.mocked(api.catalog[kind])
+    load.mockRejectedValueOnce(new Error('目录读取失败')).mockResolvedValueOnce([])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('目录读取失败')
+    fireEvent.click(screen.getByRole('button', { name: kind === 'models' ? '重试模型目录' : '重试技能目录' }))
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('reports initialization failure and recovers through retry', async () => {
+    const api = mockApi()
+    vi.mocked(api.agents.list).mockRejectedValueOnce(new Error('智能体读取失败'))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('智能体读取失败')
+    fireEvent.click(screen.getByRole('button', { name: '重新加载' }))
+    expect(await screen.findByPlaceholderText(`给 ${agent.name} 发送消息…`)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('reports settings read failures independently and retries both resources', async () => {
+    const api = mockApi()
+    vi.mocked(api.settings.modelProviders).mockRejectedValueOnce(new Error('模型配置读取失败'))
+    vi.mocked(api.settings.workspace).mockRejectedValueOnce(new Error('目录读取失败'))
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '设置' }))
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2))
+    expect(screen.getByText('模型配置读取失败')).toBeInTheDocument()
+    expect(screen.getByText('目录读取失败')).toBeInTheDocument()
+    expect(screen.queryByText('添加自定义服务')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重试模型服务' }))
+    expect(await screen.findByText('C:\\MindMesh')).toBeInTheDocument()
+    expect(await screen.findByText('添加自定义服务')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('reports a catalog load failure and allows retrying instead of showing an empty catalog', async () => {
+    const api = mockApi()
+    api.catalog.tools = vi.fn().mockRejectedValueOnce(new Error('工具目录读取失败')).mockResolvedValueOnce([
+      { id: 'shell', name: 'Shell', description: '运行命令', status: '可用' },
+    ])
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '工具' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('工具目录读取失败')
+    expect(screen.queryByText('还没有可用工具')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByText('Shell')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('focuses the agent dialog, contains keyboard focus and restores focus after Escape', async () => {
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: mockApi() })
+    render(<App />)
+    const trigger = await screen.findByRole('button', { name: /查看详情/ })
+    trigger.focus()
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name: agent.name })
+    const close = within(dialog).getByRole('button', { name: '关闭' })
+    expect(close).toHaveFocus()
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
+    const last = within(dialog).getByRole('button', { name: '删除智能体' })
+    expect(last).toHaveFocus()
+    fireEvent.keyDown(last, { key: 'Tab' })
+    expect(close).toHaveFocus()
+    fireEvent.keyDown(close, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('keeps the drawer open and restores its focus when a nested confirmation is dismissed', async () => {
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: mockApi() })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /查看详情/ }))
+    const drawer = screen.getByRole('dialog', { name: agent.name })
+    const remove = within(drawer).getByRole('button', { name: '删除智能体' })
+    remove.focus()
+    fireEvent.click(remove)
+    fireEvent.keyDown(within(screen.getByRole('alertdialog')).getByRole('button', { name: '取消' }), { key: 'Escape' })
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(drawer).toBeInTheDocument()
+    expect(remove).toHaveFocus()
+  })
+
   it('opens an installed marketplace agent in its normal conversation', async () => {
     const api = mockApi()
     api.marketplace.list = vi.fn(async () => ({ kind: 'agents' as const, state: 'fresh' as const, fetchedAt: null, items: [

@@ -1,18 +1,15 @@
 import { JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Agent, ChatImageAttachment, ChatPermission, RuntimeStatus } from '../shared/contracts'
-import { ModelProviderSettings } from './model-provider-settings'
+import type { ModelProviderSettings } from './model-provider-settings'
 import { getAgentCapabilityHash } from './agent-capability'
 import { resolveSelectedSkills, skillBundlesRevision } from './skills'
 import { getDshRuntimeInfo } from './dsh-runtime'
 import { getRuntimeIdentity, providerRuntimeRevision, type RuntimeRequest } from './runtime-revision'
 import { RuntimeSupervisor, type RuntimeOwner } from './runtime-supervisor'
 import { randomUUID } from 'node:crypto'
-import { runtimeFailureDetail } from './runtime-errors'
+import { RuntimeFailure, runtimeFailureDetail } from './runtime-errors'
 import type { PluginSetManager } from './plugins/plugin-set'
-
-export { getAgentCapabilityHash } from './agent-capability'
-export { buildProviderSettingsYaml } from './runtime-home-materializer'
 
 export class SessionResumeUnsupportedError extends Error {
   constructor() {
@@ -28,7 +25,7 @@ export class DeepSeekHarnessAdapter {
   constructor(
     private workspace: string,
     private readonly dataDirectory: string,
-    private readonly providerSettings: ModelProviderSettings,
+    private readonly providerSettings: Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>,
     private readonly pluginSet?: PluginSetManager,
   ) {
     this.supervisor = new RuntimeSupervisor(dataDirectory)
@@ -156,6 +153,7 @@ export class DeepSeekHarnessAdapter {
         reasoning.length = assistantTexts.length = trace.length = 0
         result = await invoke(runOptions.recoveryPrompt(), `session-${randomUUID()}`)
       }
+      if (!(assistantTexts.at(-1) ?? result.finalResponse).trim()) throw new RuntimeFailure('protocol')
       lease.sessions.add(result.sessionId)
     } catch (error) {
       if (!(error instanceof SessionResumeUnsupportedError)) failure = error
@@ -170,7 +168,6 @@ export class DeepSeekHarnessAdapter {
     // segment as the answer and keep every earlier segment in the reasoning trace. This pairs
     // with services.ts, which streams callbacks first and only appends an unstreamed final suffix.
     const text = assistantTexts.at(-1) ?? result.finalResponse
-    if (!text.trim()) throw new Error('模型未返回正文')
     return {
       text,
       reasoning: (assistantTexts.length ? trace.slice(0, -1) : trace).join('\n\n') || undefined,

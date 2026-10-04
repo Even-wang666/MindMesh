@@ -1,10 +1,11 @@
+import { getAgentCapabilityHash } from '../src/main/agent-capability'
+import { mockHarness, mockProviderSettings } from './service-mocks'
 import { describe, expect, it, vi } from 'vitest'
 import type { WebContents } from 'electron'
 import { MindMeshDatabase } from '../src/main/database'
 import { MindMeshServices } from '../src/main/services'
-import { getAgentCapabilityHash, SessionResumeUnsupportedError, type DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
-import type { ModelProviderSettings } from '../src/main/model-provider-settings'
-import type { ChatImageAttachment, Message } from '../src/shared/contracts'
+import { SessionResumeUnsupportedError, type DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
+import type { ChatImageAttachment } from '../src/shared/contracts'
 
 const image: ChatImageAttachment = {
   type: 'image', name: 'chart.png', mediaType: 'image/png', bytes: 68,
@@ -17,13 +18,13 @@ describe('chat failures', () => {
     const send = vi.fn()
     let rejectRun!: (error: Error) => void
     let emitText!: (text: string) => void
-    const run = vi.fn((_agent, _prompt, _id, onText: (text: string) => void) => new Promise((_resolve, reject) => {
+    const run = vi.fn((_agent, _prompt, _id, onText: (text: string) => void) => new Promise<Awaited<ReturnType<DeepSeekHarnessAdapter['run']>>>((_resolve, reject) => {
       rejectRun = reject
       emitText = onText
     }))
     const stop = vi.fn(async () => { rejectRun(new Error('runtime closed')); return true })
-    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => ({ send }) as unknown as WebContents)
+    const service = new MindMeshServices(db, mockHarness({ run, stop }),
+      mockProviderSettings(), () => ({ send }) as unknown as WebContents)
     try {
       const agent = db.listAgents()[0]
       const pending = service.sendPrivate(agent.id, '请分析')
@@ -34,7 +35,7 @@ describe('chat failures', () => {
       emitText('不应继续输出')
       const messages = await pending
 
-      expect(stop).toHaveBeenCalledWith({ ...agent, tools: [] })
+      expect(stop).toHaveBeenCalledWith({ ...agent, tools: [] }, expect.any(String))
       expect(messages.map((message) => message.authorType)).toEqual(['user', 'agent'])
       expect(messages.at(-1)).toMatchObject({ content: '已经输出', stopped: true })
       expect(send.mock.calls.filter(([channel]) => channel === 'chat:delta'))
@@ -49,13 +50,13 @@ describe('chat failures', () => {
     const run = vi.fn()
       .mockImplementationOnce((_agent, _prompt, _id, onText: (text: string) => void) => {
         emitText = onText
-        return new Promise((_resolve, reject) => { rejectRun = reject })
+        return new Promise<Awaited<ReturnType<DeepSeekHarnessAdapter['run']>>>((_resolve, reject) => { rejectRun = reject })
       })
       .mockRejectedValueOnce(new SessionResumeUnsupportedError())
       .mockResolvedValueOnce({ text: '第二轮完成', sessionId: 'second-session' })
     const stop = vi.fn(async () => { rejectRun(new Error('runtime closed')); return true })
-    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run, stop }),
+      mockProviderSettings(), () => undefined)
     try {
       const space = db.listSpaces()[0]
       const agent = db.getAgent(space.memberIds[0])!
@@ -79,12 +80,12 @@ describe('chat failures', () => {
     const run = vi.fn()
       .mockImplementationOnce((_agent, _prompt, _id, onText: (text: string) => void) => {
         emitText = onText
-        return new Promise((_resolve, reject) => { rejectRun = reject })
+        return new Promise<Awaited<ReturnType<DeepSeekHarnessAdapter['run']>>>((_resolve, reject) => { rejectRun = reject })
       })
       .mockResolvedValueOnce({ text: '已知悉', sessionId: 'other-session' })
     const stop = vi.fn(async () => { rejectRun(new Error('runtime closed')); return true })
-    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run, stop }),
+      mockProviderSettings(), () => undefined)
     try {
       const space = db.listSpaces()[0]
       const firstAgent = db.getAgent(space.memberIds[0])!
@@ -106,8 +107,8 @@ describe('chat failures', () => {
     let resolveRun!: (result: { text: string; sessionId: string }) => void
     const run = vi.fn(() => new Promise<{ text: string; sessionId: string }>((resolve) => { resolveRun = resolve }))
     const stop = vi.fn(async () => false)
-    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run, stop }),
+      mockProviderSettings(), () => undefined)
     try {
       const agent = db.listAgents()[0]
       const pending = service.sendPrivate(agent.id, '请分析')
@@ -122,10 +123,10 @@ describe('chat failures', () => {
   it('latches a successful stop until the active run settles', async () => {
     const db = new MindMeshDatabase(':memory:')
     let rejectRun!: (error: Error) => void
-    const run = vi.fn(() => new Promise((_resolve, reject) => { rejectRun = reject }))
+    const run = vi.fn(() => new Promise<Awaited<ReturnType<DeepSeekHarnessAdapter['run']>>>((_resolve, reject) => { rejectRun = reject }))
     const stop = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
-    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run, stop }),
+      mockProviderSettings(), () => undefined)
     try {
       const agent = db.listAgents()[0]
       const pending = service.sendPrivate(agent.id, '请分析')
@@ -143,8 +144,8 @@ describe('chat failures', () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ text: '恢复', sessionId: 'session' })
     const harness = { run, status: () => ({ state: 'ready' as const, label: '准备就绪', detail: '已配置' }) }
-    const service = new MindMeshServices(db, harness as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness(harness),
+      mockProviderSettings(), () => undefined)
     try {
       const agent = db.listAgents()[0]
       await service.sendPrivate(agent.id, '第一次')
@@ -158,8 +159,8 @@ describe('chat failures', () => {
     const db = new MindMeshDatabase(':memory:')
     const send = vi.fn()
     const run = vi.fn().mockRejectedValue(new Error('secret token detail'))
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => ({ send }) as unknown as WebContents)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => ({ send }) as unknown as WebContents)
     try {
       const agent = db.listAgents()[0]
       const messages = await service.sendPrivate(agent.id, '你好')
@@ -177,8 +178,8 @@ describe('chat failures', () => {
     const db = new MindMeshDatabase(':memory:')
     const send = vi.fn()
     const run = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ text: '第二位的回复' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => ({ send }) as unknown as WebContents)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => ({ send }) as unknown as WebContents)
     try {
       const space = db.listSpaces()[0]
       const agents = space.memberIds.map((id) => db.getAgent(id)!)
@@ -198,15 +199,15 @@ describe('session context', () => {
   it('uses the live DeepSeek model list when the API is configured', async () => {
     const db = new MindMeshDatabase(':memory:')
     const providerSettings = {
-      getProvider: vi.fn(() => ({ id: 'deepseek-official', apiKey: 'sk-test', name: 'DeepSeek' })),
+      getProvider: vi.fn(() => ({ id: 'deepseek-official' as const, apiKey: 'sk-test', name: 'DeepSeek' })),
       statuses: vi.fn(() => []),
     }
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({ data: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-pro' }, { id: 'deepseek-future' }] }),
     })))
-    const service = new MindMeshServices(db, {} as DeepSeekHarnessAdapter,
-      providerSettings as unknown as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness(),
+      mockProviderSettings(providerSettings), () => undefined)
     try {
       expect((await service.models()).filter((item) => item.provider === 'deepseek-official'))
         .toEqual([
@@ -221,16 +222,16 @@ describe('session context', () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'session' })
     const providerSettings = {
-      getProvider: vi.fn(() => ({ id: 'deepseek-official', apiKey: 'sk-test', name: 'DeepSeek' })),
-      statuses: vi.fn(() => [{ id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API', configured: true, source: 'saved' }]),
+      getProvider: vi.fn(() => ({ id: 'deepseek-official' as const, apiKey: 'sk-test', name: 'DeepSeek' })),
+      statuses: vi.fn(() => [{ id: 'deepseek-official' as const, name: 'DeepSeek', description: 'DeepSeek 官方 API', configured: true, source: 'saved' as const }]),
     }
     const request = vi.fn(async () => ({
       ok: true,
       json: async () => ({ is_available: true, balance_infos: [{ currency: 'CNY', total_balance: '88.50', granted_balance: '8.50', topped_up_balance: '80.00' }] }),
     }))
     vi.stubGlobal('fetch', request)
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      providerSettings as unknown as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(providerSettings), () => undefined)
     try {
       await service.sendPrivate(db.listAgents()[0].id, '你好')
       await vi.waitFor(() => expect(request).toHaveBeenCalledWith('https://api.deepseek.com/user/balance', expect.anything()))
@@ -241,12 +242,12 @@ describe('session context', () => {
   it('routes a turn through the selected model and permission ceiling', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'selected-session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const initial = db.listAgents()[0]
       db.updateAgent(initial.id, { ...initial, tools: ['网页搜索', '文件', 'Shell'] })
-      await (service.sendPrivate as unknown as (...args: unknown[]) => Promise<Message[]>)(
+      await service.sendPrivate(
         initial.id, '限制权限', [], { model: 'deepseek-v4-pro', permission: 'workspace' },
       )
 
@@ -262,8 +263,8 @@ describe('session context', () => {
   it('defaults every turn to chat permission without replacing an existing persona snapshot', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const initial = db.listAgents()[0]
       const enabled = db.updateAgent(initial.id, { ...initial, tools: ['文件', 'Shell'] })
@@ -283,8 +284,8 @@ describe('session context', () => {
   it('removes Shell from an existing Space session when the next turn omits options', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const space = db.listSpaces()[0]
       const initial = db.getAgent(space.memberIds[0])!
@@ -302,8 +303,8 @@ describe('session context', () => {
   ] as const)('applies the %s permission ceiling to every mentioned Space member', async (permission, tools) => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const space = db.listSpaces()[0]
       const members = space.memberIds.map((id) => db.getAgent(id)!)
@@ -317,8 +318,8 @@ describe('session context', () => {
   it('applies a reasoning effort change to an existing session on the next turn', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockImplementation((_agent, _prompt, sessionId) => Promise.resolve({ text: '完成', sessionId }))
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const initial = db.listAgents()[0]
       await service.sendPrivate(initial.id, '第一问')
@@ -346,8 +347,8 @@ describe('session context', () => {
   it('applies a reasoning effort change to an existing Space member session', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockImplementation((_agent, _prompt, sessionId) => Promise.resolve({ text: '完成', sessionId }))
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const space = db.listSpaces()[0]
       const initial = db.getAgent(space.memberIds[0])!
@@ -364,8 +365,8 @@ describe('session context', () => {
   it('rejects oversized user messages before creating sessions or running an Agent', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn()
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const agent = db.listAgents()[0]
       const space = db.listSpaces()[0]
@@ -383,8 +384,8 @@ describe('session context', () => {
   it('rejects a model override that was not returned by the DeepSeek model catalog', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn()
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       await expect(service.sendPrivate(db.listAgents()[0].id, '你好', [], {
         model: 'deepseek-made-up', permission: 'full',
@@ -398,8 +399,8 @@ describe('session context', () => {
     const run = vi.fn()
       .mockResolvedValueOnce({ text: '旧回复', sessionId: 'old-session' })
       .mockResolvedValueOnce({ text: '新回复', sessionId: 'new-session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const agentId = db.listAgents()[0].id
       await service.sendPrivate(agentId, '旧问题')
@@ -413,8 +414,8 @@ describe('session context', () => {
   it('keeps the newest result when DeepSeek balance refreshes finish out of order', async () => {
     const db = new MindMeshDatabase(':memory:')
     const providerSettings = {
-      getProvider: vi.fn(() => ({ id: 'deepseek-official', apiKey: 'sk-test', name: 'DeepSeek' })),
-      statuses: vi.fn(() => [{ id: 'deepseek-official', name: 'DeepSeek', description: '', configured: true, source: 'saved' }]),
+      getProvider: vi.fn(() => ({ id: 'deepseek-official' as const, apiKey: 'sk-test', name: 'DeepSeek' })),
+      statuses: vi.fn(() => [{ id: 'deepseek-official' as const, name: 'DeepSeek', description: '', configured: true, source: 'saved' as const }]),
     }
     let resolveFirst!: (value: unknown) => void
     let resolveSecond!: (value: unknown) => void
@@ -423,8 +424,8 @@ describe('session context', () => {
       .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve })))
     const response = (total: string) => ({ ok: true, json: async () => ({ is_available: true,
       balance_infos: [{ currency: 'CNY', total_balance: total, granted_balance: '0.00', topped_up_balance: total }] }) })
-    const service = new MindMeshServices(db, {} as DeepSeekHarnessAdapter,
-      providerSettings as unknown as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness(),
+      mockProviderSettings(providerSettings), () => undefined)
     try {
       const first = service.refreshModelProviders()
       const second = service.refreshModelProviders()
@@ -439,8 +440,8 @@ describe('session context', () => {
   it('sends image attachments only through a DeepSeek Flash route', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '看到了图片', sessionId: 'session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const agent = db.listAgents()[0]
       await service.sendPrivate(agent.id, '分析图片', [image])
@@ -453,18 +454,22 @@ describe('session context', () => {
     } finally { db.close() }
   })
 
-  it('starts a Flash-capable session when an older conversation used a text-only model', async () => {
+  it.each(['private', 'space'] as const)('starts a Flash-capable %s session when an older conversation used a text-only model', async (scope) => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'saved-session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
-      const initial = db.listAgents()[0]
+      const space = db.listSpaces()[0]
+      const initial = db.getAgent(space.memberIds[0])!
+      const send = (content: string, attachments: ChatImageAttachment[] = []) => scope === 'private'
+        ? service.sendPrivate(initial.id, content, attachments)
+        : service.sendSpace(space.id, `@${initial.name} ${content}`, attachments)
       const textOnly = db.updateAgent(initial.id, { ...initial, model: 'deepseek-v3.2' })
-      await service.sendPrivate(initial.id, '先建立文字会话')
+      await send('先建立文字会话')
       db.updateAgent(initial.id, { ...textOnly, model: 'deepseek-v4-flash' })
 
-      await service.sendPrivate(initial.id, '分析图片', [image])
+      await send('分析图片', [image])
 
       expect(run.mock.calls[1][0].model).toBe('deepseek-v4-flash')
       expect(run.mock.calls[1][2]).not.toBe('saved-session')
@@ -480,8 +485,8 @@ describe('session context', () => {
       onText('最终回答', 'text')
       return { text: '最终回答', reasoning: '第一步\n\n第二步', sessionId: 'session' }
     })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => ({ send }) as unknown as WebContents)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => ({ send }) as unknown as WebContents)
     try {
       const agent = db.listAgents()[0]
       const messages = await service.sendPrivate(agent.id, '问题')
@@ -494,8 +499,8 @@ describe('session context', () => {
   it('includes every unread space message after a long absence', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '已阅读', sessionId: 'session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const space = db.listSpaces()[0]
       const agent = db.getAgent(space.memberIds[0])!
@@ -512,8 +517,8 @@ describe('session context', () => {
   it('isolates one agent across two Spaces and its private conversation', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockImplementation(async () => ({ text: `回复 ${run.mock.calls.length}`, sessionId: `session-${run.mock.calls.length}` }))
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const first = db.listSpaces()[0]
       const agent = db.getAgent(first.memberIds[0])!
@@ -540,8 +545,8 @@ describe('session context', () => {
       .mockResolvedValueOnce({ text: '旧回复', sessionId: 'old-session' })
       .mockRejectedValueOnce(new SessionResumeUnsupportedError())
       .mockResolvedValueOnce({ text: '新回复', sessionId: 'new-session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const agent = db.listAgents()[0]
       await service.sendPrivate(agent.id, '旧问题')
@@ -565,13 +570,13 @@ describe('session context', () => {
     const run = vi.fn()
       .mockImplementationOnce((_agent, _prompt, _id, onText: (text: string) => void) => {
         emitText = onText
-        return new Promise((_resolve, reject) => { rejectRun = reject })
+        return new Promise<Awaited<ReturnType<DeepSeekHarnessAdapter['run']>>>((_resolve, reject) => { rejectRun = reject })
       })
       .mockRejectedValueOnce(new SessionResumeUnsupportedError())
       .mockResolvedValueOnce({ text: '第二轮完成', sessionId: 'new-session' })
     const stop = vi.fn(async () => { rejectRun(new Error('runtime closed')); return true })
-    const service = new MindMeshServices(db, { run, stop } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run, stop }),
+      mockProviderSettings(), () => undefined)
     try {
       const agent = db.listAgents()[0]
       const first = service.sendPrivate(agent.id, '第一问')
@@ -589,8 +594,8 @@ describe('session context', () => {
   it('does not replay earlier replies when adopting a preexisting space conversation', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '新回复', sessionId: 'saved-session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const space = db.listSpaces()[0]
       const agent = db.getAgent(space.memberIds[0])!
@@ -610,8 +615,8 @@ describe('session context', () => {
   it('sends each space agent only messages it has not consumed', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'saved-session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const space = db.listSpaces()[0]
       const agent = db.getAgent(space.memberIds[0])!
@@ -629,8 +634,8 @@ describe('session context', () => {
   it('keeps the original agent configuration for an existing private session', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'saved-session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const agent = db.listAgents()[0]
       await service.sendPrivate(agent.id, '第一条')
@@ -646,8 +651,8 @@ describe('session context', () => {
   it('uses a renamed agent identity without restarting its private session', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'saved-session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const agent = db.listAgents()[0]
       await service.sendPrivate(agent.id, '第一条')
@@ -668,8 +673,8 @@ describe('session context', () => {
   it('uses a renamed agent identity without restarting its space session', async () => {
     const db = new MindMeshDatabase(':memory:')
     const run = vi.fn().mockResolvedValue({ text: '完成', sessionId: 'saved-session' })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => undefined)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => undefined)
     try {
       const space = db.listSpaces()[0]
       const agent = db.getAgent(space.memberIds[0])!
@@ -696,8 +701,8 @@ describe('session context', () => {
       expect(send).toHaveBeenCalledWith('chat:delta', expect.objectContaining({ text: '逐步' }))
       return { text: '逐步完成', sessionId: 'saved-session' }
     })
-    const service = new MindMeshServices(db, { run } as unknown as DeepSeekHarnessAdapter,
-      {} as ModelProviderSettings, () => ({ send }) as unknown as WebContents)
+    const service = new MindMeshServices(db, mockHarness({ run }),
+      mockProviderSettings(), () => ({ send }) as unknown as WebContents)
     try {
       await service.sendPrivate(db.listAgents()[0].id, '你好')
       expect(send.mock.calls.filter(([channel]) => channel === 'chat:delta')).toHaveLength(2)

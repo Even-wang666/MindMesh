@@ -42,6 +42,19 @@ function createSettings(): { settings: ModelProviderSettings; path: string } {
 }
 
 describe('ModelProviderSettings', () => {
+  it('rejects malformed and oversized save inputs without changing saved credentials', () => {
+    const { settings, path } = createSettings()
+    settings.save({ id: 'openai', apiKey: keys.openai })
+    const before = readFileSync(path, 'utf8')
+    for (const input of [null, [], { id: 'custom', apiKey: 42 }, { id: 'custom', apiKey: 'x'.repeat(1025) }]) {
+      expect(() => settings.save(input as Parameters<ModelProviderSettings['save']>[0])).toThrow(/数据无效|API Key/)
+      expect(readFileSync(path, 'utf8')).toBe(before)
+    }
+    expect(() => settings.save({ id: 'custom', apiKey: 'valid-secret', name: 'Test', model: 'model',
+      baseUrl: `https://example.com/${'x'.repeat(2048)}` })).toThrow(/不能超过/)
+    expect(readFileSync(path, 'utf8')).toBe(before)
+  })
+
   it('encrypts multiple provider keys and never returns secrets in status', () => {
     const { settings, path } = createSettings()
     settings.save({ id: 'deepseek-official', apiKey: keys.deepseek })

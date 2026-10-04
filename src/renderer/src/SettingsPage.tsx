@@ -110,9 +110,25 @@ export function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntim
   const [workspaceError, setWorkspaceError] = useState('')
   const [choosingWorkspace, setChoosingWorkspace] = useState(false)
   const [pendingWorkspace, setPendingWorkspace] = useState<string | null>(null)
+  const [providerLoadError, setProviderLoadError] = useState('')
+  const [providerLoading, setProviderLoading] = useState(true)
+  const [loadAttempt, setLoadAttempt] = useState(0)
 
-  useEffect(() => { void window.mindmesh.settings.modelProviders().then(setProviders) }, [])
-  useEffect(() => { void window.mindmesh.settings.workspace().then(setWorkspace) }, [])
+  useEffect(() => {
+    let active = true
+    setProviderLoadError('')
+    setProviderLoading(true)
+    setWorkspaceError('')
+    void window.mindmesh.settings.modelProviders().then((items) => { if (active) setProviders(items) })
+      .catch((cause: unknown) => {
+        if (active) setProviderLoadError(cause instanceof Error && cause.message ? cause.message : '模型服务加载失败，请重试。')
+      }).finally(() => { if (active) setProviderLoading(false) })
+    void window.mindmesh.settings.workspace().then((path) => { if (active) setWorkspace(path) })
+      .catch((cause: unknown) => {
+        if (active) setWorkspaceError(cause instanceof Error && cause.message ? cause.message : '工作目录加载失败，请重试。')
+      })
+    return () => { active = false }
+  }, [loadAttempt])
 
   async function pickWorkspace(): Promise<void> {
     setChoosingWorkspace(true)
@@ -214,6 +230,8 @@ export function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntim
       <ProfileSettings profile={profile} onSaved={onProfileChange} />
       <section className="settings-section">
         <h2>模型服务</h2>
+        {providerLoading && <p role="status">正在读取模型服务…</p>}
+        {providerLoadError && <div className="form-error" role="alert"><p>{providerLoadError}</p><button className="secondary-button compact" onClick={() => setLoadAttempt((value) => value + 1)}>重试模型服务</button></div>}
         {providers.map((provider) => (
           <div className="provider-entry" key={provider.id}>
             <div className="setting-row provider-row">
@@ -227,7 +245,7 @@ export function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntim
             {editing === provider.id && renderProviderForm(provider)}
           </div>
         ))}
-        {!customConfigured && (
+        {!customConfigured && !providerLoadError && !providerLoading && (
           <button className="add-provider-row" onClick={() => openEditor({ id: 'custom' })}>
             <span className="provider-add-icon"><Plus size={18} /></span>
             <span><strong>添加自定义服务</strong><small>连接其他兼容 OpenAI API 的模型服务</small></span>
@@ -236,7 +254,7 @@ export function SettingsPage({ runtime, profile, busy, onProfileChange, onRuntim
         )}
         {editing === 'custom' && !customConfigured && renderProviderForm()}
       </section>
-      <section className="settings-section"><h2>本地文件</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>Agent 工作目录</strong><p className="workspace-path">{workspace || '读取中…'}</p><small>在 Agent 编辑页启用“文件”工具后即可使用。文件写入限制在此目录；切换后模型会话重新开始，聊天消息仍保留。</small>{workspaceError && <p className="form-error" role="alert">{workspaceError}</p>}</div><button className="secondary-button compact" disabled={busy || choosingWorkspace} onClick={() => void pickWorkspace()}>选择文件夹</button></div></section>
+      <section className="settings-section"><h2>本地文件</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>Agent 工作目录</strong><p className="workspace-path">{workspace || (workspaceError ? '读取失败' : '读取中…')}</p><small>在 Agent 编辑页启用“文件”工具后即可使用。文件写入限制在此目录；切换后模型会话重新开始，聊天消息仍保留。</small>{workspaceError && <div className="form-error" role="alert"><p>{workspaceError}</p><button className="secondary-button compact" onClick={() => setLoadAttempt((value) => value + 1)}>重试工作目录</button></div>}</div><button className="secondary-button compact" disabled={busy || choosingWorkspace} onClick={() => void pickWorkspace()}>选择文件夹</button></div></section>
       <section className="settings-section"><h2>运行状态</h2><div className="setting-row"><div className="runtime-icon"><Activity size={19} /></div><div><strong>{runtime?.label ?? '检查中'}</strong><p>{runtime?.detail}</p></div><span className={`state-badge ${runtime?.state === 'demo' ? 'warn' : ''}`}>{runtime?.state === 'demo' ? '等待连接' : '正常'}</span></div></section>
       <section className="settings-section"><h2>本地数据</h2><div className="setting-row"><div className="data-icon"><HardDrive size={19} /></div><div><strong>保存在这台设备上</strong><p>智能体、协作空间和消息不会自动上传到云端。</p></div></div></section>
       {pendingWorkspace && <DirectoryConfirm key={pendingWorkspace} title="切换 Agent 工作目录" path={pendingWorkspace} confirmLabel="确认切换" onReselect={pickWorkspace} onConfirm={confirmWorkspace} onClose={() => setPendingWorkspace(null)} />}

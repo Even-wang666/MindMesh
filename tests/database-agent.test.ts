@@ -212,6 +212,38 @@ describe('updateAgent', () => {
 })
 
 describe('agent input validation', () => {
+  it('rejects invalid update and deletion identifiers before reaching SQLite', () => {
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const agent = db.listAgents()[0], space = db.listSpaces()[0]
+      for (const id of [null, [], 42, '', ' ', 'x'.repeat(257)]) {
+        expect(() => db.updateAgent(id as string, agent)).toThrow('记录 ID 无效')
+        expect(() => db.removeAgent(id as string)).toThrow('记录 ID 无效')
+        expect(() => db.updateSpace(id as string, space)).toThrow('记录 ID 无效')
+        expect(() => db.removeSpace(id as string)).toThrow('记录 ID 无效')
+        expect(db.getAgent(agent.id)).toEqual(agent)
+        expect(db.getSpace(space.id)).toEqual(space)
+      }
+    } finally { db.close() }
+  })
+
+  it('bounds agent fields and capability lists without changing an existing agent', () => {
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const original = db.listAgents()[0]
+      for (const patch of [
+        { name: 'x'.repeat(201) }, { role: 'x'.repeat(2001) }, { persona: 'x'.repeat(100_001) },
+        { model: 'x'.repeat(101) }, { provider: 'x'.repeat(101) },
+        { skills: Array(101).fill('skill') }, { tools: Array(101).fill('tool') },
+        { skills: ['x'.repeat(2049)] }, { tools: ['x'.repeat(2049)] },
+      ]) {
+        expect(() => db.createAgent({ ...original, name: 'New', ...patch })).toThrow(/不能超过/)
+        expect(() => db.updateAgent(original.id, { ...original, ...patch })).toThrow(/不能超过/)
+        expect(db.getAgent(original.id)).toEqual(original)
+      }
+    } finally { db.close() }
+  })
+
   it('validates and normalizes agent inputs on create and update', () => {
     const db = new MindMeshDatabase(':memory:')
     try {
@@ -221,7 +253,7 @@ describe('agent input validation', () => {
       expect(() => db.createAgent({ ...template, name: '   ' })).toThrow('名称和身份设定不能为空')
       expect(() => db.updateAgent(created.id, { ...created, persona: '   ' })).toThrow('名称和身份设定不能为空')
       expect(() => db.createAgent({ ...template, name: '数组形状', skills: 'not-an-array' as unknown as string[] }))
-        .toThrow('技能和工具数据无效')
+        .toThrow('技能数据无效')
     } finally {
       db.close()
     }
@@ -241,6 +273,25 @@ describe('agent input validation', () => {
 })
 
 describe('updateSpaceContext', () => {
+  it('rejects invalid and oversized backgrounds through every write path without changing stored data', () => {
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const space = db.listSpaces()[0]
+      for (const context of [null, 42, {}, 'x'.repeat(100_001)]) {
+        const value = context as string
+        expect(() => db.updateSpaceContext(space.id, value)).toThrow(/背景/)
+        expect(() => db.updateSpace(space.id, { ...space, context: value })).toThrow(/背景|协作空间数据/)
+        expect(() => db.createSpace({ ...space, name: 'Invalid', context: value })).toThrow(/背景|协作空间数据/)
+        expect(db.getSpace(space.id)).toEqual(space)
+      }
+      expect(db.updateSpaceContext(space.id, 'x'.repeat(100_000)).context).toHaveLength(100_000)
+      expect(db.updateSpaceContext(space.id, '').context).toBe('')
+      for (const id of [null, 42, '', 'x'.repeat(257)]) {
+        expect(() => db.updateSpaceContext(id as string, '背景')).toThrow(/ID/)
+      }
+    } finally { db.close() }
+  })
+
   it('persists the new background without changing members or messages', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-space-'))
     const path = join(directory, 'mindmesh.sqlite')
@@ -268,6 +319,21 @@ describe('updateSpaceContext', () => {
 })
 
 describe('space membership and agent deletion', () => {
+  it('bounds space fields and membership before writing', () => {
+    const db = new MindMeshDatabase(':memory:')
+    try {
+      const original = db.listSpaces()[0]
+      for (const patch of [
+        { name: 'x'.repeat(101) }, { description: 'x'.repeat(10_001) },
+        { memberIds: Array(101).fill(original.memberIds[0]) }, { memberIds: ['x'.repeat(257)] },
+      ]) {
+        expect(() => db.createSpace({ ...original, ...patch })).toThrow(/不能超过/)
+        expect(() => db.updateSpace(original.id, { ...original, ...patch })).toThrow(/不能超过/)
+        expect(db.getSpace(original.id)).toEqual(original)
+      }
+    } finally { db.close() }
+  })
+
   it('reads one Space directly without listing unrelated spaces', () => {
     const db = new MindMeshDatabase(':memory:')
     try {

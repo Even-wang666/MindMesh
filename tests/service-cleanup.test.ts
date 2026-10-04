@@ -1,21 +1,22 @@
+import { getAgentCapabilityHash } from '../src/main/agent-capability'
+import { mockHarness, mockProviderSettings } from './service-mocks'
 import { describe, expect, it, vi } from 'vitest'
 import { MindMeshDatabase } from '../src/main/database'
-import { getAgentCapabilityHash, SessionResumeUnsupportedError, type DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
-import type { ModelProviderSettings } from '../src/main/model-provider-settings'
+import { SessionResumeUnsupportedError, type DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
 import { MindMeshServices } from '../src/main/services'
 
 function setup() {
   const db = new MindMeshDatabase(':memory:')
-  const harness = {
+  const harness = mockHarness({
     shutdownAll: vi.fn(async () => undefined),
     forgetAgent: vi.fn(async () => undefined),
     forgetSpace: vi.fn(async () => undefined),
     invalidateWorkspace: vi.fn(async () => undefined),
     cleanupUnusedHomes: vi.fn(),
     setWorkspace: vi.fn(),
-    status: vi.fn(() => ({ state: 'ready', label: '', detail: '' })),
-  } as unknown as DeepSeekHarnessAdapter
-  const service = new MindMeshServices(db, harness, {} as ModelProviderSettings, () => undefined)
+    status: vi.fn(() => ({ state: 'ready' as const, label: '', detail: '' })),
+  })
+  const service = new MindMeshServices(db, harness, mockProviderSettings(), () => undefined)
   return { db, harness, service }
 }
 
@@ -64,12 +65,12 @@ describe('orphan Harness home cleanup', () => {
     const db = new MindMeshDatabase(':memory:')
     let finishRun!: (value: { text: string; sessionId: string }) => void
     const run = vi.fn(() => new Promise<{ text: string; sessionId: string }>((resolve) => { finishRun = resolve }))
-    const harness = {
+    const harness = mockHarness({
       run,
       shutdownAll: vi.fn(async () => undefined),
-      status: vi.fn(() => ({ state: 'ready', label: '', detail: '' })),
-    } as unknown as DeepSeekHarnessAdapter
-    const service = new MindMeshServices(db, harness, {} as ModelProviderSettings, () => undefined)
+      status: vi.fn(() => ({ state: 'ready' as const, label: '', detail: '' })),
+    })
+    const service = new MindMeshServices(db, harness, mockProviderSettings(), () => undefined)
     try {
       const space = db.listSpaces()[0]
       const members = space.memberIds.map((id) => db.getAgent(id)!)
@@ -89,12 +90,12 @@ describe('orphan Harness home cleanup', () => {
   it('finishes shutdown after the grace period when an active run never settles', async () => {
     vi.useFakeTimers()
     const db = new MindMeshDatabase(':memory:')
-    const harness = {
-      run: vi.fn(() => new Promise(() => undefined)),
+    const harness = mockHarness({
+      run: vi.fn(() => new Promise<Awaited<ReturnType<DeepSeekHarnessAdapter['run']>>>(() => undefined)),
       shutdownAll: vi.fn(async () => undefined),
-      status: vi.fn(() => ({ state: 'ready', label: '', detail: '' })),
-    } as unknown as DeepSeekHarnessAdapter
-    const service = new MindMeshServices(db, harness, {} as ModelProviderSettings, () => undefined)
+      status: vi.fn(() => ({ state: 'ready' as const, label: '', detail: '' })),
+    })
+    const service = new MindMeshServices(db, harness, mockProviderSettings(), () => undefined)
     try {
       void service.sendPrivate(db.listAgents()[0].id, '不会结束的请求')
       const shutdown = service.shutdown()
@@ -111,13 +112,13 @@ describe('orphan Harness home cleanup', () => {
   it('does not start session recovery while shutdown is closing the Harness', async () => {
     const db = new MindMeshDatabase(':memory:')
     let rejectRun!: (error: Error) => void
-    const run = vi.fn(() => new Promise((_resolve, reject) => { rejectRun = reject }))
-    const harness = {
+    const run = vi.fn(() => new Promise<Awaited<ReturnType<DeepSeekHarnessAdapter['run']>>>((_resolve, reject) => { rejectRun = reject }))
+    const harness = mockHarness({
       run,
       shutdownAll: vi.fn(async () => { rejectRun(new SessionResumeUnsupportedError()) }),
-      status: vi.fn(() => ({ state: 'ready', label: '', detail: '' })),
-    } as unknown as DeepSeekHarnessAdapter
-    const service = new MindMeshServices(db, harness, {} as ModelProviderSettings, () => undefined)
+      status: vi.fn(() => ({ state: 'ready' as const, label: '', detail: '' })),
+    })
+    const service = new MindMeshServices(db, harness, mockProviderSettings(), () => undefined)
     try {
       const sending = service.sendPrivate(db.listAgents()[0].id, '退出时不要恢复会话')
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())

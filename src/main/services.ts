@@ -1,3 +1,4 @@
+import { getAgentCapabilityHash } from './agent-capability'
 import type { WebContents } from 'electron'
 import type {
   Agent, ChatImageAttachment, ChatRunOptions, CreateAgentInput, CreateSpaceInput, Message, ModelProviderId, ModelProviderStatus, RuntimeStatus, SaveModelProviderInput, UserProfile,
@@ -6,8 +7,8 @@ import { buildPrivatePrompt, buildSpacePrompt, parseMentions } from '../shared/d
 import { getModelContextWindow, MODEL_CATALOG, supportsImageInput } from '../shared/model-providers'
 import { validateChatContent } from '../shared/chat-content'
 import { MindMeshDatabase } from './database'
-import { DeepSeekHarnessAdapter, getAgentCapabilityHash, SessionResumeUnsupportedError } from './harness-adapter'
-import { ModelProviderSettings } from './model-provider-settings'
+import { DeepSeekHarnessAdapter, SessionResumeUnsupportedError } from './harness-adapter'
+import type { ModelProviderSettings } from './model-provider-settings'
 import type { RuntimeRequest } from './runtime-revision'
 import { classifyRuntimeFailure, runtimeFailureDetail, type RuntimeFailureKind } from './runtime-errors'
 
@@ -30,8 +31,9 @@ export class MindMeshServices {
 
   constructor(
     readonly db: MindMeshDatabase,
-    readonly harness: DeepSeekHarnessAdapter,
-    readonly providerSettings: ModelProviderSettings,
+    readonly harness: Pick<DeepSeekHarnessAdapter, 'run' | 'stop' | 'prepareRun' | 'status' | 'forgetAgent' | 'forgetSpace'
+      | 'workspacePath' | 'setWorkspace' | 'invalidateWorkspace' | 'invalidateProvider' | 'cleanupUnusedHomes' | 'shutdownAll'>,
+    readonly providerSettings: Pick<ModelProviderSettings, 'getProvider' | 'statuses' | 'save' | 'remove'>,
     private readonly renderer: () => WebContents | undefined,
     private readonly onRuntimeError: (scope: 'private' | 'space', agentId: string, error: unknown) => void = () => {},
   ) {}
@@ -143,30 +145,9 @@ export class MindMeshServices {
     const runAgent = resolveRunAgent(agent, options, this.deepSeekModelIds)
     const images = validateImageAttachments(runAgent.provider, runAgent.model, attachments)
     const promptContent = content.trim() || '请分析附带的图片。'
-    const contextKey = `private:${agentId}`
-    let session = this.db.getOrCreateRuntimeSession(
-      contextKey, runAgent, `private-${agentId}`, getAgentCapabilityHash(runAgent),
+    const { contextKey, session, sessionAgent, runtimeRequest, restarted } = this.prepareSession(
+      'private', agentId, agent, runAgent, options, images.length > 0,
     )
-    // persona 保持会话快照语义；tools 与 reasoningEffort 是活能力，跟随最新 Agent 配置，
-    // 变化时经能力哈希比较触发会话重建（思考强度是 Harness 实例级参数，必须重建才生效）。
-    let sessionRunAgent = resolveRunAgent(
-      { ...session.agent, tools: agent.tools, reasoningEffort: agent.reasoningEffort }, options, this.deepSeekModelIds,
-    )
-    if (images.length > 0 && !supportsImageInput(sessionRunAgent.provider, sessionRunAgent.model)) {
-      sessionRunAgent = { ...sessionRunAgent, provider: runAgent.provider, model: runAgent.model }
-    }
-    let restarted = false
-    sessionRunAgent = { ...sessionRunAgent, name: agent.name, role: agent.role }
-    const runtimeRequest = this.prepareRuntime(sessionRunAgent, options?.permission ?? 'chat')
-    const sessionRunCapabilityHash = runtimeRequest?.identity.capabilityHash ?? this.capabilityHash(sessionRunAgent)
-    if (session.capabilityHash !== sessionRunCapabilityHash
-      || (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model))) {
-      session = this.db.restartRuntimeSession(
-        contextKey, sessionRunAgent, `private-${agentId}-${crypto.randomUUID()}`, sessionRunCapabilityHash,
-      )
-      restarted = true
-    }
-    const sessionAgent = { ...session.agent, name: agent.name, role: agent.role }
     this.db.addMessage({ scope: 'private', scopeId: agentId, authorType: 'user', authorName: this.db.getUserProfile().name, content, attachments: images })
     const history = this.db.listMessages('private', agentId).slice(-31, -1)
     const requestId = crypto.randomUUID()
@@ -236,28 +217,9 @@ export class MindMeshServices {
       if (this.shuttingDown || !this.db.getSpace(spaceId)) break
       if (!this.db.getAgent(runAgent.id)) continue
       const agent = members.find((item) => item.id === runAgent.id)!
-      const contextKey = `space:${spaceId}:${agent.id}`
-      let session = this.db.getOrCreateRuntimeSession(
-        contextKey, runAgent, `space-${spaceId}-${agent.id}`, getAgentCapabilityHash(runAgent),
-        this.db.lastAgentMessageSequence(spaceId, agent.id),
+      const { contextKey, session, sessionAgent, runtimeRequest } = this.prepareSession(
+        'space', spaceId, agent, runAgent, options, images.length > 0,
       )
-      let sessionRunAgent = resolveRunAgent(
-        { ...session.agent, tools: agent.tools, reasoningEffort: agent.reasoningEffort }, options, this.deepSeekModelIds,
-      )
-      if (images.length > 0 && !supportsImageInput(sessionRunAgent.provider, sessionRunAgent.model)) {
-        sessionRunAgent = { ...sessionRunAgent, provider: runAgent.provider, model: runAgent.model }
-      }
-      sessionRunAgent = { ...sessionRunAgent, name: agent.name, role: agent.role }
-      const runtimeRequest = this.prepareRuntime(sessionRunAgent, options?.permission ?? 'chat')
-      const sessionRunCapabilityHash = runtimeRequest?.identity.capabilityHash ?? this.capabilityHash(sessionRunAgent)
-      if (session.capabilityHash !== sessionRunCapabilityHash
-        || (images.length > 0 && !supportsImageInput(session.agent.provider, session.agent.model))) {
-        session = this.db.restartRuntimeSession(
-          contextKey, sessionRunAgent, `space-${spaceId}-${agent.id}-${crypto.randomUUID()}`,
-          sessionRunCapabilityHash, 0,
-        )
-      }
-      const sessionAgent = { ...session.agent, name: agent.name, role: agent.role }
       const visibleMessages = this.db.listMessagesSince('space', spaceId,
         session.lastConsumedMessageSequence)
       const prompt = buildSpacePrompt(sessionAgent, space, visibleMessages)
@@ -312,7 +274,6 @@ export class MindMeshServices {
   }
 
   private async refreshDeepSeekBalance(): Promise<void> {
-    if (typeof this.providerSettings.getProvider !== 'function') return
     const generation = ++this.balanceRequestGeneration
     const provider = this.providerSettings.getProvider('deepseek-official')
     if (!provider) {
@@ -367,20 +328,40 @@ export class MindMeshServices {
     catch { /* Cache cleanup must not replace a successful data change. */ }
   }
 
-  private capabilityHash(agent: Agent): string {
-    return typeof this.harness.capabilityHash === 'function'
-      ? this.harness.capabilityHash(agent)
-      : getAgentCapabilityHash(agent)
-  }
-
-  private prepareRuntime(agent: Agent, permission: Parameters<DeepSeekHarnessAdapter['prepareRun']>[1]): RuntimeRequest | undefined {
-    return typeof this.harness.prepareRun === 'function' ? this.harness.prepareRun(agent, permission) : undefined
+  private prepareSession(
+    scope: Message['scope'], scopeId: string, agent: Agent, runAgent: Agent,
+    options: ChatRunOptions | undefined, hasImages: boolean,
+  ) {
+    const contextKey = scope === 'private' ? `private:${scopeId}` : `space:${scopeId}:${agent.id}`
+    const sessionId = scope === 'private' ? `private-${scopeId}` : `space-${scopeId}-${agent.id}`
+    let session = this.db.getOrCreateRuntimeSession(
+      contextKey, runAgent, sessionId, getAgentCapabilityHash(runAgent),
+      scope === 'space' ? this.db.lastAgentMessageSequence(scopeId, agent.id) : 0,
+    )
+    // Persona stays a conversation snapshot; tools and reasoning effort follow live configuration.
+    let sessionRunAgent = resolveRunAgent(
+      { ...session.agent, tools: agent.tools, reasoningEffort: agent.reasoningEffort }, options, this.deepSeekModelIds,
+    )
+    if (hasImages && !supportsImageInput(sessionRunAgent.provider, sessionRunAgent.model)) {
+      sessionRunAgent = { ...sessionRunAgent, provider: runAgent.provider, model: runAgent.model }
+    }
+    sessionRunAgent = { ...sessionRunAgent, name: agent.name, role: agent.role }
+    const runtimeRequest = this.harness.prepareRun(sessionRunAgent, options?.permission ?? 'chat')
+    const capabilityHash = runtimeRequest.identity.capabilityHash
+    const restarted = session.capabilityHash !== capabilityHash
+      || (hasImages && !supportsImageInput(session.agent.provider, session.agent.model))
+    if (restarted) {
+      session = this.db.restartRuntimeSession(
+        contextKey, sessionRunAgent, `${sessionId}-${crypto.randomUUID()}`, capabilityHash, 0,
+      )
+    }
+    return { contextKey, session, sessionAgent: { ...session.agent, name: agent.name, role: agent.role }, runtimeRequest, restarted }
   }
 
   private async runAgent(
     agent: Parameters<DeepSeekHarnessAdapter['run']>[0], prompt: string, sessionId: string,
     scope: Message['scope'], scopeId: string, requestId: string, recoveryPrompt: () => string,
-    attachments: ChatImageAttachment[] = [], runtimeRequest?: RuntimeRequest,
+    attachments: ChatImageAttachment[], runtimeRequest: RuntimeRequest,
   ): ReturnType<DeepSeekHarnessAdapter['run']> {
     let streamed = ''
     let streamedReasoning = ''
@@ -394,7 +375,7 @@ export class MindMeshServices {
       stopRequested = true
       stopAttempt = (async () => {
         try {
-          const stopped = runtimeRequest ? await this.harness.stop(agent, requestId) : await this.harness.stop(agent)
+          const stopped = await this.harness.stop(agent, requestId)
           stopSucceeded = stopped
           if (!stopped) stopRequested = false
           return stopped
@@ -414,10 +395,10 @@ export class MindMeshServices {
       else streamed += text
       this.emitText(requestId, scope, scopeId, agent.id, text, kind)
     }
-    const run = (input: string, id: string, freshSession = false) => runtimeRequest
-      ? this.harness.run(agent, input, id, onText, attachments, runtimeRequest, freshSession,
-        { contextKey: scope === 'private' ? `private:${scopeId}` : `space:${scopeId}:${agent.id}`, requestId, recoveryPrompt })
-      : this.harness.run(agent, input, id, onText, attachments)
+    const run = (input: string, id: string, freshSession = false) => this.harness.run(
+      agent, input, id, onText, attachments, runtimeRequest, freshSession,
+      { contextKey: scope === 'private' ? `private:${scopeId}` : `space:${scopeId}:${agent.id}`, requestId, recoveryPrompt },
+    )
     let result
     try {
       result = await run(prompt, sessionId)

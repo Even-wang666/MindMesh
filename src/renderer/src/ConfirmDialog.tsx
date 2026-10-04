@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 
 export type ConfirmRequest = {
@@ -19,6 +19,11 @@ export function useConfirm(): (request: ConfirmRequest) => void {
 export function ConfirmDialog({ request, onClose }: { request: ConfirmRequest; onClose: () => void }): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const previousFocus = useRef(document.activeElement)
+  useEffect(() => () => {
+    const element = previousFocus.current
+    if (element instanceof HTMLElement && element.isConnected) element.focus()
+  }, [])
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {

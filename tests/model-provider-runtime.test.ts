@@ -1,3 +1,4 @@
+import { buildProviderSettingsYaml } from '../src/main/runtime-home-materializer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -14,7 +15,7 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { buildProviderSettingsYaml, DeepSeekHarnessAdapter, SessionResumeUnsupportedError } from '../src/main/harness-adapter'
+import { DeepSeekHarnessAdapter, SessionResumeUnsupportedError } from '../src/main/harness-adapter'
 
 beforeEach(() => { vi.spyOn(DeepSeekHarness.prototype, 'start').mockResolvedValue(undefined) })
 afterEach(() => { vi.restoreAllMocks() })
@@ -87,7 +88,7 @@ describe('model provider runtime settings', () => {
     const providerSettings = {
       getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }),
       configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }],
-    } as unknown as ModelProviderSettings
+    } satisfies Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>
     const agent: Agent = {
       id: 'agent', name: 'Agent', role: '', persona: '助手', provider: 'deepseek-official',
       model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '',
@@ -121,14 +122,15 @@ describe('model provider runtime settings', () => {
     const providerSettings = {
       getProvider: () => ({ id: 'moonshotai-cn', name: 'Kimi', apiKey: 'test-secret' }),
       configuredProviders: () => [{ id: 'moonshotai-cn', name: 'Kimi', apiKey: 'test-secret' }],
-    } as unknown as ModelProviderSettings
+    } satisfies Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>
     const agent: Agent = {
       id: 'agent', name: 'Agent', role: '', persona: '助手', provider: 'moonshotai-cn',
       model: 'kimi-k3', skills: [], tools: [], createdAt: '',
     }
     const adapter = new DeepSeekHarnessAdapter(directory, directory, providerSettings)
     try {
-      await expect(adapter.run(agent, '你好', 'session')).rejects.toThrow('模型未返回正文')
+      await expect(adapter.run(agent, '你好', 'session')).rejects.toMatchObject({ kind: 'protocol' })
+      expect(close).toHaveBeenCalledOnce()
     } finally {
       await adapter.shutdownAll()
       run.mockRestore()
@@ -146,7 +148,7 @@ describe('model provider runtime settings', () => {
     const providerSettings = {
       getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }),
       configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }],
-    } as unknown as ModelProviderSettings
+    } satisfies Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>
     const agent: Agent = {
       id: 'agent', name: 'Agent', role: '', persona: '助手', provider: 'deepseek-official',
       model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '',
@@ -179,7 +181,7 @@ describe('model provider runtime settings', () => {
     const providerSettings = {
       getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }),
       configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }],
-    } as unknown as ModelProviderSettings
+    } satisfies Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>
     const adapter = new DeepSeekHarnessAdapter(directory, directory, providerSettings)
     const agent: Agent = {
       id: 'agent', name: 'Agent', role: '', persona: '助手', provider: 'deepseek-official',

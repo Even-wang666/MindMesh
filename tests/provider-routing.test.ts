@@ -24,13 +24,13 @@ describe('provider routing', () => {
     const previousCredential = process.env.MINDMESH_TEST_CREDENTIAL
     process.env.MINDMESH_TEST_CREDENTIAL = 'must-not-reach-harness'
     const providers = [
-      { id: 'deepseek-official', name: 'DeepSeek', apiKey: 'deepseek-secret' },
-      { id: 'openai', name: 'OpenAI', apiKey: 'openai-secret' },
+      { id: 'deepseek-official' as const, name: 'DeepSeek', apiKey: 'deepseek-secret' },
+      { id: 'openai' as const, name: 'OpenAI', apiKey: 'openai-secret' },
     ]
     const settings = {
       getProvider: (id: string) => providers.find((provider) => provider.id === id),
       configuredProviders: () => providers,
-    } as unknown as ModelProviderSettings
+    } satisfies Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>
     const base: Agent = { id: 'agent', name: 'Agent', role: '', persona: '', provider: 'deepseek-official',
       model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '' }
     const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)

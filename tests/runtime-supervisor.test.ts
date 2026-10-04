@@ -1,8 +1,8 @@
+import { mockProviderSettings } from './service-mocks'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { ModelProviderSettings } from '../src/main/model-provider-settings'
 import type { Agent } from '../src/shared/contracts'
 
 const sdk = vi.hoisted(() => ({ homes: [] as string[], closed: [] as string[], finish: undefined as undefined | (() => void),
@@ -57,7 +57,7 @@ afterEach(() => {
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'mindmesh-supervisor-'))
   dirs.push(directory)
-  const settings = { getProvider: (id: string) => ({ id, name: id, apiKey: 'secret' }), configuredProviders: () => [{}] } as unknown as ModelProviderSettings
+  const settings = mockProviderSettings({ getProvider: (id: string) => id === 'deepseek-official' || id === 'openai' ? { id, name: id, apiKey: 'secret' } : undefined, configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'secret' }, { id: 'openai', name: 'OpenAI', apiKey: 'secret' }] })
   const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
   const agent: Agent = { id: 'a', name: 'A', role: '', persona: 'A', provider: 'deepseek-official', model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '' }
   return { adapter, agent }
@@ -209,9 +209,9 @@ function servicesFixture() {
   dirs.push(directory)
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ is_available: true, balance_infos: [] }) })))
   let apiKey = 'first'
-  const settings = { getProvider: (id: string) => ({ id, name: id, apiKey }), configuredProviders: () => [{}],
-    save: (input: { apiKey: string }) => { apiKey = input.apiKey }, remove: () => {},
-    statuses: () => [{ id: 'deepseek-official', configured: true }] } as unknown as ModelProviderSettings
+  const settings = mockProviderSettings({ getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey }), configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey }],
+    save: (input: { apiKey: string }) => { apiKey = input.apiKey; return [] }, remove: () => [],
+    statuses: () => [{ id: 'deepseek-official', name: 'DeepSeek', description: '', source: 'saved', configured: true }] })
   const db = new MindMeshDatabase(join(directory, 'mindmesh.sqlite'))
   const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
   const service = new MindMeshServices(db, adapter, settings, () => undefined)
@@ -333,7 +333,7 @@ it('keeps an active provider generation alive, routes new turns to a new home, a
   const directory = mkdtempSync(join(tmpdir(), 'mindmesh-supervisor-'))
   dirs.push(directory)
   let apiKey = 'first'
-  const settings = { getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey }), configuredProviders: () => [{}] } as unknown as ModelProviderSettings
+  const settings = mockProviderSettings({ getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey }), configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey }] })
   const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
   const agent = { id: 'a', name: 'A', role: '', persona: 'A', provider: 'deepseek-official', model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '' }
   try {

@@ -1,3 +1,4 @@
+import { getAgentCapabilityHash } from '../src/main/agent-capability'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -27,13 +28,13 @@ vi.mock('@deepseek-ai/dsh-sdk-client', () => ({
   JsonRpcResponseError: class extends Error {},
 }))
 
-import { DeepSeekHarnessAdapter, getAgentCapabilityHash } from '../src/main/harness-adapter'
+import { DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
 import { getAgentCapabilityBaseHash } from '../src/main/agent-capability'
 
 const settings = {
   getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }),
   configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }],
-} as unknown as ModelProviderSettings
+} satisfies Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>
 const agent = (persona: string): Agent => ({
   id: persona, name: persona, role: '', persona, provider: 'deepseek-official',
   model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '',

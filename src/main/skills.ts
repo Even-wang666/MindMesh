@@ -199,10 +199,6 @@ export function resolveSelectedSkills(values: string[], dataDirectory: string): 
   })
 }
 
-export function selectedSkillsRevision(values: string[], dataDirectory: string): string {
-  return skillBundlesRevision(resolveSelectedSkills(values, dataDirectory).map((skill) => skill.directory))
-}
-
 export function skillBundlesRevision(directories: string[]): string {
   if (directories.length === 0) return ''
   const hash = createHash('sha256')

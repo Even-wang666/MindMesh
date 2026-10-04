@@ -8,6 +8,7 @@ import { getDshRuntimeInfo } from '../dsh-runtime'
 import { buildProviderSettingsYaml } from '../runtime-home-materializer'
 import { BundledPackageManager, DshCliRunner, stagingEnvironment } from './dsh-cli-runner'
 import { pluginPackageDigests } from './plugin-inventory'
+import { redactPluginDiagnostic } from './plugin-diagnostics'
 import { PluginSetManager, pluginSetRevision, validatePluginSpec, type InstalledPlugin, type PluginArtifact, type PluginSetSnapshot } from './plugin-set'
 
 export type PluginChange = { kind: 'install' | 'update'; packageName: string; version: string }
@@ -102,7 +103,7 @@ export class PluginStaging {
       writeFileSync(join(directory, 'result.json'), JSON.stringify({ status: 'validated', revision, digest }))
       return { revision, directory: artifactDirectory, digest }
     } catch (error) {
-      const message = String(error).replace(/(bearer\s+|api[_-]?key[=:]\s*)[^\s,]+/gi, '$1[REDACTED]').slice(-4096)
+      const message = redactPluginDiagnostic(error).slice(-4096)
       writeFileSync(join(directory, 'result.json'), JSON.stringify({ status: signal?.aborted ? 'cancelled' : 'failed', message }))
       throw new Error(`Plugin staging failed: ${message}. Local diagnostics: ${directory}`, { cause: error })
     }

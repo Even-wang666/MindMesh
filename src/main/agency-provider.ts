@@ -147,5 +147,5 @@ export async function installAgencyAgent(key: unknown, revision: unknown, agency
     const catalog = await marketplace.list('agents')
     if (!catalog.items.some((item) => item.key === key && item.revision === revision)) throw new Error('目录已改变')
     return db.installAgencyAgent(agency.template(identity.sourceId, revision))
-  } catch { throw new Error('安装智能体失败，请刷新目录后重试。') }
+  } catch (error) { throw new Error('安装智能体失败，请刷新目录后重试。', { cause: error }) }
 }

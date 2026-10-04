@@ -5,6 +5,8 @@ release/
 .conda/
 .references/
 .runtime/
+/electron.vite.config.*.mjs
+.workbuddy/tmp/
 shots/.chrome-*/
 *.log
 .env

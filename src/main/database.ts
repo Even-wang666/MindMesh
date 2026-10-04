@@ -18,16 +18,43 @@ type RuntimeSessionRow = {
   lastConsumedMessageSequence: number
 }
 
+const MAX_SPACE_CONTEXT_LENGTH = 100_000
+
+function validateFieldLength(value: string, label: string, limit: number): void {
+  if (value.length > limit) throw new Error(`${label}不能超过 ${limit.toLocaleString('en-US')} 个字符`)
+}
+
+function validateRecordId(id: unknown): asserts id is string {
+  if (typeof id !== 'string' || !id.trim() || id.length > 256) throw new Error('记录 ID 无效')
+}
+
+function validateStringList(values: unknown, label: string, itemLimit = 2048): asserts values is string[] {
+  if (!Array.isArray(values)) throw new Error(`${label}数据无效`)
+  if (values.length > 100) throw new Error(`${label}不能超过 100 项`)
+  for (const value of values) {
+    if (typeof value !== 'string' || !value.trim()) throw new Error(`${label}数据无效`)
+    validateFieldLength(value, `${label}条目`, itemLimit)
+  }
+}
+
+function validateSpaceContext(context: unknown): asserts context is string {
+  if (typeof context !== 'string') throw new Error('空间背景必须是文本')
+  if (context.length > MAX_SPACE_CONTEXT_LENGTH) throw new Error(`空间背景不能超过 ${MAX_SPACE_CONTEXT_LENGTH.toLocaleString('en-US')} 个字符`)
+}
+
 function normalizeAgentInput(input: CreateAgentInput): CreateAgentInput {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('智能体数据无效')
   if (typeof input.name !== 'string' || typeof input.role !== 'string' || typeof input.persona !== 'string') {
     throw new Error('智能体数据无效')
   }
   if (typeof input.provider !== 'string' || typeof input.model !== 'string') throw new Error('模型配置无效')
-  if (!Array.isArray(input.skills) || !input.skills.every((value) => typeof value === 'string')
-    || !Array.isArray(input.tools) || !input.tools.every((value) => typeof value === 'string')) {
-    throw new Error('技能和工具数据无效')
-  }
+  validateFieldLength(input.name, '智能体名称', 200)
+  validateFieldLength(input.role, '角色定位', 2000)
+  validateFieldLength(input.persona, '身份设定', 100_000)
+  validateFieldLength(input.provider, '模型服务商', 100)
+  validateFieldLength(input.model, '模型 ID', 100)
+  validateStringList(input.skills, '技能')
+  validateStringList(input.tools, '工具')
   const normalized = {
     name: input.name.trim(),
     role: input.role.trim(),
@@ -46,6 +73,7 @@ function normalizeAgentInput(input: CreateAgentInput): CreateAgentInput {
 function normalizeReasoningEffort(value: string | undefined): string | undefined {
   if (value === undefined || value === null) return undefined
   if (typeof value !== 'string') throw new Error('思考强度无效')
+  validateFieldLength(value, '思考强度', 40)
   const effort = value.trim()
   if (!effort) return undefined
   if (!/^[a-z]{1,20}$/.test(effort)) throw new Error('思考强度无效')
@@ -54,12 +82,14 @@ function normalizeReasoningEffort(value: string | undefined): string | undefined
 
 function normalizeSpaceInput(input: CreateSpaceInput): CreateSpaceInput {
   if (!input || typeof input !== 'object' || Array.isArray(input)
-    || typeof input.name !== 'string' || typeof input.description !== 'string' || typeof input.context !== 'string'
-    || !Array.isArray(input.memberIds) || !input.memberIds.every((value) => typeof value === 'string')) {
+    || typeof input.name !== 'string' || typeof input.description !== 'string' || typeof input.context !== 'string') {
     throw new Error('协作空间数据无效')
   }
+  validateSpaceContext(input.context)
+  validateFieldLength(input.name, '空间名称', 100)
+  validateFieldLength(input.description, '空间简介', 10_000)
+  validateStringList(input.memberIds, '空间成员', 256)
   const normalized = {
-    ...input,
     name: input.name.trim(),
     description: input.description.trim(),
     context: input.context.trim(),
@@ -460,6 +490,7 @@ export class MindMeshDatabase {
   }
 
   updateAgent(id: string, input: CreateAgentInput): Agent {
+    validateRecordId(id)
     const existing = this.getAgent(id)
     if (!existing) throw new Error('智能体不存在')
     const normalized = this.validateAgentInput(input, id)
@@ -484,6 +515,7 @@ export class MindMeshDatabase {
   }
 
   removeAgent(id: string): void {
+    validateRecordId(id)
     this.db.exec('BEGIN')
     try {
       this.db.prepare('DELETE FROM runtime_sessions WHERE contextKey = ? OR contextKey LIKE ?')
@@ -549,6 +581,8 @@ export class MindMeshDatabase {
   }
 
   updateSpaceContext(id: string, context: string): Space {
+    validateSpaceContext(context)
+    validateRecordId(id)
     const result = this.db.prepare('UPDATE spaces SET context = ? WHERE id = ?').run(context, id)
     if (result.changes === 0) throw new Error('协作空间不存在')
     return this.getSpace(id)!
@@ -571,6 +605,7 @@ export class MindMeshDatabase {
   }
 
   updateSpace(id: string, input: CreateSpaceInput): Space {
+    validateRecordId(id)
     if (!this.getSpace(id)) throw new Error('协作空间不存在')
     const normalized = normalizeSpaceInput(input)
     this.db.exec('BEGIN')
@@ -589,6 +624,7 @@ export class MindMeshDatabase {
   }
 
   removeSpace(id: string): void {
+    validateRecordId(id)
     if (!this.getSpace(id)) throw new Error('协作空间不存在')
     this.db.exec('BEGIN')
     try {
