@@ -68,6 +68,18 @@ describe('Marketplace foundation', () => {
     await expect(service.list('plugins', 'true')).rejects.toThrow()
   })
 
+  it('restores more than 2,000 merged items when each provider stays within its own limit', async () => {
+    const path = directory()
+    const load = vi.fn(async () => Array.from({ length: 1_001 }, (_, index) => ({ ...row, sourceId: String(index) })))
+    const providers: MarketplaceProvider[] = [{ kind: 'agents', source: 'one', load }, { kind: 'agents', source: 'two', load }]
+    const service = new MarketplaceCatalogService(path, providers)
+    expect((await service.list('agents')).items).toHaveLength(2_002)
+    load.mockRejectedValue(new Error('offline'))
+    const restarted = new MarketplaceCatalogService(path, providers)
+    expect(await restarted.list('agents', true)).toMatchObject({ state: 'stale', items: expect.any(Array) })
+    expect((await restarted.list('agents')).items).toHaveLength(2_002)
+  })
+
   it('ignores corrupt cache and returns a safe error without a prior snapshot', async () => {
     const path = directory()
     mkdirSync(join(path, 'marketplace-cache'))

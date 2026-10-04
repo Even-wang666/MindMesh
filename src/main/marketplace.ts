@@ -69,10 +69,11 @@ export class MarketplaceCatalogService {
 
   private readCache(kind: MarketplaceKind): MarketplaceCatalog | undefined {
     try {
+      const providers = this.providers.filter((provider) => provider.kind === kind)
       const raw = JSON.parse(readFileSync(join(this.directory, `${kind}.json`), 'utf8'))
       if (raw.kind !== kind || typeof raw.fetchedAt !== 'string' || !Number.isFinite(Date.parse(raw.fetchedAt))
-        || !Array.isArray(raw.items) || raw.items.length > 2_000) return undefined
-      const items = this.providers.filter((provider) => provider.kind === kind).flatMap((provider) =>
+        || !Array.isArray(raw.items) || raw.items.length > 2_000 * providers.length) return undefined
+      const items = providers.flatMap((provider) =>
         normalizeMarketplaceItems(raw.items.filter((row: MarketplaceItem) => row?.source === provider.source), kind, provider.source))
       const cached: MarketplaceCatalog = { kind, items, state: 'fresh', fetchedAt: raw.fetchedAt }
       this.cache.set(kind, cached)

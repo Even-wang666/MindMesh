@@ -1,5 +1,7 @@
 # PR 5：Extended Runtime 接入
 
+后续：PR 6 Marketplace 基础已接入独立目录查询与界面，见 [Marketplace 基础验收](./marketplace-foundation-2026-10.md)。本页仍记录 PR 5 Runtime 验收。
+
 日期：2026-10-04。基线：PR 4 `166de60`。
 
 ## 运行路径

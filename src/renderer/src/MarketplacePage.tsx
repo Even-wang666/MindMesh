@@ -38,7 +38,7 @@ export function MarketplacePage(): React.JSX.Element {
           document.getElementById(`marketplace-${next}`)?.focus()
         }} onClick={() => { setKind(tab); setRefresh(0) }}>{labels[tab]}</button>)}
     </div>
-    <section id="marketplace-panel" role="tabpanel" aria-labelledby={`marketplace-${kind}`} aria-busy={loading}>
+    <section id="marketplace-panel" role="tabpanel" tabIndex={0} aria-labelledby={`marketplace-${kind}`} aria-busy={loading}>
       {loading && <p role="status">正在加载目录…</p>}
       {!loading && catalog?.error && <p className="form-error" role="alert">{catalog.error}</p>}
       {!loading && catalog?.fetchedAt && <p className="marketplace-cache">{catalog.state === 'stale' ? '缓存时间' : '更新时间'}：{new Date(catalog.fetchedAt).toLocaleString()}</p>}
