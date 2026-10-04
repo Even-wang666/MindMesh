@@ -16,14 +16,22 @@ const state = vi.hoisted(() => ({
 vi.mock('@deepseek-ai/dsh-sdk-client', () => ({
   DeepSeekHarness: class {
     private home: string
-    constructor(options: { dshHome: string }) { this.home = options.dshHome; state.launched.push(this.home) }
+    constructor(options: { dshHome: string }) {
+      this.home = options.dshHome
+      state.launched.push(this.home)
+    }
     async start() {}
     async run(prompt: string) {
-      if (prompt === 'hold') await new Promise<void>((resolveRun) => { state.release = resolveRun })
+      if (prompt === 'hold')
+        await new Promise<void>((resolveRun) => {
+          state.release = resolveRun
+        })
       if (prompt === 'fail') throw new Error('run failed')
       return { finalResponse: '完成', sessionId: 'session' }
     }
-    async close() { state.closed.push(this.home) }
+    async close() {
+      state.closed.push(this.home)
+    }
   },
   JsonRpcResponseError: class extends Error {},
 }))
@@ -36,19 +44,40 @@ const settings = {
   configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }],
 } satisfies Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>
 const agent = (persona: string): Agent => ({
-  id: persona, name: persona, role: '', persona, provider: 'deepseek-official',
-  model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '',
+  id: persona,
+  name: persona,
+  role: '',
+  persona,
+  provider: 'deepseek-official',
+  model: 'deepseek-v4-flash',
+  skills: [],
+  tools: [],
+  createdAt: '',
 })
 
-beforeEach(() => { state.launched.length = 0; state.closed.length = 0; state.release = undefined })
-afterEach(() => { state.release?.() })
+beforeEach(() => {
+  state.launched.length = 0
+  state.closed.length = 0
+  state.release = undefined
+})
+afterEach(() => {
+  state.release?.()
+})
 
 describe('Harness runtime pool', () => {
   it('keeps capability identity stable across display edits and separates skill revisions', () => {
     const original = agent('identity')
     const base = getAgentCapabilityHash(original)
     expect(getAgentCapabilityHash({ ...original })).toBe(base)
-    expect(getAgentCapabilityHash({ ...original, id: 'other', name: 'Renamed', role: 'New role', createdAt: 'later' })).toBe(base)
+    expect(
+      getAgentCapabilityHash({
+        ...original,
+        id: 'other',
+        name: 'Renamed',
+        role: 'New role',
+        createdAt: 'later',
+      })
+    ).toBe(base)
     const effective = getAgentCapabilityHash(original, 'skill-revision')
     expect(effective).not.toBe(base)
     expect(getAgentCapabilityBaseHash(effective)).toBe(base)
@@ -56,11 +85,16 @@ describe('Harness runtime pool', () => {
   })
 
   it.each([
-    { persona: 'changed' }, { tools: ['文件'] }, { skills: ['sample'] },
-    { provider: 'openai' }, { model: 'other-model' },
+    { persona: 'changed' },
+    { tools: ['文件'] },
+    { skills: ['sample'] },
+    { provider: 'openai' },
+    { model: 'other-model' },
   ])('changes capability identity for configuration %j', (change) => {
     const original = agent('identity')
-    expect(getAgentCapabilityHash({ ...original, ...change })).not.toBe(getAgentCapabilityHash(original))
+    expect(getAgentCapabilityHash({ ...original, ...change })).not.toBe(
+      getAgentCapabilityHash(original)
+    )
   })
 
   it('reuses a runtime for the same capability and isolates a different workspace', async () => {
@@ -78,7 +112,8 @@ describe('Harness runtime pool', () => {
       expect(state.closed).toEqual(state.launched)
     } finally {
       await adapter.shutdownAll()
-      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep))
+        rmSync(directory, { recursive: true, force: true })
     }
   })
 
@@ -98,7 +133,8 @@ describe('Harness runtime pool', () => {
     } finally {
       state.release?.()
       await adapter.shutdownAll()
-      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep))
+        rmSync(directory, { recursive: true, force: true })
     }
   })
 
@@ -117,7 +153,8 @@ describe('Harness runtime pool', () => {
     } finally {
       state.release?.()
       await adapter.shutdownAll()
-      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep))
+        rmSync(directory, { recursive: true, force: true })
     }
   })
 
@@ -158,7 +195,8 @@ describe('Harness runtime pool', () => {
     } finally {
       state.release?.()
       await adapter.shutdownAll()
-      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep))
+        rmSync(directory, { recursive: true, force: true })
     }
   })
 
@@ -166,7 +204,8 @@ describe('Harness runtime pool', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-pool-'))
     const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
     try {
-      for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) await adapter.run(agent(name), name)
+      for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])
+        await adapter.run(agent(name), name)
       expect(state.closed).toEqual([])
       await adapter.run(agent('i'), 'new')
       expect(state.closed).toEqual([state.launched[0]])
@@ -176,7 +215,8 @@ describe('Harness runtime pool', () => {
       expect(state.closed).toEqual([state.launched[0], state.launched[2]])
     } finally {
       await adapter.shutdownAll()
-      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep))
+        rmSync(directory, { recursive: true, force: true })
     }
   })
 
@@ -192,7 +232,8 @@ describe('Harness runtime pool', () => {
     } finally {
       now.mockRestore()
       await adapter.shutdownAll()
-      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep))
+        rmSync(directory, { recursive: true, force: true })
     }
   })
 
@@ -201,7 +242,8 @@ describe('Harness runtime pool', () => {
     const adapter = new DeepSeekHarnessAdapter(directory, directory, settings)
     try {
       const held = adapter.run(agent('a'), 'hold')
-      for (const name of ['b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']) await adapter.run(agent(name), name)
+      for (const name of ['b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'])
+        await adapter.run(agent(name), name)
       expect(state.closed).toContain(state.launched[1])
       expect(state.closed).not.toContain(state.launched[0])
       state.release?.()
@@ -212,7 +254,8 @@ describe('Harness runtime pool', () => {
     } finally {
       state.release?.()
       await adapter.shutdownAll()
-      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep))
+        rmSync(directory, { recursive: true, force: true })
     }
   })
 
@@ -225,7 +268,12 @@ describe('Harness runtime pool', () => {
       await adapter.run(agent('orphan'), 'second')
       await adapter.shutdownAll()
       const [keptHome, orphanHome] = state.launched
-      db.getOrCreateRuntimeSession('private:kept', agent('kept'), 'session', adapter.capabilityHash(agent('kept')))
+      db.getOrCreateRuntimeSession(
+        'private:kept',
+        agent('kept'),
+        'session',
+        adapter.capabilityHash(agent('kept'))
+      )
       mkdirSync(join(directory, 'harness', 'manual'), { recursive: true })
       mkdirSync(join(directory, 'harness', 'aaaaaaaaaaaa'), { recursive: true })
 
@@ -243,7 +291,8 @@ describe('Harness runtime pool', () => {
       vi.useRealTimers()
       await adapter.shutdownAll()
       db.close()
-      if (resolve(directory).startsWith(resolve(tmpdir()) + sep)) rmSync(directory, { recursive: true, force: true })
+      if (resolve(directory).startsWith(resolve(tmpdir()) + sep))
+        rmSync(directory, { recursive: true, force: true })
     }
   })
 })

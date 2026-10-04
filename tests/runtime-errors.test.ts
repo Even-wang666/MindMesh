@@ -9,10 +9,18 @@ describe('runtime error log', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-error-log-'))
     const path = join(directory, 'errors.jsonl')
     try {
-      const error = Object.assign(new Error('secret-key and private prompt'), { code: 'ECONNRESET', status: 503 })
+      const error = Object.assign(new Error('secret-key and private prompt'), {
+        code: 'ECONNRESET',
+        status: 503,
+      })
       appendRuntimeError(path, 'space', 'agent-1', error)
       const source = readFileSync(path, 'utf8')
-      expect(JSON.parse(source)).toMatchObject({ scope: 'space', agentId: 'agent-1', code: 'ECONNRESET', status: 503 })
+      expect(JSON.parse(source)).toMatchObject({
+        scope: 'space',
+        agentId: 'agent-1',
+        code: 'ECONNRESET',
+        status: 503,
+      })
       expect(source).not.toContain('secret-key')
       expect(source).not.toContain('private prompt')
     } finally {

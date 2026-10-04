@@ -1,6 +1,9 @@
 import type { ModelProviderId } from './contracts'
 
-export const DEFAULT_AGENT_MODEL = { provider: 'deepseek-official', model: 'deepseek-flash' } as const
+export const DEFAULT_AGENT_MODEL = {
+  provider: 'deepseek-official',
+  model: 'deepseek-flash',
+} as const
 
 export type ModelProviderDefinition = {
   id: Exclude<ModelProviderId, 'custom'>
@@ -17,54 +20,112 @@ export type ModelProviderDefinition = {
 
 export const MODEL_PROVIDER_DEFINITIONS: ModelProviderDefinition[] = [
   {
-    id: 'qwen', name: '通义千问', description: '阿里云百炼模型服务',
-    environmentKey: 'DASHSCOPE_API_KEY', apiKeyExample: 'sk-0123456789abcdef0123456789abcdef',
-    apiKeyHint: '通常以 sk- 开头，请粘贴阿里云百炼生成的完整密钥', minLength: 20, maxLength: 200, prefix: 'sk-',
+    id: 'qwen',
+    name: '通义千问',
+    description: '阿里云百炼模型服务',
+    environmentKey: 'DASHSCOPE_API_KEY',
+    apiKeyExample: 'sk-0123456789abcdef0123456789abcdef',
+    apiKeyHint: '通常以 sk- 开头，请粘贴阿里云百炼生成的完整密钥',
+    minLength: 20,
+    maxLength: 200,
+    prefix: 'sk-',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   },
   {
-    id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API',
-    environmentKey: 'DEEPSEEK_API_KEY', apiKeyExample: 'sk-0123456789abcdefghijklmnopqrstuv',
-    apiKeyHint: '以 sk- 开头，完整长度 27-67 位', minLength: 27, maxLength: 67, prefix: 'sk-',
+    id: 'deepseek-official',
+    name: 'DeepSeek',
+    description: 'DeepSeek 官方 API',
+    environmentKey: 'DEEPSEEK_API_KEY',
+    apiKeyExample: 'sk-0123456789abcdefghijklmnopqrstuv',
+    apiKeyHint: '以 sk- 开头，完整长度 27-67 位',
+    minLength: 27,
+    maxLength: 67,
+    prefix: 'sk-',
   },
   {
-    id: 'zhipu', name: '智谱 GLM', description: '智谱 AI 开放平台',
-    environmentKey: 'ZHIPU_API_KEY', apiKeyExample: '粘贴智谱 AI 开放平台生成的 API Key',
-    apiKeyHint: '请粘贴智谱 AI 开放平台生成的完整密钥', minLength: 8, maxLength: 300, prefix: '',
+    id: 'zhipu',
+    name: '智谱 GLM',
+    description: '智谱 AI 开放平台',
+    environmentKey: 'ZHIPU_API_KEY',
+    apiKeyExample: '粘贴智谱 AI 开放平台生成的 API Key',
+    apiKeyHint: '请粘贴智谱 AI 开放平台生成的完整密钥',
+    minLength: 8,
+    maxLength: 300,
+    prefix: '',
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
   },
   {
-    id: 'moonshotai-cn', name: 'Kimi', description: 'Moonshot AI 开放平台',
-    environmentKey: 'MOONSHOT_API_KEY', apiKeyExample: 'sk-0123456789abcdef0123456789abcdef',
-    apiKeyHint: '通常以 sk- 开头，请粘贴开放平台生成的完整密钥', minLength: 20, maxLength: 200, prefix: 'sk-',
+    id: 'moonshotai-cn',
+    name: 'Kimi',
+    description: 'Moonshot AI 开放平台',
+    environmentKey: 'MOONSHOT_API_KEY',
+    apiKeyExample: 'sk-0123456789abcdef0123456789abcdef',
+    apiKeyHint: '通常以 sk- 开头，请粘贴开放平台生成的完整密钥',
+    minLength: 20,
+    maxLength: 200,
+    prefix: 'sk-',
   },
   {
-    id: 'minimax', name: 'MiniMax', description: 'MiniMax 开放平台',
-    environmentKey: 'MINIMAX_API_KEY', apiKeyExample: '粘贴 MiniMax 开放平台生成的 API Key',
-    apiKeyHint: '请粘贴 MiniMax 开放平台生成的完整密钥', minLength: 8, maxLength: 300, prefix: '',
+    id: 'minimax',
+    name: 'MiniMax',
+    description: 'MiniMax 开放平台',
+    environmentKey: 'MINIMAX_API_KEY',
+    apiKeyExample: '粘贴 MiniMax 开放平台生成的 API Key',
+    apiKeyHint: '请粘贴 MiniMax 开放平台生成的完整密钥',
+    minLength: 8,
+    maxLength: 300,
+    prefix: '',
     baseUrl: 'https://api.minimaxi.com/v1',
   },
   {
-    id: 'stepfun', name: '阶跃星辰', description: '阶跃星辰开放平台',
-    environmentKey: 'STEPFUN_API_KEY', apiKeyExample: '粘贴阶跃星辰开放平台生成的 API Key',
-    apiKeyHint: '请粘贴阶跃星辰开放平台生成的完整密钥', minLength: 8, maxLength: 300, prefix: '',
+    id: 'stepfun',
+    name: '阶跃星辰',
+    description: '阶跃星辰开放平台',
+    environmentKey: 'STEPFUN_API_KEY',
+    apiKeyExample: '粘贴阶跃星辰开放平台生成的 API Key',
+    apiKeyHint: '请粘贴阶跃星辰开放平台生成的完整密钥',
+    minLength: 8,
+    maxLength: 300,
+    prefix: '',
     baseUrl: 'https://api.stepfun.com/v1',
   },
   {
-    id: 'openai', name: 'OpenAI', description: 'ChatGPT 模型 API',
-    environmentKey: 'OPENAI_API_KEY', apiKeyExample: 'sk-proj-0123456789abcdef0123456789abcdef',
-    apiKeyHint: '通常以 sk- 或 sk-proj- 开头', minLength: 20, maxLength: 200, prefix: 'sk-',
+    id: 'openai',
+    name: 'OpenAI',
+    description: 'ChatGPT 模型 API',
+    environmentKey: 'OPENAI_API_KEY',
+    apiKeyExample: 'sk-proj-0123456789abcdef0123456789abcdef',
+    apiKeyHint: '通常以 sk- 或 sk-proj- 开头',
+    minLength: 20,
+    maxLength: 200,
+    prefix: 'sk-',
   },
   {
-    id: 'anthropic', name: 'Anthropic', description: 'Claude / Claude Code 模型 API',
-    environmentKey: 'ANTHROPIC_API_KEY', apiKeyExample: 'sk-ant-api03-0123456789abcdef0123456789abcdef',
-    apiKeyHint: '以 sk-ant- 开头，请粘贴 Anthropic Console 生成的完整密钥', minLength: 30, maxLength: 200, prefix: 'sk-ant-',
+    id: 'anthropic',
+    name: 'Anthropic',
+    description: 'Claude / Claude Code 模型 API',
+    environmentKey: 'ANTHROPIC_API_KEY',
+    apiKeyExample: 'sk-ant-api03-0123456789abcdef0123456789abcdef',
+    apiKeyHint: '以 sk-ant- 开头，请粘贴 Anthropic Console 生成的完整密钥',
+    minLength: 30,
+    maxLength: 200,
+    prefix: 'sk-ant-',
   },
 ]
 
 export const MODEL_CATALOG = [
-  { provider: 'deepseek-official', id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1_000_000 },
-  { provider: 'deepseek-official', id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1_000_000 },
+  {
+    provider: 'deepseek-official',
+    id: 'deepseek-flash',
+    name: 'DeepSeek V4.1 Flash',
+    contextWindow: 1_000_000,
+  },
+  {
+    provider: 'deepseek-official',
+    id: 'deepseek-v4-pro',
+    name: 'DeepSeek V4 Pro',
+    contextWindow: 1_000_000,
+  },
   { provider: 'moonshotai-cn', id: 'kimi-k3', name: 'Kimi K3', contextWindow: 1_048_576 },
   { provider: 'moonshotai-cn', id: 'kimi-k2.6', name: 'Kimi K2.6', contextWindow: 262_144 },
   { provider: 'openai', id: 'gpt-5.2', name: 'GPT-5.2' },
@@ -82,18 +143,25 @@ export const MODEL_CATALOG = [
 ]
 
 export function getModelContextWindow(provider: string, model: string): number | undefined {
-  const catalogWindow = MODEL_CATALOG.find((item) => item.provider === provider && item.id === model)?.contextWindow
+  const catalogWindow = MODEL_CATALOG.find(
+    (item) => item.provider === provider && item.id === model
+  )?.contextWindow
   if (catalogWindow) return catalogWindow
   // DeepSeek keeps accepting these legacy Flash aliases and routes them to the current Flash model.
-  if (provider === 'deepseek-official' && ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'].includes(model)) {
+  if (
+    provider === 'deepseek-official' &&
+    ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'].includes(model)
+  ) {
     return 1_000_000
   }
   return undefined
 }
 
 export function supportsImageInput(provider: string, model: string): boolean {
-  return provider === 'deepseek-official'
-    && ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp', 'deepseek-flash'].includes(model)
+  return (
+    provider === 'deepseek-official' &&
+    ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp', 'deepseek-flash'].includes(model)
+  )
 }
 
 export type ReasoningEffortOption = { id: string; label: string }
@@ -139,7 +207,8 @@ export function getModelProviderApiKeyError(id: ModelProviderId, value: string):
 
   const provider = getModelProviderDefinition(id)
   if (!provider) return '不支持的模型服务商'
-  if (provider.prefix && !apiKey.startsWith(provider.prefix)) return `${provider.name} API Key 必须以 ${provider.prefix} 开头`
+  if (provider.prefix && !apiKey.startsWith(provider.prefix))
+    return `${provider.name} API Key 必须以 ${provider.prefix} 开头`
   if (apiKey.length < provider.minLength || apiKey.length > provider.maxLength) {
     return `完整长度应为 ${provider.minLength}-${provider.maxLength} 个字符，当前 ${apiKey.length} 个`
   }

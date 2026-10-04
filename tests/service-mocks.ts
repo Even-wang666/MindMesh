@@ -4,7 +4,10 @@ import type { ModelProviderSettings } from '../src/main/model-provider-settings'
 import { getAgentCapabilityHash } from '../src/main/agent-capability'
 
 type Harness = ConstructorParameters<typeof MindMeshServices>[1]
-type ProviderSettings = Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders' | 'statuses' | 'save' | 'remove'>
+type ProviderSettings = Pick<
+  ModelProviderSettings,
+  'getProvider' | 'configuredProviders' | 'statuses' | 'save' | 'remove'
+>
 
 export function mockProviderSettings(overrides: Partial<ProviderSettings> = {}): ProviderSettings {
   return {
@@ -19,15 +22,29 @@ export function mockProviderSettings(overrides: Partial<ProviderSettings> = {}):
 
 export function mockHarness(overrides: Partial<Harness> = {}): Harness {
   return {
-    run: vi.fn(async () => { throw new Error('Unexpected Harness run') }),
+    run: vi.fn(async () => {
+      throw new Error('Unexpected Harness run')
+    }),
     stop: vi.fn(async () => false),
     prepareRun: (agent, permission) => {
       // Chat-flow fixtures isolate session bookkeeping from filesystem/SDK preparation.
       const hash = getAgentCapabilityHash(agent)
       return {
-        agent, workspace: '', providers: [], skillIds: [], dshBin: '',
-        identity: { key: hash, capabilityHash: hash, schemaVersion: 2, dshVersion: 'test',
-          flavor: 'core', permission, workspaceIdentity: '', skillRevision: '' },
+        agent,
+        workspace: '',
+        providers: [],
+        skillIds: [],
+        dshBin: '',
+        identity: {
+          key: hash,
+          capabilityHash: hash,
+          schemaVersion: 2,
+          dshVersion: 'test',
+          flavor: 'core',
+          permission,
+          workspaceIdentity: '',
+          skillRevision: '',
+        },
       }
     },
     status: vi.fn(() => ({ state: 'ready' as const, label: '', detail: '' })),

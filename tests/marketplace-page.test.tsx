@@ -7,17 +7,42 @@ import type { MarketplaceCatalog } from '../src/shared/marketplace'
 
 afterEach(() => cleanup())
 function setup(list: ReturnType<typeof vi.fn>): void {
-  Object.defineProperty(window, 'mindmesh', { configurable: true, value: { marketplace: { list } } })
+  Object.defineProperty(window, 'mindmesh', {
+    configurable: true,
+    value: { marketplace: { list } },
+  })
 }
 
 describe('Marketplace page', () => {
   it('installs the displayed revision, exposes Open and keeps an installation failure retryable', async () => {
-    const item = { kind: 'agents', source: 'agency', sourceId: 'engineering/writer.md', key: '["agents","agency","engineering/writer.md"]',
-      revision: 'a'.repeat(40), name: 'Writer', description: 'Writes', license: 'MIT' }
-    const installAgent = vi.fn().mockRejectedValueOnce(new Error('sensitive raw error')).mockResolvedValue({ id: 'installed' })
-    Object.defineProperty(window, 'mindmesh', { configurable: true, value: {
-      marketplace: { list: vi.fn(async () => ({ kind: 'agents', state: 'fresh', items: [item], fetchedAt: null })), installAgent },
-    } })
+    const item = {
+      kind: 'agents',
+      source: 'agency',
+      sourceId: 'engineering/writer.md',
+      key: '["agents","agency","engineering/writer.md"]',
+      revision: 'a'.repeat(40),
+      name: 'Writer',
+      description: 'Writes',
+      license: 'MIT',
+    }
+    const installAgent = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('sensitive raw error'))
+      .mockResolvedValue({ id: 'installed' })
+    Object.defineProperty(window, 'mindmesh', {
+      configurable: true,
+      value: {
+        marketplace: {
+          list: vi.fn(async () => ({
+            kind: 'agents',
+            state: 'fresh',
+            items: [item],
+            fetchedAt: null,
+          })),
+          installAgent,
+        },
+      },
+    })
     const open = vi.fn()
     render(<MarketplacePage onOpenAgent={open} />)
     fireEvent.click(await screen.findByRole('button', { name: '安装智能体' }))
@@ -33,17 +58,42 @@ describe('Marketplace page', () => {
 
   it('does not put a completed install onto a different tab', async () => {
     let finish!: (agent: { id: string }) => void
-    const item = { kind: 'agents', source: 'agency', sourceId: 'engineering/writer.md', key: 'writer', revision: 'a'.repeat(40), name: 'Writer', description: '' }
-    Object.defineProperty(window, 'mindmesh', { configurable: true, value: { marketplace: {
-      list: vi.fn(async (kind) => ({ kind, state: 'fresh', items: kind === 'agents' ? [item] : [], fetchedAt: null })),
-      installAgent: vi.fn(() => new Promise<{ id: string }>((resolve) => { finish = resolve })),
-    } } })
+    const item = {
+      kind: 'agents',
+      source: 'agency',
+      sourceId: 'engineering/writer.md',
+      key: 'writer',
+      revision: 'a'.repeat(40),
+      name: 'Writer',
+      description: '',
+    }
+    Object.defineProperty(window, 'mindmesh', {
+      configurable: true,
+      value: {
+        marketplace: {
+          list: vi.fn(async (kind) => ({
+            kind,
+            state: 'fresh',
+            items: kind === 'agents' ? [item] : [],
+            fetchedAt: null,
+          })),
+          installAgent: vi.fn(
+            () =>
+              new Promise<{ id: string }>((resolve) => {
+                finish = resolve
+              })
+          ),
+        },
+      },
+    })
     render(<MarketplacePage />)
     fireEvent.click(await screen.findByRole('button', { name: '安装智能体' }))
     expect(screen.getByRole('button', { name: '处理中…' })).toBeDisabled()
     fireEvent.click(screen.getByRole('tab', { name: '团队' }))
     await screen.findByText('暂无团队')
-    await act(async () => { finish({ id: 'installed' }) })
+    await act(async () => {
+      finish({ id: 'installed' })
+    })
     expect(screen.getByText('暂无团队')).toBeInTheDocument()
     expect(screen.queryByText('Writer')).toBeNull()
   })
@@ -69,22 +119,45 @@ describe('Marketplace page', () => {
 
   it('discards an old tab response and renders stale content as text', async () => {
     let finish!: (value: MarketplaceCatalog) => void
-    const list = vi.fn((kind) => kind === 'agents' ? new Promise<MarketplaceCatalog>((resolve) => { finish = resolve })
-      : Promise.resolve({ kind, state: 'stale', fetchedAt: '2026-10-04T00:00:00Z', error: '刷新失败', items: [
-        { key: 'team', kind, source: 'curated', sourceId: 'one', name: '<script>bad</script>', description: 'description' },
-      ] }))
+    const list = vi.fn((kind) =>
+      kind === 'agents'
+        ? new Promise<MarketplaceCatalog>((resolve) => {
+            finish = resolve
+          })
+        : Promise.resolve({
+            kind,
+            state: 'stale',
+            fetchedAt: '2026-10-04T00:00:00Z',
+            error: '刷新失败',
+            items: [
+              {
+                key: 'team',
+                kind,
+                source: 'curated',
+                sourceId: 'one',
+                name: '<script>bad</script>',
+                description: 'description',
+              },
+            ],
+          })
+    )
     setup(list)
     render(<MarketplacePage />)
     fireEvent.click(screen.getByRole('tab', { name: '团队' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('刷新失败')
     expect(screen.getByText('<script>bad</script>')).toBeInTheDocument()
-    await act(async () => { finish({ kind: 'agents', state: 'fresh', items: [], fetchedAt: null }) })
+    await act(async () => {
+      finish({ kind: 'agents', state: 'fresh', items: [], fetchedAt: null })
+    })
     expect(screen.getByText('<script>bad</script>')).toBeInTheDocument()
     expect(document.querySelector('script')).toBeNull()
   })
 
   it('shows IPC failure and allows a retry', async () => {
-    const list = vi.fn().mockRejectedValueOnce(new Error('raw secret')).mockResolvedValue({ kind: 'agents', state: 'fresh', items: [], fetchedAt: null })
+    const list = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('raw secret'))
+      .mockResolvedValue({ kind: 'agents', state: 'fresh', items: [], fetchedAt: null })
     setup(list)
     render(<MarketplacePage />)
     expect(await screen.findByRole('alert')).toHaveTextContent('请重试')

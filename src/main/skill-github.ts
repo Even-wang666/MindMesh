@@ -29,7 +29,7 @@ type GitHubSkillSource = {
 export async function withGitHubSkillBundle<T>(
   input: string,
   onProgress: ((progress: SkillInstallProgress) => void) | undefined,
-  install: (source: string, receipt: GitHubSkillSource) => T,
+  install: (source: string, receipt: GitHubSkillSource) => T
 ): Promise<T> {
   onProgress?.({ phase: 'resolving' })
   const github = parseGitHubSkillUrl(input)
@@ -41,8 +41,12 @@ export async function withGitHubSkillBundle<T>(
   mkdirSync(checkout)
   try {
     onProgress?.({ phase: 'downloading' })
-    await downloadFile(`https://codeload.github.com/${github.repository}/tar.gz/${commit}`, archive,
-      (receivedBytes, totalBytes) => onProgress?.({ phase: 'downloading', receivedBytes, totalBytes }))
+    await downloadFile(
+      `https://codeload.github.com/${github.repository}/tar.gz/${commit}`,
+      archive,
+      (receivedBytes, totalBytes) =>
+        onProgress?.({ phase: 'downloading', receivedBytes, totalBytes })
+    )
     let files = 0
     let bytes = 0
     let archiveEntries = 0
@@ -57,20 +61,35 @@ export async function withGitHubSkillBundle<T>(
       filter: (path, entry) => {
         archiveEntries += 1
         archiveExpandedBytes += entry.size
-        if (archiveEntries > MAX_ARCHIVE_ENTRIES || archiveExpandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
+        if (
+          archiveEntries > MAX_ARCHIVE_ENTRIES ||
+          archiveExpandedBytes > MAX_ARCHIVE_EXPANDED_BYTES
+        ) {
           throw new Error('GitHub 仓库归档解压规模过大')
         }
         const relativePath = path.split('/').slice(1).join('/')
-        if (resolved.path && relativePath !== resolved.path && !relativePath.startsWith(`${resolved.path}/`)) return false
-        const entryType = 'type' in entry ? entry.type
-          : entry.isFile() ? 'File' : entry.isSymbolicLink() ? 'SymbolicLink' : 'Directory'
+        if (
+          resolved.path &&
+          relativePath !== resolved.path &&
+          !relativePath.startsWith(`${resolved.path}/`)
+        )
+          return false
+        const entryType =
+          'type' in entry
+            ? entry.type
+            : entry.isFile()
+              ? 'File'
+              : entry.isSymbolicLink()
+                ? 'SymbolicLink'
+                : 'Directory'
         if (entryType === 'SymbolicLink' || entryType === 'Link') {
           throw new Error('GitHub skill bundle 不允许链接文件')
         }
         if (entryType === 'File' || entryType === 'OldFile') {
           files += 1
           bytes += entry.size
-          if (files > MAX_BUNDLE_FILES) throw new Error(`技能 bundle 超过 ${MAX_BUNDLE_FILES} 个文件`)
+          if (files > MAX_BUNDLE_FILES)
+            throw new Error(`技能 bundle 超过 ${MAX_BUNDLE_FILES} 个文件`)
           if (bytes > MAX_BUNDLE_BYTES) throw new Error('技能 bundle 超过 16 MiB')
         }
         return true
@@ -94,23 +113,42 @@ export async function withGitHubSkillBundle<T>(
 
 function parseGitHubSkillUrl(input: string): GitHubSkillLocation {
   let url: URL
-  try { url = new URL(input) }
-  catch { throw new Error('请输入有效的 GitHub skill URL') }
-  if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'github.com' || url.username || url.password) {
+  try {
+    url = new URL(input)
+  } catch {
+    throw new Error('请输入有效的 GitHub skill URL')
+  }
+  if (
+    url.protocol !== 'https:' ||
+    url.hostname.toLowerCase() !== 'github.com' ||
+    url.username ||
+    url.password
+  ) {
     throw new Error('仅支持公开的 GitHub HTTPS URL')
   }
-  const segments = url.pathname.split('/').filter(Boolean).map((segment) => decodeURIComponent(segment))
-  if (segments.length < 2 || !segments.slice(0, 2).every((segment) => /^[A-Za-z0-9_.-]+$/.test(segment))) {
+  const segments = url.pathname
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => decodeURIComponent(segment))
+  if (
+    segments.length < 2 ||
+    !segments.slice(0, 2).every((segment) => /^[A-Za-z0-9_.-]+$/.test(segment))
+  ) {
     throw new Error('GitHub 仓库 URL 无效')
   }
   const repository = `${segments[0]}/${segments[1].replace(/\.git$/i, '')}`
   let ref: string | undefined
   let path = ''
   if (segments.length > 2) {
-    if (segments[2] !== 'tree' || !segments[3]) throw new Error('请选择 GitHub 仓库或 skill 目录 URL')
+    if (segments[2] !== 'tree' || !segments[3])
+      throw new Error('请选择 GitHub 仓库或 skill 目录 URL')
     ref = segments[3]
     const pathSegments = segments.slice(4)
-    if (pathSegments.some((segment) => !segment || segment === '.' || segment === '..' || /[\\/]/.test(segment))) {
+    if (
+      pathSegments.some(
+        (segment) => !segment || segment === '.' || segment === '..' || /[\\/]/.test(segment)
+      )
+    ) {
       throw new Error('GitHub skill 目录无效')
     }
     path = pathSegments.join('/')
@@ -122,11 +160,14 @@ function parseGitHubSkillUrl(input: string): GitHubSkillLocation {
 
 async function githubDefaultBranch(repository: string): Promise<string> {
   const value = await githubJson(`https://api.github.com/repos/${repository}`)
-  if (!isRecord(value) || typeof value.default_branch !== 'string') throw new Error('GitHub 仓库未返回默认分支')
+  if (!isRecord(value) || typeof value.default_branch !== 'string')
+    throw new Error('GitHub 仓库未返回默认分支')
   return value.default_branch
 }
 
-async function resolveGitHubLocation(location: GitHubSkillLocation): Promise<{ commit: string; path: string }> {
+async function resolveGitHubLocation(
+  location: GitHubSkillLocation
+): Promise<{ commit: string; path: string }> {
   if (!location.ref) {
     const reference = await githubDefaultBranch(location.repository)
     const commit = await githubCommit(location.repository, reference)
@@ -145,10 +186,13 @@ async function resolveGitHubLocation(location: GitHubSkillLocation): Promise<{ c
 }
 
 async function githubCommit(repository: string, reference: string): Promise<string | undefined> {
-  const response = await fetch(`https://api.github.com/repos/${repository}/commits/${encodeURIComponent(reference)}`, {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'MindMesh' },
-    signal: AbortSignal.timeout(15_000),
-  })
+  const response = await fetch(
+    `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(reference)}`,
+    {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'MindMesh' },
+      signal: AbortSignal.timeout(15_000),
+    }
+  )
   if (response.status === 404) return undefined
   if (!response.ok) throw new Error(`GitHub 请求失败（${response.status}）`)
   const value: unknown = await response.json()
@@ -170,14 +214,16 @@ async function githubJson(url: string): Promise<unknown> {
 export async function downloadFile(
   url: string,
   destination: string,
-  onProgress?: (receivedBytes: number, totalBytes?: number) => void,
+  onProgress?: (receivedBytes: number, totalBytes?: number) => void
 ): Promise<void> {
   const response = await fetch(url, { signal: AbortSignal.timeout(30_000) })
   if (!response.ok || !response.body) throw new Error(`GitHub 下载失败（${response.status}）`)
   const contentLength = response.headers.get('content-length')
   const declaredBytes = contentLength === null ? undefined : Number(contentLength)
-  const totalBytes = declaredBytes !== undefined && Number.isFinite(declaredBytes) ? declaredBytes : undefined
-  if (totalBytes !== undefined && totalBytes > MAX_ARCHIVE_BYTES) throw new Error('GitHub 仓库归档超过 32 MiB')
+  const totalBytes =
+    declaredBytes !== undefined && Number.isFinite(declaredBytes) ? declaredBytes : undefined
+  if (totalBytes !== undefined && totalBytes > MAX_ARCHIVE_BYTES)
+    throw new Error('GitHub 仓库归档超过 32 MiB')
   let bytes = 0
   let reportedBytes = 0
   const limiter = new Transform({

@@ -17,14 +17,18 @@ vi.mock('electron', () => ({
 
 import { DeepSeekHarnessAdapter, SessionResumeUnsupportedError } from '../src/main/harness-adapter'
 
-beforeEach(() => { vi.spyOn(DeepSeekHarness.prototype, 'start').mockResolvedValue(undefined) })
-afterEach(() => { vi.restoreAllMocks() })
+beforeEach(() => {
+  vi.spyOn(DeepSeekHarness.prototype, 'start').mockResolvedValue(undefined)
+})
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('model provider runtime settings', () => {
   it('uses an empty provider map when only the native DeepSeek route is configured', () => {
-    expect(buildProviderSettingsYaml([
-      { id: 'deepseek-official', name: 'DeepSeek', apiKey: 'secret' },
-    ])).toBe('llm-pi-ai:\n  providers: {}\n')
+    expect(
+      buildProviderSettingsYaml([{ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'secret' }])
+    ).toBe('llm-pi-ai:\n  providers: {}\n')
   })
 
   it('builds standard and custom Harness provider routes without embedding secrets', () => {
@@ -64,39 +68,64 @@ describe('model provider runtime settings', () => {
 
   it('maps SDK assistant notifications to text callbacks', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-runtime-'))
-    const run = vi.spyOn(DeepSeekHarness.prototype, 'run').mockImplementation(async (_prompt, options) => {
-      options?.onNotification?.({
-        method: 'session.event',
-        params: { sessionId: 'session', event: {
-          type: 'assistant/message', data: { message: { content: [
-            { type: 'reasoning', text: '先检查条件' },
-            { type: 'reasoning', text: '再计算结果' },
-            { type: 'text', text: '分析第一段' },
-            { type: 'text', text: '分析第二段' },
-          ] } },
-        } },
-      } as never)
-      options?.onNotification?.({
-        method: 'session.event',
-        params: { sessionId: 'session', event: {
-          type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '最终回答' }] } },
-        } },
-      } as never)
-      return { finalResponse: '最终回答', sessionId: 'session', events: [], notifications: [] }
-    })
+    const run = vi
+      .spyOn(DeepSeekHarness.prototype, 'run')
+      .mockImplementation(async (_prompt, options) => {
+        options?.onNotification?.({
+          method: 'session.event',
+          params: {
+            sessionId: 'session',
+            event: {
+              type: 'assistant/message',
+              data: {
+                message: {
+                  content: [
+                    { type: 'reasoning', text: '先检查条件' },
+                    { type: 'reasoning', text: '再计算结果' },
+                    { type: 'text', text: '分析第一段' },
+                    { type: 'text', text: '分析第二段' },
+                  ],
+                },
+              },
+            },
+          },
+        } as never)
+        options?.onNotification?.({
+          method: 'session.event',
+          params: {
+            sessionId: 'session',
+            event: {
+              type: 'assistant/message',
+              data: { message: { content: [{ type: 'text', text: '最终回答' }] } },
+            },
+          },
+        } as never)
+        return { finalResponse: '最终回答', sessionId: 'session', events: [], notifications: [] }
+      })
     const close = vi.spyOn(DeepSeekHarness.prototype, 'close').mockResolvedValue()
     const providerSettings = {
       getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }),
-      configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }],
+      configuredProviders: () => [
+        { id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' },
+      ],
     } satisfies Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>
     const agent: Agent = {
-      id: 'agent', name: 'Agent', role: '', persona: '助手', provider: 'deepseek-official',
-      model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '',
+      id: 'agent',
+      name: 'Agent',
+      role: '',
+      persona: '助手',
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+      skills: [],
+      tools: [],
+      createdAt: '',
     }
     const adapter = new DeepSeekHarnessAdapter(directory, directory, providerSettings)
     const chunks: Array<{ text: string; kind?: string }> = []
     try {
-      const result = await adapter.run(agent, '你好', 'session', (text, kind) => chunks.push({ text, kind }))
+      const result = await adapter.run(agent, '你好', 'session', (text, kind) =>
+        chunks.push({ text, kind })
+      )
       expect(chunks).toEqual([
         { text: '先检查条件', kind: 'reasoning' },
         { text: '\n\n再计算结果', kind: 'reasoning' },
@@ -116,7 +145,10 @@ describe('model provider runtime settings', () => {
   it('rejects a completed provider response without answer text', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-runtime-empty-'))
     const run = vi.spyOn(DeepSeekHarness.prototype, 'run').mockResolvedValue({
-      finalResponse: '', sessionId: 'session', events: [], notifications: [],
+      finalResponse: '',
+      sessionId: 'session',
+      events: [],
+      notifications: [],
     })
     const close = vi.spyOn(DeepSeekHarness.prototype, 'close').mockResolvedValue()
     const providerSettings = {
@@ -124,12 +156,21 @@ describe('model provider runtime settings', () => {
       configuredProviders: () => [{ id: 'moonshotai-cn', name: 'Kimi', apiKey: 'test-secret' }],
     } satisfies Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>
     const agent: Agent = {
-      id: 'agent', name: 'Agent', role: '', persona: '助手', provider: 'moonshotai-cn',
-      model: 'kimi-k3', skills: [], tools: [], createdAt: '',
+      id: 'agent',
+      name: 'Agent',
+      role: '',
+      persona: '助手',
+      provider: 'moonshotai-cn',
+      model: 'kimi-k3',
+      skills: [],
+      tools: [],
+      createdAt: '',
     }
     const adapter = new DeepSeekHarnessAdapter(directory, directory, providerSettings)
     try {
-      await expect(adapter.run(agent, '你好', 'session')).rejects.toMatchObject({ kind: 'protocol' })
+      await expect(adapter.run(agent, '你好', 'session')).rejects.toMatchObject({
+        kind: 'protocol',
+      })
       expect(close).toHaveBeenCalledOnce()
     } finally {
       await adapter.shutdownAll()
@@ -142,28 +183,46 @@ describe('model provider runtime settings', () => {
   it('passes image attachments to the SDK as prompt content blocks', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-runtime-image-'))
     const run = vi.spyOn(DeepSeekHarness.prototype, 'run').mockResolvedValue({
-      finalResponse: '图片内容', sessionId: 'session', events: [], notifications: [],
+      finalResponse: '图片内容',
+      sessionId: 'session',
+      events: [],
+      notifications: [],
     })
     const close = vi.spyOn(DeepSeekHarness.prototype, 'close').mockResolvedValue()
     const providerSettings = {
       getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }),
-      configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }],
+      configuredProviders: () => [
+        { id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' },
+      ],
     } satisfies Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>
     const agent: Agent = {
-      id: 'agent', name: 'Agent', role: '', persona: '助手', provider: 'deepseek-official',
-      model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '',
+      id: 'agent',
+      name: 'Agent',
+      role: '',
+      persona: '助手',
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+      skills: [],
+      tools: [],
+      createdAt: '',
     }
     const image: ChatImageAttachment = {
-      type: 'image', name: 'chart.png', mediaType: 'image/png', bytes: 68,
+      type: 'image',
+      name: 'chart.png',
+      mediaType: 'image/png',
+      bytes: 68,
       data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=',
     }
     const adapter = new DeepSeekHarnessAdapter(directory, directory, providerSettings)
     try {
       await adapter.run(agent, '分析图表', 'session', undefined, [image])
-      expect(run).toHaveBeenCalledWith([
-        { type: 'text', text: '分析图表' },
-        { type: 'image', data: image.data, mimeType: 'image/png' },
-      ], expect.objectContaining({ sessionId: 'session' }))
+      expect(run).toHaveBeenCalledWith(
+        [
+          { type: 'text', text: '分析图表' },
+          { type: 'image', data: image.data, mimeType: 'image/png' },
+        ],
+        expect.objectContaining({ sessionId: 'session' })
+      )
     } finally {
       await adapter.shutdownAll()
       run.mockRestore()
@@ -174,21 +233,32 @@ describe('model provider runtime settings', () => {
 
   it('identifies the SDK rejection of a persisted session', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-resume-'))
-    const run = vi.spyOn(DeepSeekHarness.prototype, 'run').mockRejectedValue(
-      new JsonRpcResponseError(-32603, 'session "old-session" already exists'),
-    )
+    const run = vi
+      .spyOn(DeepSeekHarness.prototype, 'run')
+      .mockRejectedValue(new JsonRpcResponseError(-32603, 'session "old-session" already exists'))
     const close = vi.spyOn(DeepSeekHarness.prototype, 'close').mockResolvedValue()
     const providerSettings = {
       getProvider: () => ({ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }),
-      configuredProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' }],
+      configuredProviders: () => [
+        { id: 'deepseek-official', name: 'DeepSeek', apiKey: 'test-secret' },
+      ],
     } satisfies Pick<ModelProviderSettings, 'getProvider' | 'configuredProviders'>
     const adapter = new DeepSeekHarnessAdapter(directory, directory, providerSettings)
     const agent: Agent = {
-      id: 'agent', name: 'Agent', role: '', persona: '助手', provider: 'deepseek-official',
-      model: 'deepseek-v4-flash', skills: [], tools: [], createdAt: '',
+      id: 'agent',
+      name: 'Agent',
+      role: '',
+      persona: '助手',
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+      skills: [],
+      tools: [],
+      createdAt: '',
     }
     try {
-      await expect(adapter.run(agent, '你好', 'old-session')).rejects.toBeInstanceOf(SessionResumeUnsupportedError)
+      await expect(adapter.run(agent, '你好', 'old-session')).rejects.toBeInstanceOf(
+        SessionResumeUnsupportedError
+      )
     } finally {
       await adapter.shutdownAll()
       run.mockRestore()

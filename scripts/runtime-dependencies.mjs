@@ -4,7 +4,9 @@ import { join, relative, isAbsolute, sep } from 'node:path'
 
 // Reuse electron-builder's version validator; no extra runtime dependency is needed.
 const require = createRequire(import.meta.url)
-const { satisfies, valid } = createRequire(require.resolve('electron-builder/package.json'))('semver')
+const { satisfies, valid } = createRequire(require.resolve('electron-builder/package.json'))(
+  'semver'
+)
 
 export { valid }
 
@@ -36,10 +38,15 @@ export function inspectRuntimeDependencies(roots, boundary, requiredOptional = n
     const manifest = JSON.parse(readFileSync(path, 'utf8'))
     packages.set(path, manifest)
     // A dependency and a peer can constrain the same package independently.
-    const dependencies = Object.entries({ ...manifest.dependencies, ...manifest.optionalDependencies })
-      .map(([name, range]) => [name, range, name in (manifest.optionalDependencies ?? {})])
-    const peers = Object.entries(manifest.peerDependencies ?? {})
-      .map(([name, range]) => [name, range, manifest.peerDependenciesMeta?.[name]?.optional === true])
+    const dependencies = Object.entries({
+      ...manifest.dependencies,
+      ...manifest.optionalDependencies,
+    }).map(([name, range]) => [name, range, name in (manifest.optionalDependencies ?? {})])
+    const peers = Object.entries(manifest.peerDependencies ?? {}).map(([name, range]) => [
+      name,
+      range,
+      manifest.peerDependenciesMeta?.[name]?.optional === true,
+    ])
     for (const [name, range, optional] of [...dependencies, ...peers]) {
       const dependency = resolvePackageManifest(name, path, boundary)
       if (!dependency) {
@@ -49,7 +56,10 @@ export function inspectRuntimeDependencies(roots, boundary, requiredOptional = n
       }
       const installed = JSON.parse(readFileSync(dependency, 'utf8'))
       if (name in (manifest.optionalDependencies ?? {})) installedOptional.add(name)
-      if (!satisfies(installed.version, range)) errors.add(`${manifest.name}@${manifest.version} -> ${name}@${range}; installed ${installed.version}`)
+      if (!satisfies(installed.version, range))
+        errors.add(
+          `${manifest.name}@${manifest.version} -> ${name}@${range}; installed ${installed.version}`
+        )
       queue.push(dependency)
     }
   }
@@ -57,5 +67,7 @@ export function inspectRuntimeDependencies(roots, boundary, requiredOptional = n
 }
 
 export function dshDirectDependencies(manifest) {
-  return Object.entries(manifest.dependencies).filter(([name]) => name.startsWith('@deepseek-ai/dsh') || name.startsWith('@deepseek-ai/cordis'))
+  return Object.entries(manifest.dependencies).filter(
+    ([name]) => name.startsWith('@deepseek-ai/dsh') || name.startsWith('@deepseek-ai/cordis')
+  )
 }

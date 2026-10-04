@@ -21,7 +21,9 @@ describe('window navigation', () => {
     navigate({ preventDefault }, 'file:///tmp/secret')
     expect(preventDefault).toHaveBeenCalledTimes(2)
 
-    const open = setWindowOpenHandler.mock.calls[0][0] as (details: { url: string }) => { action: string }
+    const open = setWindowOpenHandler.mock.calls[0][0] as (details: { url: string }) => {
+      action: string
+    }
     expect(open({ url: 'https://example.com' })).toEqual({ action: 'deny' })
     expect(open({ url: 'javascript:alert(1)' })).toEqual({ action: 'deny' })
     expect(open({ url: 'file:///tmp/secret' })).toEqual({ action: 'deny' })

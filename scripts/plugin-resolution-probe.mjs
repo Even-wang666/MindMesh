@@ -10,10 +10,13 @@ const require = createRequire(anchor)
 const { satisfies } = require('semver') // Already carried by the exact DSH installation.
 const boot = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')).href)
 const profile = boot.loadProfileDirectory('mindmesh', profileDir, anchor)
-if (profile.skippedBundles.length) throw new Error(`Skipped bundle: ${JSON.stringify(profile.skippedBundles)}`)
+if (profile.skippedBundles.length)
+  throw new Error(`Skipped bundle: ${JSON.stringify(profile.skippedBundles)}`)
 const resolution = await boot.createRuntimeResolution({ installAnchor: anchor, profile, home })
 const fallback = new Map(resolution.entries.map((entry) => [entry.name, entry.packageDir]))
-const visited = new Set(), packages = [], peers = []
+const visited = new Set(),
+  packages = [],
+  peers = []
 function resolvePeer(name, from) {
   for (const search of createRequire(from).resolve.paths(name) ?? []) {
     const candidate = join(search, name, 'package.json')
@@ -27,7 +30,10 @@ function inspect(directory) {
   for (const item of readdirSync(directory, { withFileTypes: true })) {
     if (item.name === '.bin') continue
     const path = join(directory, item.name)
-    if (item.name.startsWith('@') || item.name === '.pnpm') { inspect(path); continue }
+    if (item.name.startsWith('@') || item.name === '.pnpm') {
+      inspect(path)
+      continue
+    }
     if (!item.isDirectory() && !item.isSymbolicLink()) continue
     const actual = realpathSync(path)
     if (visited.has(actual)) continue
@@ -40,7 +46,10 @@ function inspect(directory) {
         const selected = resolvePeer(name, file)
         if (!selected && manifest.peerDependenciesMeta?.[name]?.optional === true) continue
         const version = selected && JSON.parse(readFileSync(selected, 'utf8')).version
-        if (!version || !satisfies(version, range, { includePrerelease: true })) throw new Error(`Plugin peer conflict: ${manifest.name} requires ${name}@${range}, selected ${version ?? 'missing'}`)
+        if (!version || !satisfies(version, range, { includePrerelease: true }))
+          throw new Error(
+            `Plugin peer conflict: ${manifest.name} requires ${name}@${range}, selected ${version ?? 'missing'}`
+          )
         peers.push({ declarer: `${manifest.name}@${manifest.version}`, name, range, version })
       }
     }
@@ -48,5 +57,12 @@ function inspect(directory) {
   }
 }
 inspect(join(profileDir, 'node_modules'))
-process.stdout.write(JSON.stringify({ packages: packages.sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`)), peers,
-  resolution: resolution.entries.map(({ name, version, scope }) => ({ name, version, scope })) }) + '\n')
+process.stdout.write(
+  JSON.stringify({
+    packages: packages.sort((a, b) =>
+      `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`)
+    ),
+    peers,
+    resolution: resolution.entries.map(({ name, version, scope }) => ({ name, version, scope })),
+  }) + '\n'
+)

@@ -1,7 +1,18 @@
 import type { CSSProperties, ReactNode } from 'react'
 
-export function Field({ label, children }: { label: string; children: ReactNode }): React.JSX.Element {
-  return <label className="field"><span>{label}</span>{children}</label>
+export function Field({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}): React.JSX.Element {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {children}
+    </label>
+  )
 }
 
 function avatarInitials(name: string): string {
@@ -21,12 +32,22 @@ function avatarTone(name: string): number {
   return Number(((hash % 1000) / 1000).toFixed(3))
 }
 
-export function Avatar({ name, image, large = false }: { name: string; image?: string | null; large?: boolean }): React.JSX.Element {
-  return <span
-    className={large ? 'avatar large' : 'avatar'}
-    style={{ '--avatar-t': avatarTone(name) } as CSSProperties}
-    aria-hidden="true"
-  >
-    {image ? <img src={image} alt="" /> : avatarInitials(name)}
-  </span>
+export function Avatar({
+  name,
+  image,
+  large = false,
+}: {
+  name: string
+  image?: string | null
+  large?: boolean
+}): React.JSX.Element {
+  return (
+    <span
+      className={large ? 'avatar large' : 'avatar'}
+      style={{ '--avatar-t': avatarTone(name) } as CSSProperties}
+      aria-hidden="true"
+    >
+      {image ? <img src={image} alt="" /> : avatarInitials(name)}
+    </span>
+  )
 }

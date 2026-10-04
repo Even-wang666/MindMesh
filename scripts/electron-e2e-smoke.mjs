@@ -29,7 +29,9 @@ async function until(task, timeoutMs = 90_000) {
     try {
       const result = await task()
       if (result) return result
-    } catch { /* App and CDP may still be starting. */ }
+    } catch {
+      /* App and CDP may still be starting. */
+    }
     await delay(300)
   }
   throw new Error('等待 Electron 响应超时')
@@ -78,11 +80,18 @@ async function runRound(round) {
   delete env.ELECTRON_RUN_AS_NODE
   const args = [`--remote-debugging-port=${port}`, `--user-data-dir=${userData}`]
   const app = spawn(executable, process.env.MINDMESH_E2E_EXE ? args : ['.', ...args], {
-    cwd: workspace, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: workspace,
+    env,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
   let log = ''
-  app.stdout.on('data', (chunk) => { log += chunk.toString() })
-  app.stderr.on('data', (chunk) => { log += chunk.toString() })
+  app.stdout.on('data', (chunk) => {
+    log += chunk.toString()
+  })
+  app.stderr.on('data', (chunk) => {
+    log += chunk.toString()
+  })
   let client
   try {
     const page = await until(async () => {
@@ -92,51 +101,94 @@ async function runRound(round) {
     }, 30_000)
     client = await connect(page.webSocketDebuggerUrl)
     const evaluate = async (expression) => {
-      const reply = await client.call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
-      if (reply.exceptionDetails) throw new Error(reply.exceptionDetails.exception?.description ?? reply.exceptionDetails.text)
+      const reply = await client.call('Runtime.evaluate', {
+        expression,
+        awaitPromise: true,
+        returnByValue: true,
+      })
+      if (reply.exceptionDetails)
+        throw new Error(
+          reply.exceptionDetails.exception?.description ?? reply.exceptionDetails.text
+        )
       return reply.result.value
     }
-    await until(() => evaluate('Boolean(window.mindmesh?.chat && document.querySelector(".composer textarea"))'))
+    await until(() =>
+      evaluate('Boolean(window.mindmesh?.chat && document.querySelector(".composer textarea"))')
+    )
     if (process.env.MINDMESH_E2E_SECOND_INSTANCE === '1') {
       const duplicateArgs = [`--user-data-dir=${userData}`]
-      const duplicate = spawn(executable, process.env.MINDMESH_E2E_EXE ? duplicateArgs : ['.', ...duplicateArgs], {
-        cwd: workspace, env, windowsHide: true, stdio: 'ignore',
-      })
+      const duplicate = spawn(
+        executable,
+        process.env.MINDMESH_E2E_EXE ? duplicateArgs : ['.', ...duplicateArgs],
+        {
+          cwd: workspace,
+          env,
+          windowsHide: true,
+          stdio: 'ignore',
+        }
+      )
       try {
         await until(() => duplicate.exitCode !== null, 20_000)
         assert.equal(duplicate.exitCode, 0)
         assert.equal(app.exitCode, null)
         assert.equal(await evaluate('Boolean(window.mindmesh?.chat)'), true)
         console.log('Electron duplicate instance exits; primary remains available: OK')
-      } finally { if (duplicate.exitCode === null) duplicate.kill() }
+      } finally {
+        if (duplicate.exitCode === null) duplicate.kill()
+      }
     }
     if (securityOnly) {
-      const policy = await evaluate('document.querySelector(\'meta[http-equiv="Content-Security-Policy"]\')?.content')
+      const policy = await evaluate(
+        'document.querySelector(\'meta[http-equiv="Content-Security-Policy"]\')?.content'
+      )
       assert.match(policy, /script-src 'self'/)
       await evaluate('document.querySelector(\'[data-nav="marketplace"]\').click()')
       for (const kind of ['agents', 'teams', 'plugins']) {
         await until(() => evaluate(`Boolean(document.querySelector('#marketplace-${kind}'))`))
         await evaluate(`document.querySelector('#marketplace-${kind}').click()`)
-        await until(() => evaluate(`document.querySelector('#marketplace-panel')?.getAttribute('aria-busy') === 'false'`))
-        assert.equal(await evaluate(`window.mindmesh.marketplace.list('${kind}', true).then(x => x.kind)`), kind)
-        assert.equal(await evaluate(`document.querySelector('#marketplace-${kind}').getAttribute('aria-selected')`), 'true')
+        await until(() =>
+          evaluate(
+            `document.querySelector('#marketplace-panel')?.getAttribute('aria-busy') === 'false'`
+          )
+        )
+        assert.equal(
+          await evaluate(`window.mindmesh.marketplace.list('${kind}', true).then(x => x.kind)`),
+          kind
+        )
+        assert.equal(
+          await evaluate(
+            `document.querySelector('#marketplace-${kind}').getAttribute('aria-selected')`
+          ),
+          'true'
+        )
       }
-      assert.equal(await evaluate(`window.mindmesh.marketplace.list('../bad').then(() => false, () => true)`), true)
+      assert.equal(
+        await evaluate(`window.mindmesh.marketplace.list('../bad').then(() => false, () => true)`),
+        true
+      )
       console.log('Electron Marketplace navigation, tabs and validated IPC: OK')
       if (agencyOnly) {
         const catalog = await evaluate(`window.mindmesh.marketplace.list('agents', true)`)
         assert.equal(catalog.state, 'fresh', catalog.error)
         assert.ok(catalog.items.length > 0)
         const item = catalog.items[0]
-        assert.ok(catalog.items.every(entry => entry.revision === item.revision))
+        assert.ok(catalog.items.every((entry) => entry.revision === item.revision))
         await evaluate(`document.querySelector('#marketplace-agents').click()`)
         await until(() => evaluate(`Boolean(document.querySelector('.marketplace-install'))`))
-        const alreadyInstalled = await evaluate(`document.querySelector('.marketplace-install').textContent.includes('已安装')`)
+        const alreadyInstalled = await evaluate(
+          `document.querySelector('.marketplace-install').textContent.includes('已安装')`
+        )
         if (!alreadyInstalled) {
           await evaluate(`document.querySelector('.marketplace-install').click()`)
-          await until(() => evaluate(`document.querySelector('.marketplace-install')?.textContent.includes('已安装')`))
+          await until(() =>
+            evaluate(
+              `document.querySelector('.marketplace-install')?.textContent.includes('已安装')`
+            )
+          )
         }
-        const installed = await evaluate(`window.mindmesh.agents.list().then(agents => agents.find(agent => agent.source?.sourceId === ${JSON.stringify(item.sourceId)}))`)
+        const installed = await evaluate(
+          `window.mindmesh.agents.list().then(agents => agents.find(agent => agent.source?.sourceId === ${JSON.stringify(item.sourceId)}))`
+        )
         assert.ok(installed)
         assert.deepEqual(installed.tools, [])
         assert.deepEqual(installed.skills, [])
@@ -149,19 +201,46 @@ async function runRound(round) {
         assert.equal(installed.source.revision, item.revision)
         assert.match(installed.source.licenseText, /MIT License/)
         assert.ok(installed.persona.length > 0)
-        assert.equal((await evaluate(`window.mindmesh.marketplace.installAgent(${JSON.stringify(item.key)}, ${JSON.stringify(item.revision)})`)).id, installed.id)
+        assert.equal(
+          (
+            await evaluate(
+              `window.mindmesh.marketplace.installAgent(${JSON.stringify(item.key)}, ${JSON.stringify(item.revision)})`
+            )
+          ).id,
+          installed.id
+        )
         await evaluate(`document.querySelector('.marketplace-install').click()`)
-        await until(() => evaluate(`document.querySelector('.chat-page h1')?.textContent === ${JSON.stringify(installed.name)}`))
+        await until(() =>
+          evaluate(
+            `document.querySelector('.chat-page h1')?.textContent === ${JSON.stringify(installed.name)}`
+          )
+        )
         await evaluate(`window.mindmesh.settings.saveModelProvider({ id: 'custom', name: 'Agency smoke fixture',
           baseUrl: ${JSON.stringify(agencyModel.url)}, model: 'fixture-model', apiKey: 'fixture-key' })`)
         await evaluate(`window.mindmesh.agents.update(${JSON.stringify(installed.id)}, {
           ...${JSON.stringify(installed)}, provider: 'custom', model: 'fixture-model' })`)
         const requestCount = agencyModel.requests.length
-        const messages = await evaluate(`window.mindmesh.chat.sendPrivate(${JSON.stringify(installed.id)}, 'Agency installation smoke')`)
-        assert.ok(messages.some(message => message.authorId === installed.id && message.content === 'core-without-plugin'))
+        const messages = await evaluate(
+          `window.mindmesh.chat.sendPrivate(${JSON.stringify(installed.id)}, 'Agency installation smoke')`
+        )
+        assert.ok(
+          messages.some(
+            (message) =>
+              message.authorId === installed.id && message.content === 'core-without-plugin'
+          )
+        )
         assert.ok(agencyModel.requests.length > requestCount, '真实 SDK 必须到达本地模型 HTTP 边界')
-        assert.ok(agencyModel.requests.at(-1).messages.some(message => typeof message.content === 'string' && message.content.includes(installed.persona)))
-        console.log(`Electron Agency pinned catalog (${catalog.items.length} templates, ${item.revision}), install/Open and real DSH private conversation round ${round}: OK`)
+        assert.ok(
+          agencyModel.requests
+            .at(-1)
+            .messages.some(
+              (message) =>
+                typeof message.content === 'string' && message.content.includes(installed.persona)
+            )
+        )
+        console.log(
+          `Electron Agency pinned catalog (${catalog.items.length} templates, ${item.revision}), install/Open and real DSH private conversation round ${round}: OK`
+        )
       }
       await evaluate('setTimeout(() => window.close(), 100)')
       await until(() => app.exitCode !== null, 20_000)
@@ -169,8 +248,12 @@ async function runRound(round) {
       return
     }
     assert.equal(await evaluate('window.mindmesh.runtime.status().then(x => x.state)'), 'ready')
-    assert.equal(await evaluate('window.mindmesh.runtime.status().then(x => x.dshVersion)'),
-      JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')).dependencies['@deepseek-ai/dsh'])
+    assert.equal(
+      await evaluate('window.mindmesh.runtime.status().then(x => x.dshVersion)'),
+      JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')).dependencies[
+        '@deepseek-ai/dsh'
+      ]
+    )
     if (round === 1 && providerOverride && modelOverride) {
       const route = await evaluate(`(async () => {
         const agent = (await window.mindmesh.agents.list())[0]
@@ -184,7 +267,9 @@ async function runRound(round) {
       assert.deepEqual(route, { provider: providerOverride, model: modelOverride })
       await client.call('Page.reload')
       await delay(500)
-      await until(() => evaluate('Boolean(window.mindmesh?.chat && document.querySelector(".composer textarea"))'))
+      await until(() =>
+        evaluate('Boolean(window.mindmesh?.chat && document.querySelector(".composer textarea"))')
+      )
       console.log(`Electron provider override ${providerOverride}/${modelOverride}: OK`)
     }
     if (round === 2) {
@@ -202,41 +287,72 @@ async function runRound(round) {
         setter.call(input, ${JSON.stringify(message)})
         input.dispatchEvent(new Event('input', { bubbles: true }))
       })()`)
-      await until(() => evaluate('!document.querySelector(".composer-actions .send-button").disabled'))
+      await until(() =>
+        evaluate('!document.querySelector(".composer-actions .send-button").disabled')
+      )
       await evaluate('document.querySelector(".composer-actions .send-button").click()')
     }
 
     const privateMarker = `MM_PRIVATE_${Date.now()}`
     await sendFromComposer(`请只回复 ${privateMarker}`)
     try {
-      const outcome = await until(() => evaluate(`(() => {
+      const outcome = await until(
+        () =>
+          evaluate(`(() => {
         if (Array.from(document.querySelectorAll('.message.agent > div > .message-body')).some(x => x.textContent.includes(${JSON.stringify(privateMarker)}))) return 'ok'
         if (document.querySelector('.message.system')?.textContent.includes('回复失败')) return 'failed'
         return null
-      })()`), 75_000)
+      })()`),
+        75_000
+      )
       assert.equal(outcome, 'ok', '私聊返回了失败消息')
     } catch (error) {
-      console.error('Private chat messages:', await evaluate('Array.from(document.querySelectorAll(".messages .message")).map(x => x.textContent.slice(0, 240))'))
+      console.error(
+        'Private chat messages:',
+        await evaluate(
+          'Array.from(document.querySelectorAll(".messages .message")).map(x => x.textContent.slice(0, 240))'
+        )
+      )
       throw error
     }
     console.log('Electron private chat UI: OK')
 
-    await evaluate(`Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '协作空间').click()`)
+    await evaluate(
+      `Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '协作空间').click()`
+    )
     await until(() => evaluate('Boolean(document.querySelector(".space-page .composer textarea"))'))
-    if (round === 2) await until(() => evaluate('document.querySelectorAll(".space-page .message.agent > div > .message-body").length >= 2'))
-    const existingSpaceReplies = await evaluate('document.querySelectorAll(".space-page .message.agent > div > .message-body").length')
+    if (round === 2)
+      await until(() =>
+        evaluate(
+          'document.querySelectorAll(".space-page .message.agent > div > .message-body").length >= 2'
+        )
+      )
+    const existingSpaceReplies = await evaluate(
+      'document.querySelectorAll(".space-page .message.agent > div > .message-body").length'
+    )
     const spaceMarker = `MM_SPACE_${Date.now()}`
     await sendFromComposer(`@Researcher @Developer 请分别只回复 ${spaceMarker}`)
     try {
-      await until(() => evaluate(`document.querySelectorAll(".space-page .message.agent > div > .message-body").length === ${existingSpaceReplies + 2}`), 180_000)
+      await until(
+        () =>
+          evaluate(
+            `document.querySelectorAll(".space-page .message.agent > div > .message-body").length === ${existingSpaceReplies + 2}`
+          ),
+        180_000
+      )
     } catch (error) {
-      console.error('Space agent messages:', await evaluate(`Array.from(document.querySelectorAll('.space-page .message.agent:has(header time)')).map(item => ({
+      console.error(
+        'Space agent messages:',
+        await evaluate(`Array.from(document.querySelectorAll('.space-page .message.agent:has(header time)')).map(item => ({
         author: item.querySelector('header strong')?.textContent,
         content: item.querySelector('.message-body')?.textContent?.slice(0, 240) ?? '',
-      }))`))
+      }))`)
+      )
       throw error
     }
-    const spaceMessages = await evaluate('Array.from(document.querySelectorAll(".space-page .message.agent > div > .message-body")).map(x => x.textContent)')
+    const spaceMessages = await evaluate(
+      'Array.from(document.querySelectorAll(".space-page .message.agent > div > .message-body")).map(x => x.textContent)'
+    )
     assert.equal(spaceMessages.length, existingSpaceReplies + 2, 'Space 双 Agent 回复失败')
     console.log(`Electron Space collaboration UI round ${round}: OK`)
 
@@ -250,10 +366,20 @@ async function runRound(round) {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'E2E 编辑空间')
         input.dispatchEvent(new Event('input', { bubbles: true }))
       })()`)
-      await evaluate('document.querySelector(\'.member-choices button[aria-label="Developer"]\').click()')
-      await until(() => evaluate('document.querySelector(\'.member-choices button[aria-label="Developer"]\')?.getAttribute("aria-pressed") === "false"'))
-      await evaluate("document.querySelector('.wizard.space-wizard footer .primary-button').click()")
-      await until(() => evaluate('document.querySelector(".space-page h1")?.textContent === "E2E 编辑空间"'))
+      await evaluate(
+        'document.querySelector(\'.member-choices button[aria-label="Developer"]\').click()'
+      )
+      await until(() =>
+        evaluate(
+          'document.querySelector(\'.member-choices button[aria-label="Developer"]\')?.getAttribute("aria-pressed") === "false"'
+        )
+      )
+      await evaluate(
+        "document.querySelector('.wizard.space-wizard footer .primary-button').click()"
+      )
+      await until(() =>
+        evaluate('document.querySelector(".space-page h1")?.textContent === "E2E 编辑空间"')
+      )
       const edited = await evaluate(`(async () => {
         const space = (await window.mindmesh.spaces.list())[0]
         return { name: space.name, members: space.memberIds.length }
@@ -261,32 +387,60 @@ async function runRound(round) {
       assert.deepEqual(edited, { name: 'E2E 编辑空间', members: 1 })
       console.log('Electron Space edit UI: OK')
 
-      await evaluate(`Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '对话').click()`)
-      await until(() => evaluate('Boolean(document.querySelector(".chat-page .chat-header button"))'))
-      const agentCountBeforeDelete = await evaluate('window.mindmesh.agents.list().then(agents => agents.length)')
+      await evaluate(
+        `Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '对话').click()`
+      )
+      await until(() =>
+        evaluate('Boolean(document.querySelector(".chat-page .chat-header button"))')
+      )
+      const agentCountBeforeDelete = await evaluate(
+        'window.mindmesh.agents.list().then(agents => agents.length)'
+      )
       await evaluate("document.querySelector('.chat-page .chat-header button').click()")
       await until(() => evaluate('Boolean(document.querySelector(".agent-drawer .danger-button"))'))
       await evaluate("document.querySelector('.agent-drawer .danger-button').click()")
       await until(() => evaluate('Boolean(document.querySelector(".confirm-dialog"))'))
       await evaluate("document.querySelector('.confirm-dialog .danger-button').click()")
-      await until(() => evaluate('document.querySelector(".chat-page h1")?.textContent === "Developer"'))
-      assert.equal(await evaluate('window.mindmesh.agents.list().then(agents => agents.length)'), agentCountBeforeDelete - 1)
+      await until(() =>
+        evaluate('document.querySelector(".chat-page h1")?.textContent === "Developer"')
+      )
+      assert.equal(
+        await evaluate('window.mindmesh.agents.list().then(agents => agents.length)'),
+        agentCountBeforeDelete - 1
+      )
       console.log('Electron Agent delete UI: OK')
 
-      await evaluate(`Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '协作空间').click()`)
+      await evaluate(
+        `Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '协作空间').click()`
+      )
       await until(() => evaluate('Boolean(document.querySelector(".space-page .drawer-toggle"))'))
       await evaluate("document.querySelector('.space-page .drawer-toggle').click()")
       await until(() => evaluate('Boolean(document.querySelector(".space-page .drawer-delete"))'))
-      const spaceCountBeforeDelete = await evaluate('window.mindmesh.spaces.list().then(spaces => spaces.length)')
+      const spaceCountBeforeDelete = await evaluate(
+        'window.mindmesh.spaces.list().then(spaces => spaces.length)'
+      )
       await evaluate("document.querySelector('.space-page .drawer-delete').click()")
       await until(() => evaluate('Boolean(document.querySelector(".confirm-dialog"))'))
       await evaluate("document.querySelector('.confirm-dialog .danger-button').click()")
-      await until(() => evaluate(`window.mindmesh.spaces.list().then(spaces => spaces.length === ${spaceCountBeforeDelete - 1})`))
-      assert.equal(await evaluate('window.mindmesh.spaces.list().then(spaces => spaces.length)'), spaceCountBeforeDelete - 1)
+      await until(() =>
+        evaluate(
+          `window.mindmesh.spaces.list().then(spaces => spaces.length === ${spaceCountBeforeDelete - 1})`
+        )
+      )
+      assert.equal(
+        await evaluate('window.mindmesh.spaces.list().then(spaces => spaces.length)'),
+        spaceCountBeforeDelete - 1
+      )
       console.log('Electron Space delete UI: OK')
 
-      await evaluate(`Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '设置').click()`)
-      await until(() => evaluate('Boolean(Array.from(document.querySelectorAll(".settings-page button")).find(button => button.textContent.trim() === "选择文件夹"))'))
+      await evaluate(
+        `Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === '设置').click()`
+      )
+      await until(() =>
+        evaluate(
+          'Boolean(Array.from(document.querySelectorAll(".settings-page button")).find(button => button.textContent.trim() === "选择文件夹"))'
+        )
+      )
       assert.ok(await evaluate('window.mindmesh.settings.workspace()'))
       console.log('Electron local workspace settings UI: OK')
     }
@@ -313,5 +467,6 @@ try {
   await agencyModel?.close()
   const tempRoot = resolve(tmpdir()) + sep
   if (keepUserData) console.error(`Electron user data preserved: ${userData}`)
-  else if (resolve(userData).startsWith(tempRoot)) rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
+  else if (resolve(userData).startsWith(tempRoot))
+    rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
 }

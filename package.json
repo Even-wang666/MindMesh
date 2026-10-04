@@ -26,7 +26,11 @@
     "test:watch": "vitest",
     "package:dir": "pnpm build && electron-builder --dir --config.electronDist=node_modules/electron/dist",
     "package:win": "pnpm build && electron-builder --win nsis --config.electronDist=node_modules/electron/dist",
-    "check:dsh-deps": "node scripts/check-dsh-dependency-matrix.mjs"
+    "check:dsh-deps": "node scripts/check-dsh-dependency-matrix.mjs",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint --error-on-warnings .",
+    "lint:fix": "biome lint --write ."
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.4",
@@ -75,6 +79,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.15",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@types/node": "^24.0.0",

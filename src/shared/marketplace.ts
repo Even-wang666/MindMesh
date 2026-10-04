@@ -1,5 +1,5 @@
 export const marketplaceKinds = ['agents', 'teams', 'plugins'] as const
-export type MarketplaceKind = typeof marketplaceKinds[number]
+export type MarketplaceKind = (typeof marketplaceKinds)[number]
 export type MarketplaceIdentity = { kind: MarketplaceKind; source: string; sourceId: string }
 export type MarketplaceItem = MarketplaceIdentity & {
   key: string
@@ -27,8 +27,15 @@ export function marketplaceKey(identity: MarketplaceIdentity): string {
 
 export function parseMarketplaceKey(key: string): MarketplaceIdentity {
   const value: unknown = JSON.parse(key)
-  if (!Array.isArray(value) || value.length !== 3 || !isMarketplaceKind(value[0])
-    || typeof value[1] !== 'string' || !value[1] || typeof value[2] !== 'string' || !value[2]) {
+  if (
+    !Array.isArray(value) ||
+    value.length !== 3 ||
+    !isMarketplaceKind(value[0]) ||
+    typeof value[1] !== 'string' ||
+    !value[1] ||
+    typeof value[2] !== 'string' ||
+    !value[2]
+  ) {
     throw new Error('Marketplace key 无效')
   }
   return { kind: value[0], source: value[1], sourceId: value[2] }

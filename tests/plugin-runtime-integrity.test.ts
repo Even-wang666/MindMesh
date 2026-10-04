@@ -6,14 +6,21 @@ import { pluginHomeDigest } from '../src/main/plugins/plugin-runtime'
 
 test('reusing a Home detects aliases redirected to another installed version', () => {
   const home = mkdtempSync(join(tmpdir(), 'mindmesh-plugin-integrity-'))
-  const profile = join(home, 'profiles', 'sdk'), modules = join(profile, 'node_modules')
+  const profile = join(home, 'profiles', 'sdk'),
+    modules = join(profile, 'node_modules')
   try {
     for (const version of ['one', 'two']) {
       const directory = join(modules, '.pnpm', version)
       mkdirSync(directory, { recursive: true })
       writeFileSync(join(directory, 'index.cjs'), `module.exports = '${version}'`)
     }
-    for (const name of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'cordis.patch.yml']) writeFileSync(join(profile, name), 'sealed')
+    for (const name of [
+      'package.json',
+      'pnpm-lock.yaml',
+      'pnpm-workspace.yaml',
+      'cordis.patch.yml',
+    ])
+      writeFileSync(join(profile, name), 'sealed')
     const alias = join(modules, 'plugin')
     symlinkSync(join(modules, '.pnpm', 'one'), alias, 'junction')
     const original = pluginHomeDigest(home)
@@ -23,7 +30,10 @@ test('reusing a Home detects aliases redirected to another installed version', (
     symlinkSync(join(modules, '.pnpm', 'two'), alias, 'junction')
     expect(pluginHomeDigest(home)).not.toBe(original)
   } finally {
-    if (!resolve(home).startsWith(resolve(tmpdir()) + sep)) throw new Error('Unsafe integrity cleanup')
+    if (!resolve(home).startsWith(resolve(tmpdir()) + sep)) {
+      // biome-ignore lint/correctness/noUnsafeFinally: Refuse recursive cleanup outside the verified temporary directory, even after an earlier failure.
+      throw new Error('Unsafe integrity cleanup')
+    }
     rmSync(home, { recursive: true, force: true })
   }
 })

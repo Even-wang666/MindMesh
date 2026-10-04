@@ -46,12 +46,26 @@ describe('ModelProviderSettings', () => {
     const { settings, path } = createSettings()
     settings.save({ id: 'openai', apiKey: keys.openai })
     const before = readFileSync(path, 'utf8')
-    for (const input of [null, [], { id: 'custom', apiKey: 42 }, { id: 'custom', apiKey: 'x'.repeat(1025) }]) {
-      expect(() => settings.save(input as Parameters<ModelProviderSettings['save']>[0])).toThrow(/数据无效|API Key/)
+    for (const input of [
+      null,
+      [],
+      { id: 'custom', apiKey: 42 },
+      { id: 'custom', apiKey: 'x'.repeat(1025) },
+    ]) {
+      expect(() => settings.save(input as Parameters<ModelProviderSettings['save']>[0])).toThrow(
+        /数据无效|API Key/
+      )
       expect(readFileSync(path, 'utf8')).toBe(before)
     }
-    expect(() => settings.save({ id: 'custom', apiKey: 'valid-secret', name: 'Test', model: 'model',
-      baseUrl: `https://example.com/${'x'.repeat(2048)}` })).toThrow(/不能超过/)
+    expect(() =>
+      settings.save({
+        id: 'custom',
+        apiKey: 'valid-secret',
+        name: 'Test',
+        model: 'model',
+        baseUrl: `https://example.com/${'x'.repeat(2048)}`,
+      })
+    ).toThrow(/不能超过/)
     expect(readFileSync(path, 'utf8')).toBe(before)
   })
 
@@ -71,12 +85,22 @@ describe('ModelProviderSettings', () => {
   it('lists and stores the additional model providers', () => {
     const { settings } = createSettings()
     expect(settings.statuses().map(({ id }) => id)).toEqual([
-      'qwen', 'deepseek-official', 'zhipu', 'moonshotai-cn',
-      'minimax', 'stepfun', 'openai', 'anthropic',
+      'qwen',
+      'deepseek-official',
+      'zhipu',
+      'moonshotai-cn',
+      'minimax',
+      'stepfun',
+      'openai',
+      'anthropic',
     ])
 
     settings.save({ id: 'zhipu', apiKey: keys.zhipu })
-    expect(settings.getProvider('zhipu')).toMatchObject({ id: 'zhipu', name: '智谱 GLM', apiKey: keys.zhipu })
+    expect(settings.getProvider('zhipu')).toMatchObject({
+      id: 'zhipu',
+      name: '智谱 GLM',
+      apiKey: keys.zhipu,
+    })
   })
 
   it('puts configured providers first in configuration order', () => {
@@ -85,8 +109,14 @@ describe('ModelProviderSettings', () => {
     settings.save({ id: 'zhipu', apiKey: keys.zhipu })
 
     expect(settings.statuses().map(({ id }) => id)).toEqual([
-      'anthropic', 'zhipu', 'qwen', 'deepseek-official',
-      'moonshotai-cn', 'minimax', 'stepfun', 'openai',
+      'anthropic',
+      'zhipu',
+      'qwen',
+      'deepseek-official',
+      'moonshotai-cn',
+      'minimax',
+      'stepfun',
+      'openai',
     ])
   })
 
@@ -98,9 +128,13 @@ describe('ModelProviderSettings', () => {
 
     const statuses = settings.remove('deepseek-official')
 
-    expect(statuses.find((provider) => provider.id === 'deepseek-official')?.source).toBe('environment')
+    expect(statuses.find((provider) => provider.id === 'deepseek-official')?.source).toBe(
+      'environment'
+    )
     expect(statuses.find((provider) => provider.id === 'moonshotai-cn')?.source).toBe('saved')
-    expect(settings.getProvider('deepseek-official')?.apiKey).toBe('sk-environment-value-that-is-long-enough')
+    expect(settings.getProvider('deepseek-official')?.apiKey).toBe(
+      'sk-environment-value-that-is-long-enough'
+    )
   })
 
   it('stores custom metadata while keeping its key encrypted', () => {
@@ -130,9 +164,12 @@ describe('ModelProviderSettings', () => {
 
   it('reads the previous DeepSeek-only storage format', () => {
     const { settings, path } = createSettings()
-    writeFileSync(path, JSON.stringify({
-      deepseekApiKey: Buffer.from(`encrypted:${keys.deepseek}`).toString('base64'),
-    }))
+    writeFileSync(
+      path,
+      JSON.stringify({
+        deepseekApiKey: Buffer.from(`encrypted:${keys.deepseek}`).toString('base64'),
+      })
+    )
 
     expect(settings.getProvider('deepseek-official')?.apiKey).toBe(keys.deepseek)
     expect(settings.statuses()[0].source).toBe('saved')
@@ -141,25 +178,46 @@ describe('ModelProviderSettings', () => {
   it('ignores a damaged saved secret and falls back to the environment', () => {
     process.env.OPENAI_API_KEY = keys.openai
     const { settings, path } = createSettings()
-    writeFileSync(path, JSON.stringify({
-      version: 2,
-      providers: { openai: { apiKey: Buffer.from('damaged').toString('base64') } },
-    }))
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 2,
+        providers: { openai: { apiKey: Buffer.from('damaged').toString('base64') } },
+      })
+    )
 
-    expect(settings.statuses().find((provider) => provider.id === 'openai')?.source).toBe('environment')
+    expect(settings.statuses().find((provider) => provider.id === 'openai')?.source).toBe(
+      'environment'
+    )
     expect(settings.getProvider('openai')?.apiKey).toBe(keys.openai)
   })
 
   it('validates provider-specific prefixes and custom fields', () => {
     const { settings } = createSettings()
 
-    expect(() => settings.save({ id: 'anthropic', apiKey: keys.openai })).toThrow('必须以 sk-ant- 开头')
-    expect(() => settings.save({ id: 'deepseek-official', apiKey: 'sk-too-short' })).toThrow('完整长度应为 27-67 个字符')
-    expect(() => settings.save({
-      id: 'custom', name: 'Test', baseUrl: 'not-a-url', model: 'model', apiKey: 'valid-secret',
-    })).toThrow('请输入完整有效的 API Base URL')
-    expect(() => settings.save({
-      id: 'custom', name: 'Test', baseUrl: 'ftp://example.com', model: 'model', apiKey: 'valid-secret',
-    })).toThrow('必须以 http:// 或 https:// 开头')
+    expect(() => settings.save({ id: 'anthropic', apiKey: keys.openai })).toThrow(
+      '必须以 sk-ant- 开头'
+    )
+    expect(() => settings.save({ id: 'deepseek-official', apiKey: 'sk-too-short' })).toThrow(
+      '完整长度应为 27-67 个字符'
+    )
+    expect(() =>
+      settings.save({
+        id: 'custom',
+        name: 'Test',
+        baseUrl: 'not-a-url',
+        model: 'model',
+        apiKey: 'valid-secret',
+      })
+    ).toThrow('请输入完整有效的 API Base URL')
+    expect(() =>
+      settings.save({
+        id: 'custom',
+        name: 'Test',
+        baseUrl: 'ftp://example.com',
+        model: 'model',
+        apiKey: 'valid-secret',
+      })
+    ).toThrow('必须以 http:// 或 https:// 开头')
   })
 })

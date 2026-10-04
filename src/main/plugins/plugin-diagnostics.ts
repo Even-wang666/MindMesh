@@ -6,6 +6,9 @@ export function redactPluginDiagnostic(value: unknown, secrets: readonly string[
   }
   return text
     .replace(/(\bbearer\s+)[^\s"',;]+/gi, '$1[REDACTED]')
-    .replace(/((?:["']?)(?:api[_-]?key|access[_-]?token|token|password|secret|authorization)(?:["']?)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi, '$1"[REDACTED]"')
+    .replace(
+      /((?:["']?)(?:api[_-]?key|access[_-]?token|token|password|secret|authorization)(?:["']?)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi,
+      '$1"[REDACTED]"'
+    )
     .replace(/\bsk-[A-Za-z0-9_-]+/g, '[REDACTED]')
 }

@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ChatDelta, ChatProgress, MindMeshApi, SkillInstallProgress } from '../shared/contracts'
+import type {
+  ChatDelta,
+  ChatProgress,
+  MindMeshApi,
+  SkillInstallProgress,
+} from '../shared/contracts'
 import { validateChatContent } from '../shared/chat-content'
 
 const api: MindMeshApi = {
@@ -32,12 +37,14 @@ const api: MindMeshApi = {
     },
     stop: (scope, scopeId) => ipcRenderer.invoke('chat:stop', scope, scopeId),
     onDelta: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: ChatDelta): void => listener(payload)
+      const handler = (_event: Electron.IpcRendererEvent, payload: ChatDelta): void =>
+        listener(payload)
       ipcRenderer.on('chat:delta', handler)
       return () => ipcRenderer.removeListener('chat:delta', handler)
     },
     onProgress: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: ChatProgress): void => listener(payload)
+      const handler = (_event: Electron.IpcRendererEvent, payload: ChatProgress): void =>
+        listener(payload)
       ipcRenderer.on('chat:progress', handler)
       return () => ipcRenderer.removeListener('chat:progress', handler)
     },
@@ -48,7 +55,8 @@ const api: MindMeshApi = {
     installSkill: (path) => ipcRenderer.invoke('catalog:installSkill', path),
     installSkillFromGitHub: (url) => ipcRenderer.invoke('catalog:installSkillFromGitHub', url),
     onInstallProgress: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: SkillInstallProgress): void => listener(payload)
+      const handler = (_event: Electron.IpcRendererEvent, payload: SkillInstallProgress): void =>
+        listener(payload)
       ipcRenderer.on('catalog:installProgress', handler)
       return () => ipcRenderer.removeListener('catalog:installProgress', handler)
     },

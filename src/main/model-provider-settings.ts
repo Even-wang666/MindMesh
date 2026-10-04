@@ -2,13 +2,27 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { safeStorage } from 'electron'
 import { z } from 'zod'
-import type { ModelProviderId, ModelProviderStatus, SaveModelProviderInput } from '../shared/contracts'
+import type {
+  ModelProviderId,
+  ModelProviderStatus,
+  SaveModelProviderInput,
+} from '../shared/contracts'
 import {
-  getModelProviderApiKeyError, getModelProviderDefinition, MODEL_PROVIDER_DEFINITIONS,
+  getModelProviderApiKeyError,
+  getModelProviderDefinition,
+  MODEL_PROVIDER_DEFINITIONS,
 } from '../shared/model-providers'
 
 const providerIdSchema = z.enum([
-  'deepseek-official', 'moonshotai-cn', 'openai', 'anthropic', 'minimax', 'zhipu', 'qwen', 'stepfun', 'custom',
+  'deepseek-official',
+  'moonshotai-cn',
+  'openai',
+  'anthropic',
+  'minimax',
+  'zhipu',
+  'qwen',
+  'stepfun',
+  'custom',
 ])
 const savedProviderSchema = z.object({
   apiKey: z.string().min(1),
@@ -40,9 +54,9 @@ export class ModelProviderSettings {
     const stored = this.readStoredSettings()
     const standard = MODEL_PROVIDER_DEFINITIONS.map((provider) => {
       const source = this.canDecrypt(stored.providers[provider.id]?.apiKey)
-        ? 'saved' as const
+        ? ('saved' as const)
         : process.env[provider.environmentKey]
-          ? 'environment' as const
+          ? ('environment' as const)
           : null
       return {
         id: provider.id,
@@ -52,24 +66,31 @@ export class ModelProviderSettings {
         source,
       }
     })
-    const custom = this.canDecrypt(stored.providers.custom?.apiKey) ? stored.providers.custom : undefined
+    const custom = this.canDecrypt(stored.providers.custom?.apiKey)
+      ? stored.providers.custom
+      : undefined
     const statuses: ModelProviderStatus[] = custom
-      ? [...standard, {
-          id: 'custom' as const,
-          name: custom.name ?? '自定义服务',
-          description: custom.baseUrl ?? 'OpenAI 兼容接口',
-          configured: true,
-          source: 'saved' as const,
-          baseUrl: custom.baseUrl,
-          model: custom.model,
-        }]
+      ? [
+          ...standard,
+          {
+            id: 'custom' as const,
+            name: custom.name ?? '自定义服务',
+            description: custom.baseUrl ?? 'OpenAI 兼容接口',
+            configured: true,
+            source: 'saved' as const,
+            baseUrl: custom.baseUrl,
+            model: custom.model,
+          },
+        ]
       : standard
     const savedOrder = new Map(Object.keys(stored.providers).map((id, index) => [id, index]))
     return statuses.sort((left, right) => {
       if (left.configured !== right.configured) return left.configured ? -1 : 1
       if (!left.configured) return 0
-      return (savedOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER)
-        - (savedOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+      return (
+        (savedOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (savedOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+      )
     })
   }
 
@@ -92,7 +113,9 @@ export class ModelProviderSettings {
     }
     const definition = getModelProviderDefinition(parsedId.data)
     const apiKey = definition ? process.env[definition.environmentKey] : undefined
-    return apiKey ? { id: parsedId.data, apiKey, name: definition?.name ?? parsedId.data } : undefined
+    return apiKey
+      ? { id: parsedId.data, apiKey, name: definition?.name ?? parsedId.data }
+      : undefined
   }
 
   configuredProviders(): ModelProviderRuntimeConfig[] {
@@ -103,7 +126,8 @@ export class ModelProviderSettings {
   }
 
   save(input: SaveModelProviderInput): ModelProviderStatus[] {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('模型服务数据无效')
+    if (!input || typeof input !== 'object' || Array.isArray(input))
+      throw new Error('模型服务数据无效')
     if (typeof input.apiKey !== 'string') throw new Error('API Key 必须是文本')
     if (input.apiKey.length > 1024) throw new Error('API Key 输入不能超过 1,024 个字符')
     const id = providerIdSchema.parse(input.id)
@@ -114,12 +138,31 @@ export class ModelProviderSettings {
 
     let metadata: Omit<SavedProvider, 'apiKey'> = {}
     if (id === 'custom') {
-      metadata = z.object({
-        name: z.string().max(200, '服务名称输入不能超过 200 个字符').trim().min(1, '请输入服务名称').max(50, '服务名称不能超过 50 个字符'),
-        baseUrl: z.string().max(2048, 'API Base URL 不能超过 2,048 个字符').trim().url('请输入完整有效的 API Base URL')
-          .refine((value) => /^https?:\/\//.test(value), 'API Base URL 必须以 http:// 或 https:// 开头'),
-        model: z.string().max(400, '模型 ID 输入不能超过 400 个字符').trim().min(1, '请输入模型 ID').max(100, '模型 ID 不能超过 100 个字符'),
-      }).parse(input)
+      metadata = z
+        .object({
+          name: z
+            .string()
+            .max(200, '服务名称输入不能超过 200 个字符')
+            .trim()
+            .min(1, '请输入服务名称')
+            .max(50, '服务名称不能超过 50 个字符'),
+          baseUrl: z
+            .string()
+            .max(2048, 'API Base URL 不能超过 2,048 个字符')
+            .trim()
+            .url('请输入完整有效的 API Base URL')
+            .refine(
+              (value) => /^https?:\/\//.test(value),
+              'API Base URL 必须以 http:// 或 https:// 开头'
+            ),
+          model: z
+            .string()
+            .max(400, '模型 ID 输入不能超过 400 个字符')
+            .trim()
+            .min(1, '请输入模型 ID')
+            .max(100, '模型 ID 不能超过 100 个字符'),
+        })
+        .parse(input)
     }
 
     const current = this.readStoredSettings()

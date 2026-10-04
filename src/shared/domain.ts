@@ -24,7 +24,9 @@ export function parseMentions(content: string, members: Agent[]): Agent[] {
 }
 
 export function buildPrivatePrompt(
-  agent: Agent, content: string, history: PromptMessage[] = [],
+  agent: Agent,
+  content: string,
+  history: PromptMessage[] = []
 ): string {
   return [
     `你是 ${agent.name}。`,
@@ -41,7 +43,7 @@ export function buildPrivatePrompt(
 export function buildSpacePrompt(
   agent: Agent,
   space: { name: string; context: string },
-  messages: PromptMessage[],
+  messages: PromptMessage[]
 ): string {
   const transcript = messages.map(formatPromptMessage).join('\n')
   return [

@@ -106,7 +106,9 @@ corepack pnpm@11.7.0 dev
 ## 开发与验证
 
 ```powershell
-# 类型检查、单元/组件测试、生产构建
+# 格式与静态检查、类型检查、单元/组件测试、生产构建
+corepack pnpm@11.7.0 format:check
+corepack pnpm@11.7.0 lint
 corepack pnpm@11.7.0 typecheck
 corepack pnpm@11.7.0 test
 corepack pnpm@11.7.0 build
@@ -115,6 +117,10 @@ corepack pnpm@11.7.0 build
 corepack pnpm@11.7.0 smoke:security
 corepack pnpm@11.7.0 check:package-deps
 ```
+
+代码格式与 lint 使用 Biome（配置见 `biome.json`），编辑器基本缩进与换行见 `.editorconfig`。检查覆盖 `src/`、`tests/`、`scripts/` 和根目录代码配置；CI 会在类型检查和测试之前运行格式与 lint 检查。使用 `pnpm format` 统一格式，使用 `pnpm lint:fix` 应用安全的 lint 修复。规则检查未使用导入/变量、未声明变量、显式 `any`、不可达代码、重复声明、Hook 调用位置及误提交的 `.only` 测试等；递归清理的路径安全保护保留逐处说明。
+
+构建产物、覆盖率、缓存、`shots/` 调试截图及 `.workbuddy/` 本地工具数据由 `.gitignore` 排除；正式的 `docs/screenshots/` 图片与仓库源码仍参与版本管理。
 
 `smoke:electron` 会运行真实 Electron 与 Harness 冒烟流程，需要可用的 DeepSeek API Key：
 

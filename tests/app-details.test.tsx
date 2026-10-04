@@ -1,14 +1,36 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Agent, ChatDelta, ChatProgress, Message, MindMeshApi, ModelProviderStatus, SkillInstallProgress, Space, UserProfile } from '../src/shared/contracts'
+import type {
+  Agent,
+  ChatDelta,
+  ChatProgress,
+  Message,
+  MindMeshApi,
+  ModelProviderStatus,
+  SkillInstallProgress,
+  Space,
+  UserProfile,
+} from '../src/shared/contracts'
 import { createSkillReference } from '../src/shared/skill-reference'
 import { App } from '../src/renderer/src/App'
 import { useChatController } from '../src/renderer/src/useChatController'
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn()
   URL.createObjectURL = vi.fn(() => 'blob:preview')
@@ -30,9 +52,18 @@ const agent: Agent = {
 function mockApi(): MindMeshApi {
   let storedProfile: UserProfile = { name: '你', avatar: null }
   return {
-    marketplace: { list: vi.fn(async (kind) => ({ kind, items: [], state: 'fresh' as const, fetchedAt: null })), installAgent: vi.fn() },
+    marketplace: {
+      list: vi.fn(async (kind) => ({ kind, items: [], state: 'fresh' as const, fetchedAt: null })),
+      installAgent: vi.fn(),
+    },
     agents: { list: vi.fn(async () => [agent]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
-    spaces: { list: vi.fn(async () => []), create: vi.fn(), update: vi.fn(), remove: vi.fn(), updateContext: vi.fn() },
+    spaces: {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      update: vi.fn(),
+      remove: vi.fn(),
+      updateContext: vi.fn(),
+    },
     chat: {
       messages: vi.fn(async () => []),
       sendPrivate: vi.fn(async () => []),
@@ -42,19 +73,30 @@ function mockApi(): MindMeshApi {
       onProgress: vi.fn(() => () => undefined),
     },
     catalog: {
-      skills: vi.fn(async () => []), pickSkillDir: vi.fn(async () => 'C:\\My Skill'), installSkill: vi.fn(async () => []), installSkillFromGitHub: vi.fn(async () => []),
+      skills: vi.fn(async () => []),
+      pickSkillDir: vi.fn(async () => 'C:\\My Skill'),
+      installSkill: vi.fn(async () => []),
+      installSkillFromGitHub: vi.fn(async () => []),
       onInstallProgress: vi.fn(() => () => undefined),
-      tools: vi.fn(async () => []), models: vi.fn(async () => []),
+      tools: vi.fn(async () => []),
+      models: vi.fn(async () => []),
     },
     runtime: {
-      status: vi.fn(async () => ({ state: 'ready' as const, label: '准备就绪', detail: '模型服务已连接。' })),
+      status: vi.fn(async () => ({
+        state: 'ready' as const,
+        label: '准备就绪',
+        detail: '模型服务已连接。',
+      })),
     },
     settings: {
       workspace: vi.fn(async () => 'C:\\MindMesh'),
       pickWorkspace: vi.fn(async () => 'C:\\My Files'),
       chooseWorkspace: vi.fn(async (path) => path),
       profile: vi.fn(async () => storedProfile),
-      saveProfile: vi.fn(async (profile) => { storedProfile = profile; return profile }),
+      saveProfile: vi.fn(async (profile) => {
+        storedProfile = profile
+        return profile
+      }),
       modelProviders: vi.fn(async () => []),
       saveModelProvider: vi.fn(async () => []),
       removeModelProvider: vi.fn(async () => []),
@@ -63,17 +105,22 @@ function mockApi(): MindMeshApi {
 }
 
 describe('chat details', () => {
-  it.each(['models', 'skills'] as const)('reports an initial %s catalog failure and retries it', async (kind) => {
-    const api = mockApi()
-    const load = vi.mocked(api.catalog[kind])
-    load.mockRejectedValueOnce(new Error('目录读取失败')).mockResolvedValueOnce([])
-    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
-    render(<App />)
-    expect(await screen.findByRole('alert')).toHaveTextContent('目录读取失败')
-    fireEvent.click(screen.getByRole('button', { name: kind === 'models' ? '重试模型目录' : '重试技能目录' }))
-    await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
+  it.each(['models', 'skills'] as const)(
+    'reports an initial %s catalog failure and retries it',
+    async (kind) => {
+      const api = mockApi()
+      const load = vi.mocked(api.catalog[kind])
+      load.mockRejectedValueOnce(new Error('目录读取失败')).mockResolvedValueOnce([])
+      Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+      render(<App />)
+      expect(await screen.findByRole('alert')).toHaveTextContent('目录读取失败')
+      fireEvent.click(
+        screen.getByRole('button', { name: kind === 'models' ? '重试模型目录' : '重试技能目录' })
+      )
+      await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    }
+  )
 
   it('reports initialization failure and recovers through retry', async () => {
     const api = mockApi()
@@ -105,9 +152,12 @@ describe('chat details', () => {
 
   it('reports a catalog load failure and allows retrying instead of showing an empty catalog', async () => {
     const api = mockApi()
-    api.catalog.tools = vi.fn().mockRejectedValueOnce(new Error('工具目录读取失败')).mockResolvedValueOnce([
-      { id: 'shell', name: 'Shell', description: '运行命令', status: '可用' },
-    ])
+    api.catalog.tools = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('工具目录读取失败'))
+      .mockResolvedValueOnce([
+        { id: 'shell', name: 'Shell', description: '运行命令', status: '可用' },
+      ])
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '工具' }))
@@ -145,7 +195,10 @@ describe('chat details', () => {
     const remove = within(drawer).getByRole('button', { name: '删除智能体' })
     remove.focus()
     fireEvent.click(remove)
-    fireEvent.keyDown(within(screen.getByRole('alertdialog')).getByRole('button', { name: '取消' }), { key: 'Escape' })
+    fireEvent.keyDown(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: '取消' }),
+      { key: 'Escape' }
+    )
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(drawer).toBeInTheDocument()
     expect(remove).toHaveFocus()
@@ -153,15 +206,30 @@ describe('chat details', () => {
 
   it('opens an installed marketplace agent in its normal conversation', async () => {
     const api = mockApi()
-    api.marketplace.list = vi.fn(async () => ({ kind: 'agents' as const, state: 'fresh' as const, fetchedAt: null, items: [
-      { kind: 'agents' as const, source: 'agency', sourceId: 'engineering/writer.md', key: 'writer', name: 'Template Writer', description: '',
-        revision: 'a'.repeat(40), installedAgentId: agent.id },
-    ] }))
+    api.marketplace.list = vi.fn(async () => ({
+      kind: 'agents' as const,
+      state: 'fresh' as const,
+      fetchedAt: null,
+      items: [
+        {
+          kind: 'agents' as const,
+          source: 'agency',
+          sourceId: 'engineering/writer.md',
+          key: 'writer',
+          name: 'Template Writer',
+          description: '',
+          revision: 'a'.repeat(40),
+          installedAgentId: agent.id,
+        },
+      ],
+    }))
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '市场' }))
     fireEvent.click(await screen.findByRole('button', { name: '已安装 · 打开' }))
-    await waitFor(() => expect(document.querySelector('.chat-page h1')).toHaveTextContent(agent.name))
+    await waitFor(() =>
+      expect(document.querySelector('.chat-page h1')).toHaveTextContent(agent.name)
+    )
     expect(api.agents.list).toHaveBeenCalledTimes(2)
   })
 
@@ -180,25 +248,46 @@ describe('chat details', () => {
     const api = mockApi()
     let finishInstall!: (items: Awaited<ReturnType<MindMeshApi['catalog']['skills']>>) => void
     let emitProgress: (progress: SkillInstallProgress) => void = () => undefined
-    api.catalog.skills = vi.fn(async () => [{
-      id: 'sample', name: 'Sample', description: 'Sample skill', status: '已安装',
-      source: 'GitHub：acme/skills@aaaaaaa', integrity: 'verified' as const, license: 'MIT', licenseSpdx: true,
-    }])
-    api.catalog.installSkillFromGitHub = vi.fn(() => new Promise<Awaited<ReturnType<MindMeshApi['catalog']['skills']>>>((resolve) => { finishInstall = resolve }))
-    api.catalog.onInstallProgress = vi.fn((listener) => { emitProgress = listener; return () => undefined })
+    api.catalog.skills = vi.fn(async () => [
+      {
+        id: 'sample',
+        name: 'Sample',
+        description: 'Sample skill',
+        status: '已安装',
+        source: 'GitHub：acme/skills@aaaaaaa',
+        integrity: 'verified' as const,
+        license: 'MIT',
+        licenseSpdx: true,
+      },
+    ])
+    api.catalog.installSkillFromGitHub = vi.fn(
+      () =>
+        new Promise<Awaited<ReturnType<MindMeshApi['catalog']['skills']>>>((resolve) => {
+          finishInstall = resolve
+        })
+    )
+    api.catalog.onInstallProgress = vi.fn((listener) => {
+      emitProgress = listener
+      return () => undefined
+    })
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '技能' }))
-    expect(await screen.findByText('可信来源：GitHub：acme/skills@aaaaaaa · MIT')).toBeInTheDocument()
+    expect(
+      await screen.findByText('可信来源：GitHub：acme/skills@aaaaaaa · MIT')
+    ).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: 'GitHub 导入' }))
     fireEvent.change(screen.getByRole('textbox', { name: 'GitHub 地址' }), {
       target: { value: 'https://github.com/acme/skills/tree/main/sample' },
     })
     fireEvent.click(screen.getByRole('button', { name: '导入' }))
 
-    await waitFor(() => expect(api.catalog.installSkillFromGitHub)
-      .toHaveBeenCalledWith('https://github.com/acme/skills/tree/main/sample'))
+    await waitFor(() =>
+      expect(api.catalog.installSkillFromGitHub).toHaveBeenCalledWith(
+        'https://github.com/acme/skills/tree/main/sample'
+      )
+    )
     expect(screen.getByRole('button', { name: '本地导入' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '导入中…' })).toBeDisabled()
     act(() => emitProgress({ phase: 'downloading', receivedBytes: 1024, totalBytes: 4096 }))
@@ -215,14 +304,21 @@ describe('chat details', () => {
   it('shows local import activity and restores both import actions after failure', async () => {
     const api = mockApi()
     let failInstall!: (reason: Error) => void
-    api.catalog.installSkill = vi.fn(() => new Promise<Awaited<ReturnType<MindMeshApi['catalog']['skills']>>>((_, reject) => { failInstall = reject }))
+    api.catalog.installSkill = vi.fn(
+      () =>
+        new Promise<Awaited<ReturnType<MindMeshApi['catalog']['skills']>>>((_, reject) => {
+          failInstall = reject
+        })
+    )
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '技能' }))
     fireEvent.click(await screen.findByRole('button', { name: '本地导入' }))
 
-    expect(await screen.findByRole('dialog', { name: '导入本地技能' })).toHaveTextContent('C:\\My Skill')
+    expect(await screen.findByRole('dialog', { name: '导入本地技能' })).toHaveTextContent(
+      'C:\\My Skill'
+    )
     expect(api.catalog.installSkill).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '确认导入' }))
 
@@ -268,11 +364,20 @@ describe('chat details', () => {
 
   it('shows a persistent marker on a stopped reply loaded from history', async () => {
     const api = mockApi()
-    api.chat.messages = vi.fn(async () => [{
-      id: 'stopped-message', scope: 'private' as const, scopeId: agent.id, authorType: 'agent' as const,
-      authorId: agent.id, authorName: agent.name, content: '被打断的半句话', stopped: true,
-      sequence: 1, createdAt: new Date().toISOString(),
-    }])
+    api.chat.messages = vi.fn(async () => [
+      {
+        id: 'stopped-message',
+        scope: 'private' as const,
+        scopeId: agent.id,
+        authorType: 'agent' as const,
+        authorId: agent.id,
+        authorName: agent.name,
+        content: '被打断的半句话',
+        stopped: true,
+        sequence: 1,
+        createdAt: new Date().toISOString(),
+      },
+    ])
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
 
     render(<App />)
@@ -329,20 +434,26 @@ describe('local file workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
     expect(await screen.findByText('C:\\MindMesh')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '选择文件夹' }))
-    expect(await screen.findByRole('dialog', { name: '切换 Agent 工作目录' })).toHaveTextContent('C:\\My Files')
+    expect(await screen.findByRole('dialog', { name: '切换 Agent 工作目录' })).toHaveTextContent(
+      'C:\\My Files'
+    )
     expect(api.settings.chooseWorkspace).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '确认切换' }))
     await waitFor(() => expect(api.settings.chooseWorkspace).toHaveBeenCalledWith('C:\\My Files'))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '切换 Agent 工作目录' })).not.toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '切换 Agent 工作目录' })).not.toBeInTheDocument()
+    )
     expect(screen.getByText('C:\\My Files')).toBeInTheDocument()
   })
 
   it('shows the friendly name for a stable skill reference', async () => {
     const api = mockApi()
-    api.agents.list = vi.fn(async () => [{
-      ...agent,
-      skills: [createSkillReference('mindmesh-builtin-workout-planner-v1', '训练计划')],
-    }])
+    api.agents.list = vi.fn(async () => [
+      {
+        ...agent,
+        skills: [createSkillReference('mindmesh-builtin-workout-planner-v1', '训练计划')],
+      },
+    ])
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -354,26 +465,39 @@ describe('local file workspace', () => {
 
   it('shows how to invoke manual-only skills in the catalog', async () => {
     const api = mockApi()
-    api.catalog.skills = vi.fn(async () => [{
-      id: 'manual-report', name: '报告生成', description: '生成结构化报告', status: '仅手动调用',
-    }])
+    api.catalog.skills = vi.fn(async () => [
+      {
+        id: 'manual-report',
+        name: '报告生成',
+        description: '生成结构化报告',
+        status: '仅手动调用',
+      },
+    ])
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '技能' }))
 
-    expect((await screen.findByText('/manual-report')).closest('.skill-invoke-hint'))
-      .toHaveTextContent('在对话中键入 /manual-report 手动触发')
+    expect(
+      (await screen.findByText('/manual-report')).closest('.skill-invoke-hint')
+    ).toHaveTextContent('在对话中键入 /manual-report 手动触发')
   })
 
   it('completes manual-only skills selected by the current agent', async () => {
     const api = mockApi()
-    api.agents.list = vi.fn(async () => [{
-      ...agent,
-      skills: [createSkillReference('manual-report', '报告生成')],
-    }])
+    api.agents.list = vi.fn(async () => [
+      {
+        ...agent,
+        skills: [createSkillReference('manual-report', '报告生成')],
+      },
+    ])
     api.catalog.skills = vi.fn(async () => [
-      { id: 'manual-report', name: '报告生成', description: '生成结构化报告', status: '仅手动调用' },
+      {
+        id: 'manual-report',
+        name: '报告生成',
+        description: '生成结构化报告',
+        status: '仅手动调用',
+      },
       { id: 'manual-review', name: '评审', description: '评审内容', status: '仅手动调用' },
       { id: 'automatic-study', name: '学习计划', description: '生成学习计划', status: '已安装' },
     ])
@@ -404,7 +528,12 @@ describe('local file workspace', () => {
     api.agents.update = vi.fn(async (_id, input) => (currentAgent = { ...currentAgent, ...input }))
     api.catalog.skills = vi.fn(async () => [
       { id: 'custom-workout', name: '训练计划', description: '用户版本', status: '已安装' },
-      { id: 'mindmesh-builtin-workout-planner-v1', name: '训练计划', description: '内置版本', status: '已安装' },
+      {
+        id: 'mindmesh-builtin-workout-planner-v1',
+        name: '训练计划',
+        description: '内置版本',
+        status: '已安装',
+      },
     ])
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
@@ -419,23 +548,32 @@ describe('local file workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: /下一步/ }))
     fireEvent.click(screen.getByRole('button', { name: /保存修改/ }))
 
-    await waitFor(() => expect(currentAgent.skills).toEqual([
-      createSkillReference('custom-workout', '训练计划'),
-    ]))
+    await waitFor(() =>
+      expect(currentAgent.skills).toEqual([createSkillReference('custom-workout', '训练计划')])
+    )
   })
 })
 
 describe('model provider balance', () => {
   it('shows the configured DeepSeek balance in settings', async () => {
     const api = mockApi()
-    api.settings.modelProviders = vi.fn(async () => ([{
-      id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API',
-      configured: true, source: 'saved',
-      balance: {
-        available: true, updatedAt: '2026-09-23T12:30:00.000Z',
-        items: [{ currency: 'CNY', total: '110.00', granted: '10.00', toppedUp: '100.00' }],
-      },
-    }] as ModelProviderStatus[]))
+    api.settings.modelProviders = vi.fn(
+      async () =>
+        [
+          {
+            id: 'deepseek-official',
+            name: 'DeepSeek',
+            description: 'DeepSeek 官方 API',
+            configured: true,
+            source: 'saved',
+            balance: {
+              available: true,
+              updatedAt: '2026-09-23T12:30:00.000Z',
+              items: [{ currency: 'CNY', total: '110.00', granted: '10.00', toppedUp: '100.00' }],
+            },
+          },
+        ] as ModelProviderStatus[]
+    )
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
@@ -446,14 +584,24 @@ describe('model provider balance', () => {
 
   it('refreshes the model catalog after saving a provider', async () => {
     const api = mockApi()
-    const unconfigured: ModelProviderStatus[] = [{
-      id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API',
-      configured: false, source: null,
-    }]
-    const configured: ModelProviderStatus[] = [{
-      id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API',
-      configured: true, source: 'saved',
-    }]
+    const unconfigured: ModelProviderStatus[] = [
+      {
+        id: 'deepseek-official',
+        name: 'DeepSeek',
+        description: 'DeepSeek 官方 API',
+        configured: false,
+        source: null,
+      },
+    ]
+    const configured: ModelProviderStatus[] = [
+      {
+        id: 'deepseek-official',
+        name: 'DeepSeek',
+        description: 'DeepSeek 官方 API',
+        configured: true,
+        source: 'saved',
+      },
+    ]
     api.settings.modelProviders = vi.fn(async () => unconfigured)
     api.settings.saveModelProvider = vi.fn(async () => configured)
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
@@ -462,7 +610,9 @@ describe('model provider balance', () => {
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
     await screen.findByText('DeepSeek 官方 API')
     fireEvent.click(screen.getByRole('button', { name: '连接' }))
-    fireEvent.change(await screen.findByPlaceholderText(/sk-0123456789/), { target: { value: `sk-${'a'.repeat(30)}` } })
+    fireEvent.change(await screen.findByPlaceholderText(/sk-0123456789/), {
+      target: { value: `sk-${'a'.repeat(30)}` },
+    })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(api.settings.saveModelProvider).toHaveBeenCalledOnce())
@@ -471,8 +621,11 @@ describe('model provider balance', () => {
 
   it('confirms removing a saved provider in the app dialog', async () => {
     const provider: ModelProviderStatus = {
-      id: 'deepseek-official', name: 'DeepSeek', description: 'DeepSeek 官方 API',
-      configured: true, source: 'saved',
+      id: 'deepseek-official',
+      name: 'DeepSeek',
+      description: 'DeepSeek 官方 API',
+      configured: true,
+      source: 'saved',
     }
     const api = mockApi()
     api.settings.modelProviders = vi.fn(async () => [provider])
@@ -494,23 +647,45 @@ describe('model provider balance', () => {
 describe('user profile', () => {
   it('saves the nickname and avatar and shows them on existing user messages', async () => {
     const api = mockApi()
-    api.chat.messages = vi.fn(async () => [{
-      id: 'user-message', scope: 'private' as const, scopeId: agent.id, authorType: 'user' as const,
-      authorName: '你', content: '你好', sequence: 1, createdAt: new Date().toISOString(),
-    }])
+    api.chat.messages = vi.fn(async () => [
+      {
+        id: 'user-message',
+        scope: 'private' as const,
+        scopeId: agent.id,
+        authorType: 'user' as const,
+        authorName: '你',
+        content: '你好',
+        sequence: 1,
+        createdAt: new Date().toISOString(),
+      },
+    ])
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
     expect(await screen.findByText('你好')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
     fireEvent.click(screen.getByRole('button', { name: '编辑资料' }))
-    fireEvent.change(screen.getByRole('textbox', { name: '你希望智能体怎么称呼你' }), { target: { value: '小明' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '你希望智能体怎么称呼你' }), {
+      target: { value: '小明' },
+    })
     fireEvent.click(screen.getByRole('button', { name: '选择头像' }))
-    fireEvent.change(screen.getByLabelText('选择头像文件'), { target: { files: [new File(['image'], 'avatar.png', { type: 'image/png' })] } })
+    fireEvent.change(screen.getByLabelText('选择头像文件'), {
+      target: { files: [new File(['image'], 'avatar.png', { type: 'image/png' })] },
+    })
     expect(await screen.findByAltText('avatar.png')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '使用图片' }))
-    await waitFor(() => expect(document.querySelector('.profile-avatar img')).toHaveAttribute('src', expect.stringMatching(/^data:image\/png;base64,/)))
+    await waitFor(() =>
+      expect(document.querySelector('.profile-avatar img')).toHaveAttribute(
+        'src',
+        expect.stringMatching(/^data:image\/png;base64,/)
+      )
+    )
     fireEvent.click(screen.getByRole('button', { name: '保存个人资料' }))
-    await waitFor(() => expect(api.settings.saveProfile).toHaveBeenCalledWith({ name: '小明', avatar: expect.stringMatching(/^data:image\/png;base64,/) }))
+    await waitFor(() =>
+      expect(api.settings.saveProfile).toHaveBeenCalledWith({
+        name: '小明',
+        avatar: expect.stringMatching(/^data:image\/png;base64,/),
+      })
+    )
     fireEvent.click(screen.getByRole('button', { name: '对话' }))
     expect(await screen.findByText('你好')).toBeInTheDocument()
     expect(screen.getByText('小明', { selector: '.message header strong' })).toBeInTheDocument()
@@ -525,7 +700,9 @@ describe('user profile', () => {
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
     expect(await screen.findByText('智能体在对话中会这样称呼你')).toBeInTheDocument()
     expect(document.querySelector('.profile-section > .profile-row')).toBeInTheDocument()
-    expect(screen.queryByRole('textbox', { name: '你希望智能体怎么称呼你' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('textbox', { name: '你希望智能体怎么称呼你' })
+    ).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '编辑资料' }))
     const input = screen.getByRole('textbox', { name: '你希望智能体怎么称呼你' })
@@ -533,7 +710,9 @@ describe('user profile', () => {
     fireEvent.change(input, { target: { value: '小红' } })
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
 
-    expect(screen.queryByRole('textbox', { name: '你希望智能体怎么称呼你' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('textbox', { name: '你希望智能体怎么称呼你' })
+    ).not.toBeInTheDocument()
     expect(document.querySelector('.profile-name')).toHaveTextContent('你')
     expect(api.settings.saveProfile).not.toHaveBeenCalled()
   })
@@ -555,10 +734,14 @@ describe('user profile', () => {
     expect(save).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: '保存个人资料' }))
 
-    await waitFor(() => expect(api.settings.saveProfile).toHaveBeenCalledWith({ name: '小明', avatar: null }))
+    await waitFor(() =>
+      expect(api.settings.saveProfile).toHaveBeenCalledWith({ name: '小明', avatar: null })
+    )
     expect(await screen.findByRole('status')).toHaveTextContent('个人资料已保存')
     expect(screen.getByRole('status').tagName).toBe('SPAN')
-    expect(screen.queryByRole('textbox', { name: '你希望智能体怎么称呼你' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('textbox', { name: '你希望智能体怎么称呼你' })
+    ).not.toBeInTheDocument()
     expect(document.querySelector('.profile-name')).toHaveTextContent('小明')
 
     fireEvent.click(screen.getByRole('button', { name: '编辑资料' }))
@@ -567,13 +750,17 @@ describe('user profile', () => {
 
   it('keeps a failed profile save visible instead of reporting success', async () => {
     const api = mockApi()
-    api.settings.saveProfile = vi.fn(async () => { throw new Error('磁盘写入失败') })
+    api.settings.saveProfile = vi.fn(async () => {
+      throw new Error('磁盘写入失败')
+    })
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
     fireEvent.click(await screen.findByRole('button', { name: '编辑资料' }))
-    fireEvent.change(screen.getByRole('textbox', { name: '你希望智能体怎么称呼你' }), { target: { value: '小明' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '你希望智能体怎么称呼你' }), {
+      target: { value: '小明' },
+    })
     fireEvent.click(screen.getByRole('button', { name: '保存个人资料' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('磁盘写入失败')
@@ -588,7 +775,9 @@ describe('agent deletion', () => {
     let current = [agent, second]
     const api = mockApi()
     api.agents.list = vi.fn(async () => current)
-    api.agents.remove = vi.fn(async (id) => { current = current.filter((item) => item.id !== id) })
+    api.agents.remove = vi.fn(async (id) => {
+      current = current.filter((item) => item.id !== id)
+    })
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -601,20 +790,26 @@ describe('agent deletion', () => {
     expect(api.agents.remove).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: '删除智能体' }))
-    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确定删除' }))
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: '确定删除' })
+    )
     await waitFor(() => expect(api.agents.remove).toHaveBeenCalledWith(agent.id))
     expect(await screen.findByPlaceholderText('给 Developer 发送消息…')).toBeInTheDocument()
   })
 
   it('keeps the dialog open with the reason when deleting fails', async () => {
     const api = mockApi()
-    api.agents.remove = vi.fn(async () => { throw new Error('该智能体正在生成回复') })
+    api.agents.remove = vi.fn(async () => {
+      throw new Error('该智能体正在生成回复')
+    })
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: /查看详情/ }))
     fireEvent.click(screen.getByRole('button', { name: '删除智能体' }))
-    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确定删除' }))
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: '确定删除' })
+    )
 
     const dialog = await screen.findByRole('alertdialog')
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('该智能体正在生成回复')
@@ -624,11 +819,20 @@ describe('agent deletion', () => {
 
 describe('space background', () => {
   it('confirms Space deletion in an app dialog and shows an empty state after the last Space is removed', async () => {
-    const space: Space = { id: 'space', name: '临时空间', description: '', context: '', memberIds: [agent.id], createdAt: '' }
+    const space: Space = {
+      id: 'space',
+      name: '临时空间',
+      description: '',
+      context: '',
+      memberIds: [agent.id],
+      createdAt: '',
+    }
     let current = [space]
     const api = mockApi()
     api.spaces.list = vi.fn(async () => current)
-    api.spaces.remove = vi.fn(async (id) => { current = current.filter((item) => item.id !== id) })
+    api.spaces.remove = vi.fn(async (id) => {
+      current = current.filter((item) => item.id !== id)
+    })
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -643,15 +847,21 @@ describe('space background', () => {
     expect(api.spaces.remove).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: '删除空间' }))
-    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '确定删除' }))
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: '确定删除' })
+    )
     await waitFor(() => expect(api.spaces.remove).toHaveBeenCalledWith(space.id))
     expect(await screen.findByRole('heading', { name: '还没有协作空间' })).toBeInTheDocument()
   })
 
   it('shows one working edit action and refreshes the saved background', async () => {
     let space: Space = {
-      id: 'space', name: 'AI Product Research', description: '产品研究', context: '旧背景',
-      memberIds: [agent.id], createdAt: '',
+      id: 'space',
+      name: 'AI Product Research',
+      description: '产品研究',
+      context: '旧背景',
+      memberIds: [agent.id],
+      createdAt: '',
     }
     const api = mockApi()
     api.spaces.list = vi.fn(async () => [space])
@@ -684,8 +894,12 @@ describe('space background', () => {
 
   it('shows the background before members without a framing card', async () => {
     const space: Space = {
-      id: 'space', name: 'AI Product Research', description: '产品研究', context: '当前目标：完成 MVP',
-      memberIds: [agent.id], createdAt: '',
+      id: 'space',
+      name: 'AI Product Research',
+      description: '产品研究',
+      context: '当前目标：完成 MVP',
+      memberIds: [agent.id],
+      createdAt: '',
     }
     const api = mockApi()
     api.spaces.list = vi.fn(async () => [space])
@@ -702,14 +916,20 @@ describe('space background', () => {
     // 背景信息区块排在成员区块之前
     const contextHeading = screen.getByText('背景信息')
     const memberHeading = screen.getByText('成员 · 1')
-    expect(contextHeading.compareDocumentPosition(memberHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      contextHeading.compareDocumentPosition(memberHeading) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
   })
 
   it('adjusts a member reasoning effort from the space drawer', async () => {
     let current: Agent = { ...agent }
     const space: Space = {
-      id: 'space', name: 'AI Product Research', description: '产品研究', context: '背景',
-      memberIds: [agent.id], createdAt: '',
+      id: 'space',
+      name: 'AI Product Research',
+      description: '产品研究',
+      context: '背景',
+      memberIds: [agent.id],
+      createdAt: '',
     }
     const api = mockApi()
     api.spaces.list = vi.fn(async () => [space])
@@ -729,17 +949,35 @@ describe('space background', () => {
     expect(select).toHaveValue('')
     fireEvent.change(select, { target: { value: 'max' } })
 
-    await waitFor(() => expect(update).toHaveBeenCalledWith('researcher', expect.objectContaining({ reasoningEffort: 'max' })))
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Researcher 的思考强度' })).toHaveValue('max'))
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith(
+        'researcher',
+        expect.objectContaining({ reasoningEffort: 'max' })
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Researcher 的思考强度' })).toHaveValue('max')
+    )
   })
 
   it('edits space details and removes and adds members', async () => {
     const second = { ...agent, id: 'developer', name: 'Developer' }
-    let space: Space = { id: 'space', name: '原空间', description: '原简介', context: '原背景', memberIds: [agent.id], createdAt: '' }
+    let space: Space = {
+      id: 'space',
+      name: '原空间',
+      description: '原简介',
+      context: '原背景',
+      memberIds: [agent.id],
+      createdAt: '',
+    }
     const api = mockApi()
     api.agents.list = vi.fn(async () => [agent, second])
     api.spaces.list = vi.fn(async () => [space])
-    api.spaces.update = vi.fn(async (id, input) => { space = { ...space, ...input }; expect(id).toBe('space'); return space })
+    api.spaces.update = vi.fn(async (id, input) => {
+      space = { ...space, ...input }
+      expect(id).toBe('space')
+      return space
+    })
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
@@ -749,20 +987,39 @@ describe('space background', () => {
     expect(editDialog).toHaveClass('space-wizard')
     expect(editDialog).not.toHaveClass('compact')
     expect(screen.getByRole('button', { name: '保存修改' })).toBeInTheDocument()
-    fireEvent.change(screen.getByRole('textbox', { name: '空间名称' }), { target: { value: '新空间' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '空间名称' }), {
+      target: { value: '新空间' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Researcher' }))
     fireEvent.click(screen.getByRole('button', { name: 'Developer' }))
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
-    await waitFor(() => expect(api.spaces.update).toHaveBeenCalledWith('space', expect.objectContaining({ name: '新空间', memberIds: ['developer'] })))
+    await waitFor(() =>
+      expect(api.spaces.update).toHaveBeenCalledWith(
+        'space',
+        expect.objectContaining({ name: '新空间', memberIds: ['developer'] })
+      )
+    )
     expect(await screen.findByRole('heading', { name: '新空间' })).toBeInTheDocument()
   })
 
   it('keeps space editing available beside delete while a reply is running', async () => {
-    const space: Space = { id: 'space', name: '协作', description: '', context: '', memberIds: [agent.id], createdAt: '' }
+    const space: Space = {
+      id: 'space',
+      name: '协作',
+      description: '',
+      context: '',
+      memberIds: [agent.id],
+      createdAt: '',
+    }
     const api = mockApi()
     let finishReply!: (messages: Message[]) => void
     api.spaces.list = vi.fn(async () => [space])
-    api.chat.sendSpace = vi.fn(() => new Promise<Message[]>((resolve) => { finishReply = resolve }))
+    api.chat.sendSpace = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          finishReply = resolve
+        })
+    )
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -787,11 +1044,24 @@ describe('chat flow', () => {
   it('opens existing conversations at the bottom without scrolling through history', async () => {
     const api = mockApi()
     let notify!: (event: ChatDelta) => void
-    api.chat.messages = vi.fn(async (): Promise<Message[]> => [{
-      id: 'history', scope: 'private', scopeId: agent.id, authorType: 'agent',
-      authorName: agent.name, content: '已有聊天记录', sequence: 1, createdAt: new Date().toISOString(),
-    }])
-    api.chat.onDelta = vi.fn((listener) => { notify = listener; return () => undefined })
+    api.chat.messages = vi.fn(
+      async (): Promise<Message[]> => [
+        {
+          id: 'history',
+          scope: 'private',
+          scopeId: agent.id,
+          authorType: 'agent',
+          authorName: agent.name,
+          content: '已有聊天记录',
+          sequence: 1,
+          createdAt: new Date().toISOString(),
+        },
+      ]
+    )
+    api.chat.onDelta = vi.fn((listener) => {
+      notify = listener
+      return () => undefined
+    })
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -801,8 +1071,15 @@ describe('chat flow', () => {
     expect(scrollIntoView).not.toHaveBeenCalledWith({ behavior: 'smooth' })
 
     scrollIntoView.mockClear()
-    act(() => notify({ requestId: 'request', scope: 'private', scopeId: agent.id,
-      agentId: agent.id, text: '新内容' }))
+    act(() =>
+      notify({
+        requestId: 'request',
+        scope: 'private',
+        scopeId: agent.id,
+        agentId: agent.id,
+        text: '新内容',
+      })
+    )
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' }))
   })
 
@@ -810,15 +1087,27 @@ describe('chat flow', () => {
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: mockApi() })
     render(<App />)
 
-    expect(await screen.findByRole('separator', { name: /列表栏宽度/ }))
-      .toHaveAttribute('data-pane', 'list-content')
+    expect(await screen.findByRole('separator', { name: /列表栏宽度/ })).toHaveAttribute(
+      'data-pane',
+      'list-content'
+    )
   })
 
   it('selects the conversation model and permission from the composer', async () => {
     const api = mockApi()
     api.catalog.models = vi.fn(async () => [
-      { provider: 'deepseek-official', id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1_000_000 },
-      { provider: 'deepseek-official', id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1_000_000 },
+      {
+        provider: 'deepseek-official',
+        id: 'deepseek-flash',
+        name: 'DeepSeek V4.1 Flash',
+        contextWindow: 1_000_000,
+      },
+      {
+        provider: 'deepseek-official',
+        id: 'deepseek-v4-pro',
+        name: 'DeepSeek V4 Pro',
+        contextWindow: 1_000_000,
+      },
     ])
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
@@ -832,18 +1121,19 @@ describe('chat flow', () => {
     fireEvent.change(input, { target: { value: '使用新模型' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
-    await waitFor(() => expect(api.chat.sendPrivate).toHaveBeenCalledWith(
-      agent.id, '使用新模型', [], { model: 'deepseek-v4-pro', permission: 'chat' },
-    ))
+    await waitFor(() =>
+      expect(api.chat.sendPrivate).toHaveBeenCalledWith(agent.id, '使用新模型', [], {
+        model: 'deepseek-v4-pro',
+        permission: 'chat',
+      })
+    )
   })
 
   it('keeps non-DeepSeek conversations usable while model switching is unavailable', async () => {
     const openAiAgent = { ...agent, provider: 'openai', model: 'gpt-4.1' }
     const api = mockApi()
     api.agents.list = vi.fn(async () => [openAiAgent])
-    api.catalog.models = vi.fn(async () => [
-      { provider: 'openai', id: 'gpt-4.1', name: 'GPT-4.1' },
-    ])
+    api.catalog.models = vi.fn(async () => [{ provider: 'openai', id: 'gpt-4.1', name: 'GPT-4.1' }])
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -852,9 +1142,11 @@ describe('chat flow', () => {
     fireEvent.change(input, { target: { value: '普通对话' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
-    await waitFor(() => expect(api.chat.sendPrivate).toHaveBeenCalledWith(
-      agent.id, '普通对话', [], { permission: 'chat' },
-    ))
+    await waitFor(() =>
+      expect(api.chat.sendPrivate).toHaveBeenCalledWith(agent.id, '普通对话', [], {
+        permission: 'chat',
+      })
+    )
   })
 
   it('keeps an oversized message in the composer and does not send it', async () => {
@@ -877,23 +1169,27 @@ describe('chat flow', () => {
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
-    const file = new File([
-      Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    ], 'chart.png', { type: 'image/png' })
+    const file = new File([Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])], 'chart.png', {
+      type: 'image/png',
+    })
     fireEvent.click(await screen.findByRole('button', { name: '添加图片' }))
     fireEvent.change(await screen.findByLabelText('添加图片文件'), { target: { files: [file] } })
     expect(await screen.findByAltText('chart.png')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '添加到消息' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '添加图片' })).not.toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '添加图片' })).not.toBeInTheDocument()
+    )
     expect(await screen.findByAltText('chart.png')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
-    await waitFor(() => expect(api.chat.sendPrivate).toHaveBeenCalledWith(
-      agent.id,
-      '',
-      [expect.objectContaining({ type: 'image', name: 'chart.png', mediaType: 'image/png' })],
-      { model: 'deepseek-v4-flash', permission: 'chat' },
-    ))
+    await waitFor(() =>
+      expect(api.chat.sendPrivate).toHaveBeenCalledWith(
+        agent.id,
+        '',
+        [expect.objectContaining({ type: 'image', name: 'chart.png', mediaType: 'image/png' })],
+        { model: 'deepseek-v4-flash', permission: 'chat' }
+      )
+    )
   })
 
   it('keeps an invalid image in the picker with an inline error', async () => {
@@ -902,11 +1198,15 @@ describe('chat flow', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: '添加图片' }))
-    fireEvent.change(screen.getByLabelText('添加图片文件'), { target: { files: [new File(['not an image'], 'fake.png', { type: 'image/png' })] } })
+    fireEvent.change(screen.getByLabelText('添加图片文件'), {
+      target: { files: [new File(['not an image'], 'fake.png', { type: 'image/png' })] },
+    })
     fireEvent.click(screen.getByRole('button', { name: '添加到消息' }))
 
     const dialog = await screen.findByRole('dialog', { name: '添加图片' })
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent('仅支持 PNG、JPEG、WebP 或 GIF 图片')
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      '仅支持 PNG、JPEG、WebP 或 GIF 图片'
+    )
     expect(api.chat.sendPrivate).not.toHaveBeenCalled()
   })
 
@@ -922,7 +1222,9 @@ describe('chat flow', () => {
     fireEvent.click(screen.getByRole('button', { name: '添加到消息' }))
 
     const dialog = await screen.findByRole('dialog', { name: '添加图片' })
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent('仅支持 PNG、JPEG、WebP 或 GIF 图片')
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      '仅支持 PNG、JPEG、WebP 或 GIF 图片'
+    )
     expect(document.querySelector('.attachment-strip')).not.toBeInTheDocument()
   })
 
@@ -944,7 +1246,9 @@ describe('chat flow', () => {
 
   it('reconciles a failed send before persistence and tells the user', async () => {
     const api = mockApi()
-    api.chat.sendPrivate = vi.fn(async () => { throw new Error('智能体不存在') })
+    api.chat.sendPrivate = vi.fn(async () => {
+      throw new Error('智能体不存在')
+    })
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -960,13 +1264,24 @@ describe('chat flow', () => {
 
   it('keeps an already persisted message when the send call fails', async () => {
     const api = mockApi()
-    api.chat.sendPrivate = vi.fn(async () => { throw new Error('response lost') })
-    api.chat.messages = vi.fn()
+    api.chat.sendPrivate = vi.fn(async () => {
+      throw new Error('response lost')
+    })
+    api.chat.messages = vi
+      .fn()
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{
-        id: 'saved', scope: 'private', scopeId: agent.id, authorType: 'user',
-        authorName: '你', content: '已经保存', sequence: 1, createdAt: new Date().toISOString(),
-      }])
+      .mockResolvedValueOnce([
+        {
+          id: 'saved',
+          scope: 'private',
+          scopeId: agent.id,
+          authorType: 'user',
+          authorName: '你',
+          content: '已经保存',
+          sequence: 1,
+          createdAt: new Date().toISOString(),
+        },
+      ])
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -980,8 +1295,11 @@ describe('chat flow', () => {
 
   it('keeps a pending message when persistence cannot be checked', async () => {
     const api = mockApi()
-    api.chat.sendPrivate = vi.fn(async () => { throw new Error('send failed') })
-    api.chat.messages = vi.fn()
+    api.chat.sendPrivate = vi.fn(async () => {
+      throw new Error('send failed')
+    })
+    api.chat.messages = vi
+      .fn()
       .mockResolvedValueOnce([])
       .mockRejectedValueOnce(new Error('read failed'))
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
@@ -996,53 +1314,107 @@ describe('chat flow', () => {
   })
 
   it.each([
-    ['private', 'during'], ['space', 'during'], ['private', 'after'], ['space', 'after'],
-  ] as const)('keeps a pending %s message when the initial history read finishes %s a failed send', async (scope, timing) => {
-    const api = mockApi()
-    let finishHistory!: (messages: Message[]) => void
-    let failSend!: (error: Error) => void
-    api.chat.messages = vi.fn()
-      .mockImplementationOnce(() => new Promise<Message[]>((resolve) => { finishHistory = resolve }))
-      .mockRejectedValueOnce(new Error('read failed'))
-    const sending = vi.fn(() => new Promise<Message[]>((_resolve, reject) => { failSend = reject }))
-    api.chat.sendPrivate = sending
-    api.chat.sendSpace = sending
-    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
-    const { result } = renderHook(() => useChatController({ scope, id: agent.id, agent }, '你', vi.fn()))
-    let send!: Promise<boolean>
-    act(() => { send = result.current.send('状态未知') })
-    if (timing === 'during') await act(async () => finishHistory([]))
-    await act(async () => { failSend(new Error('send failed')); await send })
-    if (timing === 'after') await act(async () => finishHistory([]))
+    ['private', 'during'],
+    ['space', 'during'],
+    ['private', 'after'],
+    ['space', 'after'],
+  ] as const)(
+    'keeps a pending %s message when the initial history read finishes %s a failed send',
+    async (scope, timing) => {
+      const api = mockApi()
+      let finishHistory!: (messages: Message[]) => void
+      let failSend!: (error: Error) => void
+      api.chat.messages = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<Message[]>((resolve) => {
+              finishHistory = resolve
+            })
+        )
+        .mockRejectedValueOnce(new Error('read failed'))
+      const sending = vi.fn(
+        () =>
+          new Promise<Message[]>((_resolve, reject) => {
+            failSend = reject
+          })
+      )
+      api.chat.sendPrivate = sending
+      api.chat.sendSpace = sending
+      Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+      const { result } = renderHook(() =>
+        useChatController({ scope, id: agent.id, agent }, '你', vi.fn())
+      )
+      let send!: Promise<boolean>
+      act(() => {
+        send = result.current.send('状态未知')
+      })
+      if (timing === 'during') await act(async () => finishHistory([]))
+      await act(async () => {
+        failSend(new Error('send failed'))
+        await send
+      })
+      if (timing === 'after') await act(async () => finishHistory([]))
 
-    expect(result.current.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ authorType: 'user', content: '状态未知' }),
-      expect.objectContaining({ authorType: 'system', content: '发送状态未确认，请检查会话后再重试。' }),
-    ]))
-  })
+      expect(result.current.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ authorType: 'user', content: '状态未知' }),
+          expect.objectContaining({
+            authorType: 'system',
+            content: '发送状态未确认，请检查会话后再重试。',
+          }),
+        ])
+      )
+    }
+  )
 
-  it.each(['private', 'space'] as const)('keeps the completed %s reply when initial history arrives after a send', async (scope) => {
-    const api = mockApi()
-    let finishHistory!: (messages: Message[]) => void
-    api.chat.messages = vi.fn(() => new Promise<Message[]>((resolve) => { finishHistory = resolve }))
-    const reply: Message = { id: 'reply', scope, scopeId: agent.id, authorType: 'agent',
-      authorName: agent.name, content: '已完成', sequence: 2, createdAt: '' }
-    api.chat.sendPrivate = vi.fn(async () => [reply])
-    api.chat.sendSpace = vi.fn(async () => [reply])
-    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
-    const { result } = renderHook(() => useChatController({ scope, id: agent.id, agent }, '你', vi.fn()))
-    await act(async () => { await result.current.send('问题') })
-    await act(async () => finishHistory([]))
+  it.each(['private', 'space'] as const)(
+    'keeps the completed %s reply when initial history arrives after a send',
+    async (scope) => {
+      const api = mockApi()
+      let finishHistory!: (messages: Message[]) => void
+      api.chat.messages = vi.fn(
+        () =>
+          new Promise<Message[]>((resolve) => {
+            finishHistory = resolve
+          })
+      )
+      const reply: Message = {
+        id: 'reply',
+        scope,
+        scopeId: agent.id,
+        authorType: 'agent',
+        authorName: agent.name,
+        content: '已完成',
+        sequence: 2,
+        createdAt: '',
+      }
+      api.chat.sendPrivate = vi.fn(async () => [reply])
+      api.chat.sendSpace = vi.fn(async () => [reply])
+      Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+      const { result } = renderHook(() =>
+        useChatController({ scope, id: agent.id, agent }, '你', vi.fn())
+      )
+      await act(async () => {
+        await result.current.send('问题')
+      })
+      await act(async () => finishHistory([]))
 
-    expect(result.current.messages).toEqual([reply])
-  })
+      expect(result.current.messages).toEqual([reply])
+    }
+  )
 
   it('does not show a failed send in another conversation', async () => {
     const second = { ...agent, id: 'developer', name: 'Developer' }
     const api = mockApi()
     api.agents.list = vi.fn(async () => [agent, second])
     let rejectSend!: (error: Error) => void
-    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((_resolve, reject) => { rejectSend = reject }))
+    api.chat.sendPrivate = vi.fn(
+      () =>
+        new Promise<Message[]>((_resolve, reject) => {
+          rejectSend = reject
+        })
+    )
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -1058,8 +1430,14 @@ describe('chat flow', () => {
 
   it('completes a Chinese agent mention in a space message', async () => {
     const chineseAgent = { ...agent, id: 'analyst', name: '数据分析师' }
-    const space: Space = { id: 'space', name: '协作', description: '', context: '',
-      memberIds: [chineseAgent.id], createdAt: '' }
+    const space: Space = {
+      id: 'space',
+      name: '协作',
+      description: '',
+      context: '',
+      memberIds: [chineseAgent.id],
+      createdAt: '',
+    }
     const api = mockApi()
     api.agents.list = vi.fn(async () => [chineseAgent])
     api.spaces.list = vi.fn(async () => [space])
@@ -1072,20 +1450,30 @@ describe('chat flow', () => {
     fireEvent.click(screen.getByRole('button', { name: /数据分析师/ }))
     expect(input).toHaveValue('你好 @数据分析师 ')
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(api.chat.sendSpace).toHaveBeenCalledWith(
-      'space', '你好 @数据分析师', [], { model: 'deepseek-v4-flash', permission: 'chat' },
-    ))
+    await waitFor(() =>
+      expect(api.chat.sendSpace).toHaveBeenCalledWith('space', '你好 @数据分析师', [], {
+        model: 'deepseek-v4-flash',
+        permission: 'chat',
+      })
+    )
   })
 
   it('renders a sent user Markdown message as structured content', async () => {
     const api = mockApi()
     let resolveSend!: (messages: Message[]) => void
-    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { resolveSend = resolve }))
+    api.chat.sendPrivate = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          resolveSend = resolve
+        })
+    )
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
     const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
-    fireEvent.change(input, { target: { value: '## 问题\n\n**重点**\n\n- 第一项\n- 第二项\n\n```ts\nconst ok = true\n```' } })
+    fireEvent.change(input, {
+      target: { value: '## 问题\n\n**重点**\n\n- 第一项\n- 第二项\n\n```ts\nconst ok = true\n```' },
+    })
     fireEvent.keyDown(input, { key: 'Enter' })
 
     const message = screen.getByRole('heading', { name: '问题' }).closest('.message.user')!
@@ -1098,11 +1486,19 @@ describe('chat flow', () => {
 
   it('keeps separate reasoning paragraphs in a collapsed reply', async () => {
     const api = mockApi()
-    api.chat.messages = vi.fn(async () => [{
-      id: 'reply', scope: 'private' as const, scopeId: agent.id, authorType: 'agent' as const,
-      authorName: agent.name, content: '最终回答', reasoning: '第一步\n\n第二步',
-      sequence: 1, createdAt: new Date().toISOString(),
-    }])
+    api.chat.messages = vi.fn(async () => [
+      {
+        id: 'reply',
+        scope: 'private' as const,
+        scopeId: agent.id,
+        authorType: 'agent' as const,
+        authorName: agent.name,
+        content: '最终回答',
+        reasoning: '第一步\n\n第二步',
+        sequence: 1,
+        createdAt: new Date().toISOString(),
+      },
+    ])
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -1117,11 +1513,21 @@ describe('chat flow', () => {
 
   it('renders a long Markdown reply as readable structure', async () => {
     const api = mockApi()
-    api.chat.messages = vi.fn(async (): Promise<Message[]> => [{
-      id: 'markdown-reply', scope: 'private', scopeId: agent.id, authorType: 'agent',
-      authorName: agent.name, sequence: 1, createdAt: new Date().toISOString(),
-      content: '## 摘要\n\n**重点**说明\n\n- 第一项\n- 第二项\n\n| 项目 | 状态 |\n| --- | --- |\n| 测试 | 完成 |\n\n```ts\nconst ok = true\n```\n\n[文档](https://example.com)\n\n[危险](javascript:alert(1))\n\n<img src=x onerror=alert(1)>',
-    }])
+    api.chat.messages = vi.fn(
+      async (): Promise<Message[]> => [
+        {
+          id: 'markdown-reply',
+          scope: 'private',
+          scopeId: agent.id,
+          authorType: 'agent',
+          authorName: agent.name,
+          sequence: 1,
+          createdAt: new Date().toISOString(),
+          content:
+            '## 摘要\n\n**重点**说明\n\n- 第一项\n- 第二项\n\n| 项目 | 状态 |\n| --- | --- |\n| 测试 | 完成 |\n\n```ts\nconst ok = true\n```\n\n[文档](https://example.com)\n\n[危险](javascript:alert(1))\n\n<img src=x onerror=alert(1)>',
+        },
+      ]
+    )
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -1139,23 +1545,48 @@ describe('chat flow', () => {
     const api = mockApi()
     let notify!: (event: ChatDelta) => void
     let resolveSend!: (messages: Message[]) => void
-    api.chat.onDelta = vi.fn((listener) => { notify = listener; return () => undefined })
-    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { resolveSend = resolve }))
+    api.chat.onDelta = vi.fn((listener) => {
+      notify = listener
+      return () => undefined
+    })
+    api.chat.sendPrivate = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          resolveSend = resolve
+        })
+    )
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
-    fireEvent.change(await screen.findByPlaceholderText('给 Researcher 发送消息…'), { target: { value: '你好' } })
+    fireEvent.change(await screen.findByPlaceholderText('给 Researcher 发送消息…'), {
+      target: { value: '你好' },
+    })
     fireEvent.keyDown(screen.getByPlaceholderText('给 Researcher 发送消息…'), { key: 'Enter' })
     expect(screen.getByText('你好')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('思考中')
     expect(screen.getByRole('status').closest('.message')).toHaveTextContent('Researcher')
-    act(() => notify({ requestId: 'request', scope: 'private', scopeId: agent.id,
-      agentId: agent.id, kind: 'reasoning', text: '先分析\n\n再回答' }))
+    act(() =>
+      notify({
+        requestId: 'request',
+        scope: 'private',
+        scopeId: agent.id,
+        agentId: agent.id,
+        kind: 'reasoning',
+        text: '先分析\n\n再回答',
+      })
+    )
     const thinking = screen.getByText('思考过程').closest('details')!
     expect(thinking.open).toBe(true)
     await waitFor(() => expect(thinking.querySelectorAll('p')).toHaveLength(2))
-    act(() => notify({ requestId: 'request', scope: 'private', scopeId: agent.id,
-      agentId: agent.id, text: '**正在生成**' }))
+    act(() =>
+      notify({
+        requestId: 'request',
+        scope: 'private',
+        scopeId: agent.id,
+        agentId: agent.id,
+        text: '**正在生成**',
+      })
+    )
     await waitFor(() => expect(screen.getByText('正在生成').tagName).toBe('STRONG'))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     await act(async () => resolveSend([]))
@@ -1166,9 +1597,22 @@ describe('chat flow', () => {
     let notify!: (event: ChatDelta) => void
     let resolveSend!: (messages: Message[]) => void
     let resolveStop!: (stopped: boolean) => void
-    api.chat.onDelta = vi.fn((listener) => { notify = listener; return () => undefined })
-    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { resolveSend = resolve }))
-    const stop = vi.fn(() => new Promise<boolean>((resolve) => { resolveStop = resolve }))
+    api.chat.onDelta = vi.fn((listener) => {
+      notify = listener
+      return () => undefined
+    })
+    api.chat.sendPrivate = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          resolveSend = resolve
+        })
+    )
+    const stop = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveStop = resolve
+        })
+    )
     api.chat.stop = stop
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
@@ -1181,8 +1625,15 @@ describe('chat flow', () => {
     expect(stopButton).toBeEnabled()
     fireEvent.click(stopButton)
     await waitFor(() => expect(stop).toHaveBeenCalledWith('private', agent.id))
-    act(() => notify({ requestId: 'late', scope: 'private', scopeId: agent.id,
-      agentId: agent.id, text: '停止后不应显示' }))
+    act(() =>
+      notify({
+        requestId: 'late',
+        scope: 'private',
+        scopeId: agent.id,
+        agentId: agent.id,
+        text: '停止后不应显示',
+      })
+    )
     expect(screen.queryByText('停止后不应显示')).not.toBeInTheDocument()
     await act(async () => resolveStop(true))
     const stoppedButton = await screen.findByRole('button', { name: '已停止' })
@@ -1197,8 +1648,18 @@ describe('chat flow', () => {
     const api = mockApi()
     const sendResolvers: Array<(messages: Message[]) => void> = []
     let resolveStop!: (stopped: boolean) => void
-    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { sendResolvers.push(resolve) }))
-    api.chat.stop = vi.fn(() => new Promise<boolean>((resolve) => { resolveStop = resolve }))
+    api.chat.sendPrivate = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          sendResolvers.push(resolve)
+        })
+    )
+    api.chat.stop = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveStop = resolve
+        })
+    )
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -1219,7 +1680,9 @@ describe('chat flow', () => {
   it('shows a retryable error when stopping the model fails', async () => {
     const api = mockApi()
     api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>(() => undefined))
-    api.chat.stop = vi.fn(async () => { throw new Error('close failed') })
+    api.chat.stop = vi.fn(async () => {
+      throw new Error('close failed')
+    })
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -1234,18 +1697,34 @@ describe('chat flow', () => {
   it('reveals a complete model reply gradually after it arrives', async () => {
     const api = mockApi()
     let resolveSend!: (messages: Message[]) => void
-    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { resolveSend = resolve }))
+    api.chat.sendPrivate = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          resolveSend = resolve
+        })
+    )
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
-    fireEvent.change(await screen.findByPlaceholderText('给 Researcher 发送消息…'), { target: { value: '问题' } })
+    fireEvent.change(await screen.findByPlaceholderText('给 Researcher 发送消息…'), {
+      target: { value: '问题' },
+    })
     fireEvent.keyDown(screen.getByPlaceholderText('给 Researcher 发送消息…'), { key: 'Enter' })
-    await act(async () => resolveSend([{
-      id: 'reply', scope: 'private', scopeId: agent.id, authorType: 'agent',
-      authorName: agent.name, content: '这是一段需要逐字展示的完整回答。',
-      reasoning: '先分析问题\n\n再整理答案',
-      sequence: 1, createdAt: new Date().toISOString(),
-    }]))
+    await act(async () =>
+      resolveSend([
+        {
+          id: 'reply',
+          scope: 'private',
+          scopeId: agent.id,
+          authorType: 'agent',
+          authorName: agent.name,
+          content: '这是一段需要逐字展示的完整回答。',
+          reasoning: '先分析问题\n\n再整理答案',
+          sequence: 1,
+          createdAt: new Date().toISOString(),
+        },
+      ])
+    )
     expect(screen.queryByText('这是一段需要逐字展示的完整回答。')).not.toBeInTheDocument()
     expect(await screen.findByText('这是一段需要逐字展示的完整回答。')).toBeInTheDocument()
     const details = screen.getByText('思考过程').closest('details')!
@@ -1257,7 +1736,12 @@ describe('chat flow', () => {
   it('keeps a new draft when Enter is pressed while a reply is pending', async () => {
     const api = mockApi()
     let resolveSend!: (messages: Message[]) => void
-    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { resolveSend = resolve }))
+    api.chat.sendPrivate = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          resolveSend = resolve
+        })
+    )
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -1276,19 +1760,36 @@ describe('chat flow', () => {
     const api = mockApi()
     api.agents.list = vi.fn(async () => [agent, secondAgent])
     let resolveSend!: (messages: Message[]) => void
-    api.chat.sendPrivate = vi.fn(() => new Promise<Message[]>((resolve) => { resolveSend = resolve }))
+    api.chat.sendPrivate = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          resolveSend = resolve
+        })
+    )
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
-    fireEvent.change(await screen.findByPlaceholderText('给 Researcher 发送消息…'), { target: { value: '问题' } })
+    fireEvent.change(await screen.findByPlaceholderText('给 Researcher 发送消息…'), {
+      target: { value: '问题' },
+    })
     fireEvent.keyDown(screen.getByPlaceholderText('给 Researcher 发送消息…'), { key: 'Enter' })
     fireEvent.click(screen.getByRole('button', { name: /Developer 软件工程师/ }))
     expect(await screen.findByPlaceholderText('给 Developer 发送消息…')).toBeInTheDocument()
 
-    await act(async () => resolveSend([{
-      id: 'old-reply', scope: 'private', scopeId: agent.id, authorType: 'agent',
-      authorName: agent.name, content: '旧会话回复', sequence: 1, createdAt: new Date().toISOString(),
-    }]))
+    await act(async () =>
+      resolveSend([
+        {
+          id: 'old-reply',
+          scope: 'private',
+          scopeId: agent.id,
+          authorType: 'agent',
+          authorName: agent.name,
+          content: '旧会话回复',
+          sequence: 1,
+          createdAt: new Date().toISOString(),
+        },
+      ])
+    )
     expect(screen.queryByText('旧会话回复')).not.toBeInTheDocument()
   })
 
@@ -1297,7 +1798,10 @@ describe('chat flow', () => {
     const api = mockApi()
     api.agents.list = vi.fn(async () => [agent, secondAgent])
     let notify!: (event: ChatProgress) => void
-    api.chat.onProgress = vi.fn((listener) => { notify = listener; return () => undefined })
+    api.chat.onProgress = vi.fn((listener) => {
+      notify = listener
+      return () => undefined
+    })
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)
 
@@ -1311,19 +1815,37 @@ describe('chat flow', () => {
 
   it('keeps the first space reply visible while the next agent thinks', async () => {
     const second = { ...agent, id: 'developer', name: 'Developer' }
-    const space: Space = { id: 'space', name: '协作', description: '', context: '',
-      memberIds: [agent.id, second.id], createdAt: '' }
+    const space: Space = {
+      id: 'space',
+      name: '协作',
+      description: '',
+      context: '',
+      memberIds: [agent.id, second.id],
+      createdAt: '',
+    }
     const api = mockApi()
     api.agents.list = vi.fn(async () => [agent, second])
     api.spaces.list = vi.fn(async () => [space])
     let notify!: (event: ChatProgress) => void
-    api.chat.onProgress = vi.fn((listener) => { notify = listener; return () => undefined })
+    api.chat.onProgress = vi.fn((listener) => {
+      notify = listener
+      return () => undefined
+    })
     let spaceReads = 0
     api.chat.messages = vi.fn(async (scope) => {
       if (scope !== 'space' || ++spaceReads === 1) return []
-      return [{ id: 'reply', scope: 'space' as const, scopeId: space.id, authorType: 'agent' as const,
-        authorName: agent.name, content: '第一位已完成', sequence: 1,
-        createdAt: new Date().toISOString() }]
+      return [
+        {
+          id: 'reply',
+          scope: 'space' as const,
+          scopeId: space.id,
+          authorType: 'agent' as const,
+          authorName: agent.name,
+          content: '第一位已完成',
+          sequence: 1,
+          createdAt: new Date().toISOString(),
+        },
+      ]
     })
     Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
     render(<App />)

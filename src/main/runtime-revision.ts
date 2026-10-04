@@ -19,7 +19,9 @@ export type RuntimeIdentity = {
   pluginRevision?: string
 }
 export type RuntimePlugins = {
-  revision: string; desiredRevision: string; artifact: Readonly<PluginArtifact> | null
+  revision: string
+  desiredRevision: string
+  artifact: Readonly<PluginArtifact> | null
   packages: readonly Readonly<{ packageName: string; version: string; configJson: string }>[]
 }
 export type RuntimeRequest = {
@@ -32,7 +34,10 @@ export type RuntimeRequest = {
   plugins?: Readonly<RuntimePlugins>
 }
 
-export function providerRuntimeRevision(providers: readonly ModelProviderRuntimeConfig[], dataDirectory: string): string {
+export function providerRuntimeRevision(
+  providers: readonly ModelProviderRuntimeConfig[],
+  dataDirectory: string
+): string {
   if (providers.length === 0) return 'unconfigured'
   const root = join(dataDirectory, 'runtime-v2')
   mkdirSync(root, { recursive: true })
@@ -45,21 +50,50 @@ export function providerRuntimeRevision(providers: readonly ModelProviderRuntime
 }
 
 export function getRuntimeIdentity(input: {
-  baseHash: string; skillRevision: string; workspace: string; permission: ChatPermission
-  providerRevision: string; dshVersion: string; schemaVersion?: number; pluginRevision?: string
+  baseHash: string
+  skillRevision: string
+  workspace: string
+  permission: ChatPermission
+  providerRevision: string
+  dshVersion: string
+  schemaVersion?: number
+  pluginRevision?: string
 }): RuntimeIdentity {
   if (!['chat', 'workspace', 'full'].includes(input.permission)) throw new Error('权限级别无效')
   const schemaVersion = input.schemaVersion ?? RUNTIME_SCHEMA_VERSION
   const flavor: RuntimeFlavor = input.permission === 'full' ? 'extended' : 'core'
-  const path = existsSync(input.workspace) ? realpathSync(input.workspace) : resolve(input.workspace)
+  const path = existsSync(input.workspace)
+    ? realpathSync(input.workspace)
+    : resolve(input.workspace)
   const workspaceIdentity = process.platform === 'win32' ? path.toLowerCase() : path
-  const environment = createHash('sha256').update(JSON.stringify([
-    schemaVersion, input.dshVersion, flavor, input.permission, input.providerRevision, workspaceIdentity,
-    ...(flavor === 'extended' ? [input.pluginRevision ?? 'none'] : []),
-  ])).digest('hex')
+  const environment = createHash('sha256')
+    .update(
+      JSON.stringify([
+        schemaVersion,
+        input.dshVersion,
+        flavor,
+        input.permission,
+        input.providerRevision,
+        workspaceIdentity,
+        ...(flavor === 'extended' ? [input.pluginRevision ?? 'none'] : []),
+      ])
+    )
+    .digest('hex')
   const capabilityHash = `${input.baseHash}:${input.skillRevision}:${environment}`
-  const key = createHash('sha256').update(JSON.stringify([schemaVersion, input.dshVersion, flavor, capabilityHash, workspaceIdentity])).digest('hex')
-  return Object.freeze({ key, capabilityHash, schemaVersion, dshVersion: input.dshVersion, flavor,
-    permission: input.permission, workspaceIdentity, skillRevision: input.skillRevision,
-    ...(flavor === 'extended' ? { pluginRevision: input.pluginRevision ?? 'none' } : {}) })
+  const key = createHash('sha256')
+    .update(
+      JSON.stringify([schemaVersion, input.dshVersion, flavor, capabilityHash, workspaceIdentity])
+    )
+    .digest('hex')
+  return Object.freeze({
+    key,
+    capabilityHash,
+    schemaVersion,
+    dshVersion: input.dshVersion,
+    flavor,
+    permission: input.permission,
+    workspaceIdentity,
+    skillRevision: input.skillRevision,
+    ...(flavor === 'extended' ? { pluginRevision: input.pluginRevision ?? 'none' } : {}),
+  })
 }

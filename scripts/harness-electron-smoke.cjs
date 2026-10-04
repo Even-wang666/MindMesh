@@ -8,6 +8,8 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(String(error).replaceAll(process.env.DEEPSEEK_API_KEY ?? '__absent__', '<REDACTED>'))
+  console.error(
+    String(error).replaceAll(process.env.DEEPSEEK_API_KEY ?? '__absent__', '<REDACTED>')
+  )
   app.exit(1)
 })

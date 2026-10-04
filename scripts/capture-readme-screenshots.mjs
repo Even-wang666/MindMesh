@@ -17,7 +17,9 @@ async function until(task, timeoutMs = 30_000) {
     try {
       const value = await task()
       if (value) return value
-    } catch { /* Electron may still be starting. */ }
+    } catch {
+      /* Electron may still be starting. */
+    }
     await delay(200)
   }
   throw new Error('等待 MindMesh 截图页面超时')
@@ -63,9 +65,16 @@ const port = await freePort()
 const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
 delete env.DEEPSEEK_API_KEY
-const app = spawn(electron, ['.', `--remote-debugging-port=${port}`, `--user-data-dir=${userData}`], {
-  cwd: workspace, env, windowsHide: true, stdio: 'ignore',
-})
+const app = spawn(
+  electron,
+  ['.', `--remote-debugging-port=${port}`, `--user-data-dir=${userData}`],
+  {
+    cwd: workspace,
+    env,
+    windowsHide: true,
+    stdio: 'ignore',
+  }
+)
 let client
 try {
   const page = await until(async () => {
@@ -75,13 +84,20 @@ try {
   client = await connect(page.webSocketDebuggerUrl)
   const call = (method, params) => client.call(method, params)
   const evaluate = async (expression) => {
-    const reply = await call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+    const reply = await call('Runtime.evaluate', {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+    })
     if (reply.exceptionDetails) throw new Error(reply.exceptionDetails.text)
     return reply.result.value
   }
   await call('Page.enable')
   await call('Emulation.setDeviceMetricsOverride', {
-    width: 1440, height: 960, deviceScaleFactor: 1, mobile: false,
+    width: 1440,
+    height: 960,
+    deviceScaleFactor: 1,
+    mobile: false,
   })
   await until(() => evaluate('Boolean(window.mindmesh && document.querySelector(".app-shell"))'))
   await delay(500)
@@ -91,7 +107,9 @@ try {
     writeFileSync(join(output, name), Buffer.from(screenshot.data, 'base64'))
   }
   async function openNav(label, selector) {
-    await evaluate(`Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`)
+    await evaluate(
+      `Array.from(document.querySelectorAll('.primary-nav button')).find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`
+    )
     await until(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`))
     await delay(300)
   }

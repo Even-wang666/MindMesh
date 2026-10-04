@@ -11,7 +11,11 @@ const electron = vi.hoisted(() => ({
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: electron.exposeInMainWorld },
-  ipcRenderer: { invoke: electron.invoke, on: electron.on, removeListener: electron.removeListener },
+  ipcRenderer: {
+    invoke: electron.invoke,
+    on: electron.on,
+    removeListener: electron.removeListener,
+  },
 }))
 
 let api: MindMeshApi
@@ -28,21 +32,28 @@ describe('preload chat boundary', () => {
     await api.marketplace.list('plugins', true)
     await api.marketplace.installAgent('["agents","agency","path"]', 'a'.repeat(40))
     expect(electron.invoke.mock.calls).toEqual([
-      ['marketplace:list', 'teams', false], ['marketplace:list', 'plugins', true],
+      ['marketplace:list', 'teams', false],
+      ['marketplace:list', 'plugins', true],
       ['marketplace:installAgent', '["agents","agency","path"]', 'a'.repeat(40)],
     ])
     electron.invoke.mockClear()
   })
   it('rejects oversized content before invoking main-process IPC', () => {
-    expect(() => api.chat.sendPrivate('agent', 'a'.repeat(MAX_CHAT_CONTENT_BYTES + 1))).toThrow('64 KiB')
-    expect(() => api.chat.sendSpace('space', 'a'.repeat(MAX_CHAT_CONTENT_BYTES + 1))).toThrow('64 KiB')
+    expect(() => api.chat.sendPrivate('agent', 'a'.repeat(MAX_CHAT_CONTENT_BYTES + 1))).toThrow(
+      '64 KiB'
+    )
+    expect(() => api.chat.sendSpace('space', 'a'.repeat(MAX_CHAT_CONTENT_BYTES + 1))).toThrow(
+      '64 KiB'
+    )
     expect(electron.invoke).not.toHaveBeenCalled()
   })
 
   it('forwards skill install progress and removes the exact listener', () => {
     const listener = vi.fn()
     const unsubscribe = api.catalog.onInstallProgress(listener)
-    const subscription = electron.on.mock.calls.find(([channel]) => channel === 'catalog:installProgress')
+    const subscription = electron.on.mock.calls.find(
+      ([channel]) => channel === 'catalog:installProgress'
+    )
     expect(subscription).toBeDefined()
 
     const handler = subscription?.[1]

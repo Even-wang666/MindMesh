@@ -14,4 +14,3 @@
   },
   "include": ["src", "electron.vite.config.ts", "tests"]
 }
-

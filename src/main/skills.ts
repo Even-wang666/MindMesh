@@ -62,13 +62,15 @@ export type SkillCatalogItem = {
 type BundledManifest = { version: number; skills: string[] }
 
 export type InstalledSkillReceipt = {
-  source: { kind: 'local'; path: string } | {
-    kind: 'github'
-    url: string
-    repository: string
-    commit: string
-    path: string
-  }
+  source:
+    | { kind: 'local'; path: string }
+    | {
+        kind: 'github'
+        url: string
+        repository: string
+        commit: string
+        path: string
+      }
   installedAt: string
   contentHash: string
   license: { declared?: string; spdx?: string }
@@ -78,9 +80,13 @@ export function seedBundledSkills(sourceRoot: string, dataDirectory: string): vo
   const bundled = readBundledManifest(sourceRoot)
   const destinationRoot = join(dataDirectory, 'skills')
   mkdirSync(destinationRoot, { recursive: true })
-  const previous = readJsonFile<{ version?: number; skills?: Array<{ name?: string }> }>(join(destinationRoot, BUNDLED_RECEIPT))
+  const previous = readJsonFile<{ version?: number; skills?: Array<{ name?: string }> }>(
+    join(destinationRoot, BUNDLED_RECEIPT)
+  )
   const refreshAll = previous?.version !== bundled.version
-  const previouslyManaged = new Set(previous?.skills?.map((item) => item.name).filter((name): name is string => Boolean(name)) ?? [])
+  const previouslyManaged = new Set(
+    previous?.skills?.map((item) => item.name).filter((name): name is string => Boolean(name)) ?? []
+  )
 
   const receipts = bundled.skills.flatMap((name) => {
     if (!SKILL_NAME.test(name)) throw new Error(`内置技能名称无效：${name}`)
@@ -91,16 +97,20 @@ export function seedBundledSkills(sourceRoot: string, dataDirectory: string): vo
     }
     const destination = containedPath(destinationRoot, name)
     const exists = existsSync(destination)
-    const mayReplace = !exists || previouslyManaged.has(name)
-      || (previous === undefined && isLegacyBundledSkill(destination, parsed.manifest))
+    const mayReplace =
+      !exists ||
+      previouslyManaged.has(name) ||
+      (previous === undefined && isLegacyBundledSkill(destination, parsed.manifest))
     if (refreshAll && !mayReplace) return []
     if ((refreshAll && mayReplace) || !exists) replaceDirectory(source, destination)
-    return [{
-      name,
-      source: 'bundled',
-      contentHash: hashDirectory(source),
-      license: licenseReceipt(parsed.manifest.license),
-    }]
+    return [
+      {
+        name,
+        source: 'bundled',
+        contentHash: hashDirectory(source),
+        license: licenseReceipt(parsed.manifest.license),
+      },
+    ]
   })
 
   writeJsonAtomically(join(destinationRoot, BUNDLED_RECEIPT), {
@@ -119,7 +129,10 @@ export function listSkillCatalog(dataDirectory: string): SkillCatalogItem[] {
     .sort((left, right) => left.name.localeCompare(right.name))
 }
 
-export function installSkillBundle(sourceDirectory: string, dataDirectory: string): SkillCatalogItem {
+export function installSkillBundle(
+  sourceDirectory: string,
+  dataDirectory: string
+): SkillCatalogItem {
   const source = resolve(sourceDirectory)
   return installSkillBundleWithReceipt(source, dataDirectory, { kind: 'local', path: source })
 }
@@ -127,16 +140,17 @@ export function installSkillBundle(sourceDirectory: string, dataDirectory: strin
 export async function installSkillFromGitHub(
   input: string,
   dataDirectory: string,
-  onProgress?: (progress: SkillInstallProgress) => void,
+  onProgress?: (progress: SkillInstallProgress) => void
 ): Promise<SkillCatalogItem> {
-  return withGitHubSkillBundle(input, onProgress,
-    (source, receipt) => installSkillBundleWithReceipt(source, dataDirectory, receipt))
+  return withGitHubSkillBundle(input, onProgress, (source, receipt) =>
+    installSkillBundleWithReceipt(source, dataDirectory, receipt)
+  )
 }
 
 function installSkillBundleWithReceipt(
   source: string,
   dataDirectory: string,
-  receiptSource: InstalledSkillReceipt['source'],
+  receiptSource: InstalledSkillReceipt['source']
 ): SkillCatalogItem {
   const candidate = readSkillBundle(source)
   if (!candidate.manifest) throw new Error(`无法安装技能：${candidate.diagnostic ?? 'bundle 无效'}`)
@@ -160,22 +174,27 @@ function installSkillBundleWithReceipt(
     license: licenseReceipt(candidate.manifest.license),
   }
   writeFileSync(join(temporary, INSTALL_RECEIPT), `${JSON.stringify(receipt, null, 2)}\n`)
-  try { replacePreparedDirectory(temporary, destination) }
-  catch (error) {
+  try {
+    replacePreparedDirectory(temporary, destination)
+  } catch (error) {
     rmSync(temporary, { recursive: true, force: true })
     throw error
   }
   return readSkillBundle(destination)
 }
 
-export function copySelectedSkillBundles(skills: SkillCatalogItem[], destinationRoot: string): void {
+export function copySelectedSkillBundles(
+  skills: SkillCatalogItem[],
+  destinationRoot: string
+): void {
   const parent = resolve(destinationRoot, '..')
   mkdirSync(parent, { recursive: true })
   const temporary = join(parent, `.${basename(destinationRoot)}-${randomUUID()}`)
   mkdirSync(temporary)
   try {
     for (const skill of skills) {
-      if (!skill.available) throw new Error(`技能「${skill.name}」不可用：${skill.diagnostic ?? 'manifest 无效'}`)
+      if (!skill.available)
+        throw new Error(`技能「${skill.name}」不可用：${skill.diagnostic ?? 'manifest 无效'}`)
       assertNoSymbolicLinks(skill.directory)
       cpSync(skill.directory, join(temporary, skill.id), { recursive: true, errorOnExist: true })
     }
@@ -190,11 +209,15 @@ export function resolveSelectedSkills(values: string[], dataDirectory: string): 
   const catalog = listSkillCatalog(dataDirectory)
   return values.map((value) => {
     const reference = parseSkillReference(value)
-    const legacyMatches = reference ? [] : catalog.filter((item) => item.available && item.name === value)
-    if (legacyMatches.length > 1) throw new Error(`技能「${value}」有多个版本，请编辑智能体并重新选择`)
+    const legacyMatches = reference
+      ? []
+      : catalog.filter((item) => item.available && item.name === value)
+    if (legacyMatches.length > 1)
+      throw new Error(`技能「${value}」有多个版本，请编辑智能体并重新选择`)
     const skill = reference ? catalog.find((item) => item.id === reference.id) : legacyMatches[0]
     if (!skill) throw new Error(`技能「${reference?.name ?? value}」未安装`)
-    if (!skill.available) throw new Error(`技能「${reference?.name ?? value}」不可用：${skill.diagnostic}`)
+    if (!skill.available)
+      throw new Error(`技能「${reference?.name ?? value}」不可用：${skill.diagnostic}`)
     return skill
   })
 }
@@ -202,7 +225,9 @@ export function resolveSelectedSkills(values: string[], dataDirectory: string): 
 export function skillBundlesRevision(directories: string[]): string {
   if (directories.length === 0) return ''
   const hash = createHash('sha256')
-  for (const directory of [...directories].sort((left, right) => basename(left).localeCompare(basename(right)))) {
+  for (const directory of [...directories].sort((left, right) =>
+    basename(left).localeCompare(basename(right))
+  )) {
     hash.update(basename(directory)).update(hashDirectory(directory))
   }
   return hash.digest('hex')
@@ -258,15 +283,20 @@ function readSkillBundle(directory: string): SkillCatalogItem {
   const metadata = isRecord(frontmatter.metadata) ? frontmatter.metadata : {}
   const disableModelInvocation = booleanField(frontmatter, 'disable-model-invocation')
   const userInvocable = booleanField(frontmatter, 'user-invocable')
-  const legacyInvocationKey = ['disableModelInvocation', 'modelInvocable', 'userInvocable']
-    .find((key) => Object.hasOwn(frontmatter, key))
-  if (legacyInvocationKey) return invalid(`不支持字段 ${legacyInvocationKey}，请使用 DSH canonical invocation 字段`)
+  const legacyInvocationKey = ['disableModelInvocation', 'modelInvocable', 'userInvocable'].find(
+    (key) => Object.hasOwn(frontmatter, key)
+  )
+  if (legacyInvocationKey)
+    return invalid(`不支持字段 ${legacyInvocationKey}，请使用 DSH canonical invocation 字段`)
   if (disableModelInvocation === 'invalid' || userInvocable === 'invalid') {
     return invalid('invocation 字段必须是布尔值')
   }
-  const invocationPolicy: SkillInvocationPolicy = disableModelInvocation === true
-    ? userInvocable === false ? 'disabled' : 'user-invocable'
-    : 'auto'
+  const invocationPolicy: SkillInvocationPolicy =
+    disableModelInvocation === true
+      ? userInvocable === false
+        ? 'disabled'
+        : 'user-invocable'
+      : 'auto'
   const displayName = stringValue(metadata[DISPLAY_NAME_KEY]) ?? name
   const manifest: SkillManifest = {
     name,
@@ -283,8 +313,13 @@ function readSkillBundle(directory: string): SkillCatalogItem {
     ...(typeof userInvocable === 'boolean' ? { userInvocable } : {}),
   }
   const disabled = invocationPolicy === 'disabled'
-  const bundledReceipt = readJsonFile<{ skills?: Array<{ name?: string; contentHash?: string; license?: InstalledSkillReceipt['license'] }> }>(join(dirname(directory), BUNDLED_RECEIPT))
-    ?.skills?.find((item) => item.name === id)
+  const bundledReceipt = readJsonFile<{
+    skills?: Array<{
+      name?: string
+      contentHash?: string
+      license?: InstalledSkillReceipt['license']
+    }>
+  }>(join(dirname(directory), BUNDLED_RECEIPT))?.skills?.find((item) => item.name === id)
   const installedReceipt = readInstalledReceipt(directory)
   const receipt = bundledReceipt ?? installedReceipt
   const contentHash = receipt ? hashDirectory(directory) : undefined
@@ -296,11 +331,18 @@ function readSkillBundle(directory: string): SkillCatalogItem {
     status: disabled ? '已禁用' : invocationPolicy === 'user-invocable' ? '仅手动调用' : '已安装',
     available: !disabled,
     ...(disabled ? { diagnostic: '该技能禁止模型调用和用户调用' } : {}),
-    source: bundledReceipt ? 'MindMesh 内置'
+    source: bundledReceipt
+      ? 'MindMesh 内置'
       : installedReceipt?.source.kind === 'github'
         ? `GitHub：${installedReceipt.source.repository}@${installedReceipt.source.commit.slice(0, 7)}`
-        : installedReceipt ? `本地导入：${basename(installedReceipt.source.path)}` : '手动放入',
-    integrity: receipt ? receipt.contentHash === contentHash ? 'verified' : 'modified' : 'untracked',
+        : installedReceipt
+          ? `本地导入：${basename(installedReceipt.source.path)}`
+          : '手动放入',
+    integrity: receipt
+      ? receipt.contentHash === contentHash
+        ? 'verified'
+        : 'modified'
+      : 'untracked',
     ...(manifest.license ? { license: manifest.license } : {}),
     ...(manifest.license && receipt?.license ? { licenseSpdx: Boolean(receipt.license.spdx) } : {}),
     limitations,
@@ -312,8 +354,13 @@ function readSkillBundle(directory: string): SkillCatalogItem {
 
 function readBundledManifest(sourceRoot: string): BundledManifest {
   const value = readJsonFile<unknown>(join(sourceRoot, 'manifest.json'))
-  if (!isRecord(value) || !Number.isInteger(value.version) || Number(value.version) < 1
-    || !Array.isArray(value.skills) || !value.skills.every((item) => typeof item === 'string')) {
+  if (
+    !isRecord(value) ||
+    !Number.isInteger(value.version) ||
+    Number(value.version) < 1 ||
+    !Array.isArray(value.skills) ||
+    !value.skills.every((item) => typeof item === 'string')
+  ) {
     throw new Error('内置技能 manifest.json 无效')
   }
   return { version: Number(value.version), skills: value.skills as string[] }
@@ -324,8 +371,9 @@ function replaceDirectory(source: string, destination: string): void {
   const parent = resolve(destination, '..')
   const temporary = join(parent, `.${basename(destination)}-${randomUUID()}`)
   cpSync(source, temporary, { recursive: true, errorOnExist: true })
-  try { replacePreparedDirectory(temporary, destination) }
-  catch (error) {
+  try {
+    replacePreparedDirectory(temporary, destination)
+  } catch (error) {
     rmSync(temporary, { recursive: true, force: true })
     throw error
   }
@@ -339,7 +387,8 @@ function replacePreparedDirectory(prepared: string, destination: string): void {
     renameSync(prepared, destination)
     if (hadDestination) rmSync(backup, { recursive: true, force: true })
   } catch (error) {
-    if (hadDestination && existsSync(backup) && !existsSync(destination)) renameSync(backup, destination)
+    if (hadDestination && existsSync(backup) && !existsSync(destination))
+      renameSync(backup, destination)
     throw error
   }
 }
@@ -350,7 +399,9 @@ function assertNoSymbolicLinks(root: string): void {
 
 function hashDirectory(root: string): string {
   const hash = createHash('sha256')
-  for (const path of collectBundleFiles(root).filter((path) => basename(path) !== INSTALL_RECEIPT)) {
+  for (const path of collectBundleFiles(root).filter(
+    (path) => basename(path) !== INSTALL_RECEIPT
+  )) {
     hash.update(relative(root, path).split(sep).join('/')).update(readFileSync(path))
   }
   return hash.digest('hex')
@@ -373,11 +424,14 @@ function collectBundleFiles(root: string): string[] {
           if (entry.name === INSTALL_RECEIPT) continue
           files.push(path)
           bytes += stat.size
-          if (files.length > MAX_BUNDLE_FILES) throw new Error(`技能 bundle 超过 ${MAX_BUNDLE_FILES} 个文件`)
+          if (files.length > MAX_BUNDLE_FILES)
+            throw new Error(`技能 bundle 超过 ${MAX_BUNDLE_FILES} 个文件`)
           if (bytes > MAX_BUNDLE_BYTES) throw new Error('技能 bundle 超过 16 MiB')
         } else throw new Error(`技能 bundle 包含不支持的文件：${path}`)
       }
-    } finally { handle.closeSync() }
+    } finally {
+      handle.closeSync()
+    }
   }
   return files.sort((left, right) => relative(root, left).localeCompare(relative(root, right)))
 }
@@ -385,7 +439,8 @@ function collectBundleFiles(root: string): string[] {
 function containedPath(root: string, child: string): string {
   const resolvedRoot = resolve(root)
   const target = resolve(resolvedRoot, child)
-  if (target !== resolvedRoot && !target.startsWith(`${resolvedRoot}${sep}`)) throw new Error(`路径越界：${child}`)
+  if (target !== resolvedRoot && !target.startsWith(`${resolvedRoot}${sep}`))
+    throw new Error(`路径越界：${child}`)
   return target
 }
 
@@ -408,16 +463,27 @@ function writeJsonAtomically(path: string, value: unknown): void {
 
 function readInstalledReceipt(directory: string): InstalledSkillReceipt | undefined {
   const value = readJsonFile<unknown>(join(directory, INSTALL_RECEIPT))
-  if (!isRecord(value) || !isInstalledSource(value.source) || typeof value.installedAt !== 'string'
-    || typeof value.contentHash !== 'string' || !isRecord(value.license)) return undefined
+  if (
+    !isRecord(value) ||
+    !isInstalledSource(value.source) ||
+    typeof value.installedAt !== 'string' ||
+    typeof value.contentHash !== 'string' ||
+    !isRecord(value.license)
+  )
+    return undefined
   return value as InstalledSkillReceipt
 }
 
 function isInstalledSource(value: unknown): value is InstalledSkillReceipt['source'] {
   if (!isRecord(value)) return false
   if (value.kind === 'local') return typeof value.path === 'string'
-  return value.kind === 'github' && typeof value.url === 'string' && typeof value.repository === 'string'
-    && /^[a-f0-9]{40}$/.test(String(value.commit)) && typeof value.path === 'string'
+  return (
+    value.kind === 'github' &&
+    typeof value.url === 'string' &&
+    typeof value.repository === 'string' &&
+    /^[a-f0-9]{40}$/.test(String(value.commit)) &&
+    typeof value.path === 'string'
+  )
 }
 
 function licenseReceipt(declared?: string): InstalledSkillReceipt['license'] {
@@ -425,7 +491,9 @@ function licenseReceipt(declared?: string): InstalledSkillReceipt['license'] {
   try {
     parseSpdxExpression(declared)
     return { declared, spdx: declared }
-  } catch { return { declared } }
+  } catch {
+    return { declared }
+  }
 }
 
 function isLegacyBundledSkill(directory: string, replacement: SkillManifest): boolean {
@@ -435,13 +503,20 @@ function isLegacyBundledSkill(directory: string, replacement: SkillManifest): bo
     const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(path, 'utf8'))
     const legacy = match ? parse(match[1]) : undefined
     const displayName = stringValue(replacement.metadata[DISPLAY_NAME_KEY])
-    return isRecord(legacy) && legacy.name === displayName && legacy.description === replacement.description
-  } catch { return false }
+    return (
+      isRecord(legacy) &&
+      legacy.name === displayName &&
+      legacy.description === replacement.description
+    )
+  } catch {
+    return false
+  }
 }
 
 function skillLimitations(manifest: SkillManifest, files: string[]): string[] {
   const limitations: string[] = []
-  if (manifest.allowedTools) limitations.push(`声明了实验性 allowed-tools：${manifest.allowedTools}；仍以智能体授权为准`)
+  if (manifest.allowedTools)
+    limitations.push(`声明了实验性 allowed-tools：${manifest.allowedTools}；仍以智能体授权为准`)
   if (manifest.compatibility) limitations.push(`作者兼容性声明：${manifest.compatibility}`)
   if (process.platform === 'win32' && files.some((path) => path.toLowerCase().endsWith('.sh'))) {
     limitations.push('包含 Bash 脚本；当前 Windows runtime 仅保证资源可读，不保证直接执行')
@@ -451,8 +526,11 @@ function skillLimitations(manifest: SkillManifest, files: string[]): string[] {
 
 function readJsonFile<T>(path: string): T | undefined {
   if (!existsSync(path)) return undefined
-  try { return JSON.parse(readFileSync(path, 'utf8')) as T }
-  catch { return undefined }
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as T
+  } catch {
+    return undefined
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -467,12 +545,19 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
-function optionalString(source: Record<string, unknown>, key: string, output: string): Record<string, string> {
+function optionalString(
+  source: Record<string, unknown>,
+  key: string,
+  output: string
+): Record<string, string> {
   const value = stringField(source, key)
   return value ? { [output]: value } : {}
 }
 
-function booleanField(source: Record<string, unknown>, key: string): boolean | 'invalid' | undefined {
+function booleanField(
+  source: Record<string, unknown>,
+  key: string
+): boolean | 'invalid' | undefined {
   if (!Object.hasOwn(source, key)) return undefined
   const value = source[key]
   if (typeof value === 'boolean') return value

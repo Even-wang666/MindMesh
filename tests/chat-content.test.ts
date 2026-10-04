@@ -10,7 +10,9 @@ describe('chat content limits', () => {
   it('counts multibyte characters as UTF-8 bytes', () => {
     expect(getChatContentError('😀'.repeat(MAX_CHAT_CONTENT_BYTES / 4))).toBeNull()
     expect(getChatContentError(`${'😀'.repeat(MAX_CHAT_CONTENT_BYTES / 4)}a`)).toContain('64 KiB')
-    expect(getChatContentError('你'.repeat(Math.floor(MAX_CHAT_CONTENT_BYTES / 3) + 1))).toContain('64 KiB')
+    expect(getChatContentError('你'.repeat(Math.floor(MAX_CHAT_CONTENT_BYTES / 3) + 1))).toContain(
+      '64 KiB'
+    )
   })
 
   it('rejects non-string values at the shared boundary', () => {

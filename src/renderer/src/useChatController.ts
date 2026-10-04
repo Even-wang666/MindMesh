@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Agent, ChatImageAttachment, ChatProgress, ChatRunOptions, Message, RuntimeStatus } from '../../shared/contracts'
+import type {
+  Agent,
+  ChatImageAttachment,
+  ChatProgress,
+  ChatRunOptions,
+  Message,
+  RuntimeStatus,
+} from '../../shared/contracts'
 
 type ChatTarget = {
   scope: Message['scope']
@@ -10,7 +17,7 @@ type ChatTarget = {
 export function useChatController(
   target: ChatTarget,
   profileName: string,
-  onRuntime: (runtime: RuntimeStatus) => void,
+  onRuntime: (runtime: RuntimeStatus) => void
 ): {
   messages: Message[]
   busy: boolean
@@ -18,7 +25,11 @@ export function useChatController(
   streamingText: string
   streamingReasoning: string
   liveReplyIds: Set<string>
-  send: (content: string, attachments?: ChatImageAttachment[], options?: ChatRunOptions) => Promise<boolean>
+  send: (
+    content: string,
+    attachments?: ChatImageAttachment[],
+    options?: ChatRunOptions
+  ) => Promise<boolean>
   stop: () => Promise<boolean>
 } {
   const [messages, setMessages] = useState<Message[]>([])
@@ -27,7 +38,9 @@ export function useChatController(
   const [streamingText, setStreamingText] = useState('')
   const [streamingReasoning, setStreamingReasoning] = useState('')
   const liveReplyIds = useRef(new Set<string>())
-  const activeRun = useRef<{ scope: Message['scope']; id: string; stopRequested: boolean } | null>(null)
+  const activeRun = useRef<{ scope: Message['scope']; id: string; stopRequested: boolean } | null>(
+    null
+  )
   const sendRevision = useRef(0)
   const conversation = target ? `${target.scope}:${target.id}` : ''
   const conversationRef = useRef(conversation)
@@ -37,7 +50,8 @@ export function useChatController(
     setMessages((current) => {
       const known = new Set(current.map((message) => message.id))
       for (const message of next) {
-        if (animated && message.authorType === 'agent' && !known.has(message.id)) liveReplyIds.current.add(message.id)
+        if (animated && message.authorType === 'agent' && !known.has(message.id))
+          liveReplyIds.current.add(message.id)
       }
       return next
     })
@@ -57,11 +71,15 @@ export function useChatController(
     const offDelta = window.mindmesh.chat.onDelta((event) => {
       if (conversationRef.current !== `${event.scope}:${event.scopeId}`) return
       const request = activeRun.current
-      if (request?.stopRequested && request.scope === event.scope && request.id === event.scopeId) return
+      if (request?.stopRequested && request.scope === event.scope && request.id === event.scopeId)
+        return
       if (event.kind === 'reasoning') setStreamingReasoning((current) => current + event.text)
       else setStreamingText((current) => current + event.text)
     })
-    return () => { offProgress(); offDelta() }
+    return () => {
+      offProgress()
+      offDelta()
+    }
   }, [])
 
   useEffect(() => {
@@ -76,10 +94,16 @@ export function useChatController(
       // A history read started before a send must not overwrite its pending message or result.
       if (active && revision === sendRevision.current) setMessages(next)
     })
-    return () => { active = false }
+    return () => {
+      active = false
+    }
   }, [target?.scope, target?.id])
 
-  async function send(content: string, attachments: ChatImageAttachment[] = [], options: ChatRunOptions = {}): Promise<boolean> {
+  async function send(
+    content: string,
+    attachments: ChatImageAttachment[] = [],
+    options: ChatRunOptions = {}
+  ): Promise<boolean> {
     if ((!content.trim() && attachments.length === 0) || busy) return true
     if (!target) return false
     sendRevision.current += 1
@@ -91,33 +115,47 @@ export function useChatController(
     setBusy(true)
     setStreamingText('')
     setStreamingReasoning('')
-    setMessages((current) => [...current, {
-      id: crypto.randomUUID(), scope, scopeId: id, authorType: 'user', authorName: profileName,
-      content: content.trim(), attachments, sequence: 0, createdAt: new Date().toISOString(),
-    }])
+    setMessages((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        scope,
+        scopeId: id,
+        authorType: 'user',
+        authorName: profileName,
+        content: content.trim(),
+        attachments,
+        sequence: 0,
+        createdAt: new Date().toISOString(),
+      },
+    ])
     if (scope === 'private' && target.agent) {
       setProgress({ scope, scopeId: id, agentName: target.agent.name })
     }
     try {
       const runOptions = Object.keys(options).length > 0 ? options : undefined
-      const result = scope === 'private'
-        ? runOptions
-          ? await window.mindmesh.chat.sendPrivate(id, content.trim(), attachments, runOptions)
-          : attachments.length > 0
-            ? await window.mindmesh.chat.sendPrivate(id, content.trim(), attachments)
-            : await window.mindmesh.chat.sendPrivate(id, content.trim())
-        : runOptions
-          ? await window.mindmesh.chat.sendSpace(id, content.trim(), attachments, runOptions)
-          : attachments.length > 0
-            ? await window.mindmesh.chat.sendSpace(id, content.trim(), attachments)
-            : await window.mindmesh.chat.sendSpace(id, content.trim())
+      const result =
+        scope === 'private'
+          ? runOptions
+            ? await window.mindmesh.chat.sendPrivate(id, content.trim(), attachments, runOptions)
+            : attachments.length > 0
+              ? await window.mindmesh.chat.sendPrivate(id, content.trim(), attachments)
+              : await window.mindmesh.chat.sendPrivate(id, content.trim())
+          : runOptions
+            ? await window.mindmesh.chat.sendSpace(id, content.trim(), attachments, runOptions)
+            : attachments.length > 0
+              ? await window.mindmesh.chat.sendSpace(id, content.trim(), attachments)
+              : await window.mindmesh.chat.sendSpace(id, content.trim())
       if (conversationRef.current === requestConversation) {
         showLiveMessages(result, !requestRun.stopRequested)
         setStreamingText('')
         setStreamingReasoning('')
       }
-      try { onRuntime(await window.mindmesh.runtime.status()) }
-      catch { /* A status refresh must not turn a completed send into a failure. */ }
+      try {
+        onRuntime(await window.mindmesh.runtime.status())
+      } catch {
+        /* A status refresh must not turn a completed send into a failure. */
+      }
       return true
     } catch {
       let saved = true
@@ -125,13 +163,25 @@ export function useChatController(
       try {
         next = await window.mindmesh.chat.messages(scope, id)
         saved = next.some((message) => message.authorType === 'user' && !knownIds.has(message.id))
-      } catch { /* Keep the pending message when persistence cannot be checked. */ }
+      } catch {
+        /* Keep the pending message when persistence cannot be checked. */
+      }
       if (conversationRef.current === requestConversation) {
         const error = next
-          ? saved ? '发送未完成，请检查会话后再重试。' : '发送失败，消息未保存。请重试。'
+          ? saved
+            ? '发送未完成，请检查会话后再重试。'
+            : '发送失败，消息未保存。请重试。'
           : '发送状态未确认，请检查会话后再重试。'
-        const notice: Message = { id: crypto.randomUUID(), scope, scopeId: id, authorType: 'system',
-          authorName: 'MindMesh', content: error, sequence: 0, createdAt: new Date().toISOString() }
+        const notice: Message = {
+          id: crypto.randomUUID(),
+          scope,
+          scopeId: id,
+          authorType: 'system',
+          authorName: 'MindMesh',
+          content: error,
+          sequence: 0,
+          createdAt: new Date().toISOString(),
+        }
         setMessages((current) => [...(next ?? current), notice])
         setStreamingText('')
         setStreamingReasoning('')
@@ -158,5 +208,14 @@ export function useChatController(
     }
   }
 
-  return { messages, busy, progress, streamingText, streamingReasoning, liveReplyIds: liveReplyIds.current, send, stop }
+  return {
+    messages,
+    busy,
+    progress,
+    streamingText,
+    streamingReasoning,
+    liveReplyIds: liveReplyIds.current,
+    send,
+    stop,
+  }
 }

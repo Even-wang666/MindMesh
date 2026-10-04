@@ -2,7 +2,10 @@ import { getAgentCapabilityHash } from '../src/main/agent-capability'
 import { mockHarness, mockProviderSettings } from './service-mocks'
 import { describe, expect, it, vi } from 'vitest'
 import { MindMeshDatabase } from '../src/main/database'
-import { SessionResumeUnsupportedError, type DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
+import {
+  SessionResumeUnsupportedError,
+  type DeepSeekHarnessAdapter,
+} from '../src/main/harness-adapter'
 import { MindMeshServices } from '../src/main/services'
 
 function setup() {
@@ -25,13 +28,20 @@ describe('orphan Harness home cleanup', () => {
     const { db, harness, service } = setup()
     try {
       const agent = db.listAgents()[0]
-      db.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'session', getAgentCapabilityHash(agent))
+      db.getOrCreateRuntimeSession(
+        `private:${agent.id}`,
+        agent,
+        'session',
+        getAgentCapabilityHash(agent)
+      )
       await service.removeAgent(agent.id)
       expect(db.referencedCapabilityHashes()).toEqual([])
       expect(harness.shutdownAll).not.toHaveBeenCalled()
       expect(harness.forgetAgent).toHaveBeenCalledWith(agent.id)
       expect(harness.cleanupUnusedHomes).toHaveBeenCalledWith([])
-    } finally { db.close() }
+    } finally {
+      db.close()
+    }
   })
 
   it('cleans after removing a Space', async () => {
@@ -39,32 +49,51 @@ describe('orphan Harness home cleanup', () => {
     try {
       const space = db.listSpaces()[0]
       const agent = db.getAgent(space.memberIds[0])!
-      db.getOrCreateRuntimeSession(`space:${space.id}:${agent.id}`, agent, 'session', getAgentCapabilityHash(agent))
+      db.getOrCreateRuntimeSession(
+        `space:${space.id}:${agent.id}`,
+        agent,
+        'session',
+        getAgentCapabilityHash(agent)
+      )
       await service.removeSpace(space.id)
       expect(db.referencedCapabilityHashes()).toEqual([])
       expect(harness.shutdownAll).not.toHaveBeenCalled()
       expect(harness.forgetSpace).toHaveBeenCalledWith(space.id)
       expect(harness.cleanupUnusedHomes).toHaveBeenCalledWith([])
-    } finally { db.close() }
+    } finally {
+      db.close()
+    }
   })
 
   it('cleans after changing the workspace', async () => {
     const { db, harness, service } = setup()
     try {
       const agent = db.listAgents()[0]
-      db.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'session', getAgentCapabilityHash(agent))
+      db.getOrCreateRuntimeSession(
+        `private:${agent.id}`,
+        agent,
+        'session',
+        getAgentCapabilityHash(agent)
+      )
       await service.changeWorkspace('C:\\next-workspace')
       expect(db.getWorkspacePath()).toBe('C:\\next-workspace')
       expect(db.referencedCapabilityHashes()).toEqual([])
       expect(harness.setWorkspace).toHaveBeenCalledWith('C:\\next-workspace')
       expect(harness.cleanupUnusedHomes).toHaveBeenCalledWith([])
-    } finally { db.close() }
+    } finally {
+      db.close()
+    }
   })
 
   it('blocks new sends and waits for an active Space turn before shutdown completes', async () => {
     const db = new MindMeshDatabase(':memory:')
     let finishRun!: (value: { text: string; sessionId: string }) => void
-    const run = vi.fn(() => new Promise<{ text: string; sessionId: string }>((resolve) => { finishRun = resolve }))
+    const run = vi.fn(
+      () =>
+        new Promise<{ text: string; sessionId: string }>((resolve) => {
+          finishRun = resolve
+        })
+    )
     const harness = mockHarness({
       run,
       shutdownAll: vi.fn(async () => undefined),
@@ -74,24 +103,33 @@ describe('orphan Harness home cleanup', () => {
     try {
       const space = db.listSpaces()[0]
       const members = space.memberIds.map((id) => db.getAgent(id)!)
-      const sending = service.sendSpace(space.id, members.map((agent) => `@${agent.name}`).join(' '))
+      const sending = service.sendSpace(
+        space.id,
+        members.map((agent) => `@${agent.name}`).join(' ')
+      )
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
 
       const shutdown = service.shutdown()
-      await expect(service.sendPrivate(members[0].id, '退出期间的新消息')).rejects.toThrow('正在退出')
+      await expect(service.sendPrivate(members[0].id, '退出期间的新消息')).rejects.toThrow(
+        '正在退出'
+      )
       finishRun({ text: '完成', sessionId: 'session' })
       await Promise.all([sending, shutdown])
 
       expect(harness.shutdownAll).toHaveBeenCalledOnce()
       expect(run).toHaveBeenCalledOnce()
-    } finally { db.close() }
+    } finally {
+      db.close()
+    }
   })
 
   it('finishes shutdown after the grace period when an active run never settles', async () => {
     vi.useFakeTimers()
     const db = new MindMeshDatabase(':memory:')
     const harness = mockHarness({
-      run: vi.fn(() => new Promise<Awaited<ReturnType<DeepSeekHarnessAdapter['run']>>>(() => undefined)),
+      run: vi.fn(
+        () => new Promise<Awaited<ReturnType<DeepSeekHarnessAdapter['run']>>>(() => undefined)
+      ),
       shutdownAll: vi.fn(async () => undefined),
       status: vi.fn(() => ({ state: 'ready' as const, label: '', detail: '' })),
     })
@@ -112,10 +150,17 @@ describe('orphan Harness home cleanup', () => {
   it('does not start session recovery while shutdown is closing the Harness', async () => {
     const db = new MindMeshDatabase(':memory:')
     let rejectRun!: (error: Error) => void
-    const run = vi.fn(() => new Promise<Awaited<ReturnType<DeepSeekHarnessAdapter['run']>>>((_resolve, reject) => { rejectRun = reject }))
+    const run = vi.fn(
+      () =>
+        new Promise<Awaited<ReturnType<DeepSeekHarnessAdapter['run']>>>((_resolve, reject) => {
+          rejectRun = reject
+        })
+    )
     const harness = mockHarness({
       run,
-      shutdownAll: vi.fn(async () => { rejectRun(new SessionResumeUnsupportedError()) }),
+      shutdownAll: vi.fn(async () => {
+        rejectRun(new SessionResumeUnsupportedError())
+      }),
       status: vi.fn(() => ({ state: 'ready' as const, label: '', detail: '' })),
     })
     const service = new MindMeshServices(db, harness, mockProviderSettings(), () => undefined)
@@ -126,6 +171,8 @@ describe('orphan Harness home cleanup', () => {
 
       expect(run).toHaveBeenCalledOnce()
       expect(harness.shutdownAll).toHaveBeenCalledOnce()
-    } finally { db.close() }
+    } finally {
+      db.close()
+    }
   })
 })

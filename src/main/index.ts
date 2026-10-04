@@ -6,7 +6,12 @@ import { DeepSeekHarnessAdapter } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
 import { MindMeshServices } from './services'
 import { playwrightBrowserAvailable, toolCatalog } from './capabilities'
-import { installSkillBundle, installSkillFromGitHub, listSkillCatalog, seedBundledSkills } from './skills'
+import {
+  installSkillBundle,
+  installSkillFromGitHub,
+  listSkillCatalog,
+  seedBundledSkills,
+} from './skills'
 import { appendRuntimeError } from './runtime-errors'
 import { installNavigationGuards } from './navigation'
 import type { SkillInstallProgress } from '../shared/contracts'
@@ -59,14 +64,23 @@ function createWindow(): void {
 
 function registerIpc(current: MindMeshServices, dataDir: string): void {
   const agency = new AgencyProvider(dataDir)
-  const marketplace = new MarketplaceCatalogService(dataDir, [agency,
+  const marketplace = new MarketplaceCatalogService(dataDir, [
+    agency,
     { kind: 'teams', source: 'mindmesh-curated', load: async () => [] },
     { kind: 'plugins', source: 'dsh', load: async () => [] },
   ])
   ipcMain.handle('marketplace:list', async (_event, kind, refresh) => {
     const result = await marketplace.list(kind, refresh)
-    return { ...result, items: result.items.map((item) => ({ ...item,
-      installedAgentId: item.kind === 'agents' ? current.db.findAgentBySource(item.source, item.sourceId)?.id : undefined })) }
+    return {
+      ...result,
+      items: result.items.map((item) => ({
+        ...item,
+        installedAgentId:
+          item.kind === 'agents'
+            ? current.db.findAgentBySource(item.source, item.sourceId)?.id
+            : undefined,
+      })),
+    }
   })
   ipcMain.handle('marketplace:installAgent', async (_event, key, revision) => {
     return installAgencyAgent(key, revision, agency, marketplace, current.db)
@@ -79,10 +93,16 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('spaces:create', (_event, input) => current.createSpace(input))
   ipcMain.handle('spaces:update', (_event, id, input) => current.updateSpace(id, input))
   ipcMain.handle('spaces:remove', (_event, id) => current.removeSpace(id))
-  ipcMain.handle('spaces:updateContext', (_event, id, context) => current.updateSpaceContext(id, context))
+  ipcMain.handle('spaces:updateContext', (_event, id, context) =>
+    current.updateSpaceContext(id, context)
+  )
   ipcMain.handle('chat:messages', (_event, scope, scopeId) => current.messages(scope, scopeId))
-  ipcMain.handle('chat:sendPrivate', (_event, agentId, content, attachments, options) => current.sendPrivate(agentId, content, attachments, options))
-  ipcMain.handle('chat:sendSpace', (_event, spaceId, content, attachments, options) => current.sendSpace(spaceId, content, attachments, options))
+  ipcMain.handle('chat:sendPrivate', (_event, agentId, content, attachments, options) =>
+    current.sendPrivate(agentId, content, attachments, options)
+  )
+  ipcMain.handle('chat:sendSpace', (_event, spaceId, content, attachments, options) =>
+    current.sendSpace(spaceId, content, attachments, options)
+  )
   ipcMain.handle('chat:stop', (_event, scope, scopeId) => current.stop(scope, scopeId))
   ipcMain.handle('runtime:status', () => current.runtimeStatus())
   ipcMain.handle('settings:modelProviders', () => current.refreshModelProviders())
@@ -101,10 +121,34 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
   ipcMain.handle('settings:saveModelProvider', (_event, input) => current.saveModelProvider(input))
   ipcMain.handle('settings:removeModelProvider', (_event, id) => current.removeModelProvider(id))
   ipcMain.handle('catalog:models', () => current.models())
-  const skillCatalog = () => listSkillCatalog(dataDir).map(
-    ({ id, name, description, status, available, diagnostic, source, integrity, license, licenseSpdx, limitations }) => (
-      { id, name, description, status, available, diagnostic, source, integrity, license, licenseSpdx, limitations }),
-  )
+  const skillCatalog = () =>
+    listSkillCatalog(dataDir).map(
+      ({
+        id,
+        name,
+        description,
+        status,
+        available,
+        diagnostic,
+        source,
+        integrity,
+        license,
+        licenseSpdx,
+        limitations,
+      }) => ({
+        id,
+        name,
+        description,
+        status,
+        available,
+        diagnostic,
+        source,
+        integrity,
+        license,
+        licenseSpdx,
+        limitations,
+      })
+    )
   ipcMain.handle('catalog:skills', skillCatalog)
   ipcMain.handle('catalog:pickSkillDir', pickDirectory)
   ipcMain.handle('catalog:installSkill', (_event, selectedPath) => {
@@ -121,14 +165,23 @@ function registerIpc(current: MindMeshServices, dataDir: string): void {
     await installSkillFromGitHub(url, dataDir, reportProgress)
     return skillCatalog()
   })
-  ipcMain.handle('catalog:tools', () => toolCatalog.map((tool) => {
-    if (tool.id === 'web') {
-      return { ...tool, status: current.modelProviders().some((provider) => provider.id === 'deepseek-official' && provider.configured)
-        ? '可用' : '需要配置' }
-    }
-    if (tool.id === 'browser') return { ...tool, status: playwrightBrowserAvailable() ? '可用' : '未安装' }
-    return { ...tool, status: '可用' }
-  }))
+  ipcMain.handle('catalog:tools', () =>
+    toolCatalog.map((tool) => {
+      if (tool.id === 'web') {
+        return {
+          ...tool,
+          status: current
+            .modelProviders()
+            .some((provider) => provider.id === 'deepseek-official' && provider.configured)
+            ? '可用'
+            : '需要配置',
+        }
+      }
+      if (tool.id === 'browser')
+        return { ...tool, status: playwrightBrowserAvailable() ? '可用' : '未安装' }
+      return { ...tool, status: '可用' }
+    })
+  )
 }
 
 async function pickDirectory(): Promise<string | null> {
@@ -146,7 +199,9 @@ app.on('second-instance', () => {
 
 app.whenReady().then(async () => {
   if (!primaryInstance) return
-  const pluginRequest = process.argv.find((arg) => arg.startsWith('--plugin-dev='))?.slice('--plugin-dev='.length)
+  const pluginRequest = process.argv
+    .find((arg) => arg.startsWith('--plugin-dev='))
+    ?.slice('--plugin-dev='.length)
   if (pluginRequest) {
     const controller = new AbortController()
     app.on('before-quit', () => controller.abort())
@@ -154,29 +209,48 @@ app.whenReady().then(async () => {
       pluginDeveloperTask = runPluginDeveloperRequest(pluginRequest, controller.signal)
       await pluginDeveloperTask
       app.exit(0)
-    }
-    catch (error) {
-      console.error(redactPluginDiagnostic(error instanceof Error ? error.stack ?? error.message : error))
+    } catch (error) {
+      console.error(
+        redactPluginDiagnostic(error instanceof Error ? (error.stack ?? error.message) : error)
+      )
       app.exit(1)
     }
     return
   }
   app.setAppUserModelId('com.mindmesh.desktop')
   const dataDir = join(app.getPath('userData'), 'mindmesh-data')
-  const bundledSkills = app.isPackaged ? join(process.resourcesPath, 'skills') : join(process.cwd(), 'resources', 'skills')
+  const bundledSkills = app.isPackaged
+    ? join(process.resourcesPath, 'skills')
+    : join(process.cwd(), 'resources', 'skills')
   seedBundledSkills(bundledSkills, dataDir)
   const db = new MindMeshDatabase(join(dataDir, 'mindmesh.sqlite'))
   const providerSettings = new ModelProviderSettings(join(dataDir, 'model-services.json'))
   const savedWorkspace = db.getWorkspacePath()
   const defaultWorkspace = app.isPackaged ? join(dataDir, 'workspace') : process.cwd()
   if (app.isPackaged) mkdirSync(defaultWorkspace, { recursive: true })
-  const workspace = savedWorkspace && existsSync(savedWorkspace) && statSync(savedWorkspace).isDirectory()
-    ? savedWorkspace : defaultWorkspace
-  const harness = new DeepSeekHarnessAdapter(workspace, dataDir, providerSettings, new PluginSetManager(db))
-  try { harness.cleanupUnusedHomes(db.referencedCapabilityHashes()) }
-  catch { /* Cache cleanup must not prevent the app from starting. */ }
-  services = new MindMeshServices(db, harness, providerSettings, () => mainWindow?.webContents,
-    (scope, agentId, error) => appendRuntimeError(join(dataDir, 'runtime-errors.jsonl'), scope, agentId, error))
+  const workspace =
+    savedWorkspace && existsSync(savedWorkspace) && statSync(savedWorkspace).isDirectory()
+      ? savedWorkspace
+      : defaultWorkspace
+  const harness = new DeepSeekHarnessAdapter(
+    workspace,
+    dataDir,
+    providerSettings,
+    new PluginSetManager(db)
+  )
+  try {
+    harness.cleanupUnusedHomes(db.referencedCapabilityHashes())
+  } catch {
+    /* Cache cleanup must not prevent the app from starting. */
+  }
+  services = new MindMeshServices(
+    db,
+    harness,
+    providerSettings,
+    () => mainWindow?.webContents,
+    (scope, agentId, error) =>
+      appendRuntimeError(join(dataDir, 'runtime-errors.jsonl'), scope, agentId, error)
+  )
   registerIpc(services, dataDir)
   createWindow()
   app.on('activate', () => {
@@ -191,13 +265,15 @@ app.on('window-all-closed', () => {
 app.on('before-quit', (event) => {
   if (quitReady) return
   event.preventDefault()
-  shutdownTask ??= (async () => {
+  if (shutdownTask) return
+  shutdownTask = (async () => {
     try {
       await pluginDeveloperTask?.catch(() => {})
       await services?.shutdown()
     } finally {
-      try { services?.db.close() }
-      finally {
+      try {
+        services?.db.close()
+      } finally {
         quitReady = true
         app.quit()
       }

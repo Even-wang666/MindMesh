@@ -16,14 +16,23 @@ export function useConfirm(): (request: ConfirmRequest) => void {
   return confirm
 }
 
-export function ConfirmDialog({ request, onClose }: { request: ConfirmRequest; onClose: () => void }): React.JSX.Element {
+export function ConfirmDialog({
+  request,
+  onClose,
+}: {
+  request: ConfirmRequest
+  onClose: () => void
+}): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const previousFocus = useRef(document.activeElement)
-  useEffect(() => () => {
-    const element = previousFocus.current
-    if (element instanceof HTMLElement && element.isConnected) element.focus()
-  }, [])
+  useEffect(
+    () => () => {
+      const element = previousFocus.current
+      if (element instanceof HTMLElement && element.isConnected) element.focus()
+    },
+    []
+  )
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -45,13 +54,44 @@ export function ConfirmDialog({ request, onClose }: { request: ConfirmRequest; o
     }
   }
 
-  return <div className="modal-backdrop confirm-backdrop" onMouseDown={(event) => {
-    if (event.target === event.currentTarget && !busy) onClose()
-  }}>
-    <div className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description">
-      <header><span className="confirm-mark" aria-hidden="true"><AlertTriangle size={19} /></span><div><h2 id="confirm-title">{request.title}</h2><p id="confirm-description">{request.description}</p></div></header>
-      {error && <p className="form-error" role="alert">{error}</p>}
-      <footer><button className="secondary-button" autoFocus disabled={busy} onClick={onClose}>取消</button><button className="danger-button solid" disabled={busy} onClick={() => void approve()}>{busy && <span className="spinner" />}{request.confirmLabel}</button></footer>
+  return (
+    <div
+      className="modal-backdrop confirm-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose()
+      }}
+    >
+      <div
+        className="confirm-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        aria-describedby="confirm-description"
+      >
+        <header>
+          <span className="confirm-mark" aria-hidden="true">
+            <AlertTriangle size={19} />
+          </span>
+          <div>
+            <h2 id="confirm-title">{request.title}</h2>
+            <p id="confirm-description">{request.description}</p>
+          </div>
+        </header>
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <footer>
+          <button className="secondary-button" autoFocus disabled={busy} onClick={onClose}>
+            取消
+          </button>
+          <button className="danger-button solid" disabled={busy} onClick={() => void approve()}>
+            {busy && <span className="spinner" />}
+            {request.confirmLabel}
+          </button>
+        </footer>
+      </div>
     </div>
-  </div>
+  )
 }

@@ -41,22 +41,29 @@ function measureShares(shell: HTMLElement): PaneShares & { width: number } {
   }
 }
 
-export function usePaneShares(appRef: RefObject<HTMLElement | null>): [PaneShares | null, (next: PaneShares | null) => void] {
+export function usePaneShares(
+  appRef: RefObject<HTMLElement | null>
+): [PaneShares | null, (next: PaneShares | null) => void] {
   const [shares, setShares] = useState<PaneShares | null>(() => {
     try {
       const raw = window.localStorage.getItem(PANE_STORE_KEY)
       if (!raw) return null
       const parsed = JSON.parse(raw) as Partial<PaneShares>
       return typeof parsed.nav === 'number' && typeof parsed.list === 'number'
-        ? { nav: parsed.nav, list: parsed.list } : null
-    } catch { return null }
+        ? { nav: parsed.nav, list: parsed.list }
+        : null
+    } catch {
+      return null
+    }
   })
 
   useEffect(() => {
     try {
       if (shares) window.localStorage.setItem(PANE_STORE_KEY, JSON.stringify(shares))
       else window.localStorage.removeItem(PANE_STORE_KEY)
-    } catch { /* Persistence failure must not disable resizing. */ }
+    } catch {
+      /* Persistence failure must not disable resizing. */
+    }
   }, [shares])
 
   useEffect(() => {
@@ -78,7 +85,12 @@ export function usePaneShares(appRef: RefObject<HTMLElement | null>): [PaneShare
   return [shares, setShares]
 }
 
-export function PaneResizer({ index, appRef, onShares, onReset }: {
+export function PaneResizer({
+  index,
+  appRef,
+  onShares,
+  onReset,
+}: {
   index: number
   appRef: RefObject<HTMLElement | null>
   onShares: (next: PaneShares | null) => void
@@ -111,7 +123,8 @@ export function PaneResizer({ index, appRef, onShares, onReset }: {
     drag.current = null
     appRef.current?.classList.remove('is-resizing')
     setActive(false)
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId)
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
@@ -124,19 +137,21 @@ export function PaneResizer({ index, appRef, onShares, onReset }: {
   }
 
   const label = index === 0 ? '导航' : '列表'
-  return <div
-    className={active ? 'pane-resizer is-active' : 'pane-resizer'}
-    data-pane={index === 0 ? 'nav-list' : 'list-content'}
-    role="separator"
-    aria-orientation="vertical"
-    aria-label={`拖动调整${label}栏宽度，双击恢复默认比例`}
-    tabIndex={0}
-    title={`拖动调整${label}栏宽度 · 双击恢复默认比例`}
-    onPointerDown={onPointerDown}
-    onPointerMove={onPointerMove}
-    onPointerUp={endDrag}
-    onPointerCancel={endDrag}
-    onDoubleClick={onReset}
-    onKeyDown={onKeyDown}
-  />
+  return (
+    <div
+      className={active ? 'pane-resizer is-active' : 'pane-resizer'}
+      data-pane={index === 0 ? 'nav-list' : 'list-content'}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`拖动调整${label}栏宽度，双击恢复默认比例`}
+      tabIndex={0}
+      title={`拖动调整${label}栏宽度 · 双击恢复默认比例`}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onDoubleClick={onReset}
+      onKeyDown={onKeyDown}
+    />
+  )
 }

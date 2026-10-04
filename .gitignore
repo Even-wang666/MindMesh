@@ -6,8 +6,15 @@ release/
 .references/
 .runtime/
 /electron.vite.config.*.mjs
-.workbuddy/tmp/
-shots/.chrome-*/
+.workbuddy/
+/shots/
+coverage/
+.cache/
+*.tsbuildinfo
+*.tmp
+*.bak
+Thumbs.db
+.DS_Store
 *.log
 .env
 .env.*
