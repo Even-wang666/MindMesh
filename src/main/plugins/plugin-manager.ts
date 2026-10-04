@@ -7,6 +7,7 @@ import {
   existsSync,
   rmSync,
   lstatSync,
+  realpathSync,
 } from 'node:fs'
 import { join } from 'node:path'
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
@@ -56,8 +57,10 @@ export class PluginStaging {
   ): Promise<PluginArtifact> {
     signal?.throwIfAborted()
     progress('preparing')
-    const root = join(this.dataDirectory, 'plugin-staging')
+    let root = join(this.dataDirectory, 'plugin-staging')
     mkdirSync(root, { recursive: true })
+    // pnpm importer paths must use the same canonical root as its workspace discovery.
+    root = realpathSync(root)
     for (const entry of readdirSync(root, { withFileTypes: true })) {
       const path = join(root, entry.name)
       if (

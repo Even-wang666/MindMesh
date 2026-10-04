@@ -1,5 +1,13 @@
 import { mockProviderSettings } from './service-mocks'
-import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  writeFileSync,
+  symlinkSync,
+  realpathSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { expect, test, vi } from 'vitest'
@@ -17,11 +25,15 @@ test('full materializes the validated lockfile; core physically contains no thir
   const registry = await startPluginFixtureRegistry(root)
   const model = await startPluginModelFixture()
   const db = new MindMeshDatabase(join(root, 'data', 'db.sqlite'))
-  const set = new PluginSetManager(db)
-  const manager = new PluginManager(
-    set,
-    new PluginStaging(join(root, 'data'), undefined, registry.url)
+  // Exercise canonicalization when the OS/user exposes a directory alias (e.g. RUNNER~1).
+  symlinkSync(
+    join(root, 'data'),
+    join(root, 'alias'),
+    process.platform === 'win32' ? 'junction' : 'dir'
   )
+  const dataDirectory = join(root, 'alias')
+  const set = new PluginSetManager(db)
+  const manager = new PluginManager(set, new PluginStaging(dataDirectory, undefined, registry.url))
   const provider = {
     id: 'custom' as const,
     name: 'Fixture',
@@ -33,7 +45,7 @@ test('full materializes the validated lockfile; core physically contains no thir
     getProvider: () => provider,
     configuredProviders: () => [provider],
   })
-  let adapter = new DeepSeekHarnessAdapter(root, join(root, 'data'), settings, set)
+  let adapter = new DeepSeekHarnessAdapter(root, dataDirectory, settings, set)
   const agent = {
     id: 'a',
     name: 'A',
@@ -53,11 +65,14 @@ test('full materializes the validated lockfile; core physically contains no thir
       version: '1.0.0',
     })
     expect(adapter.prepareRun(agent, 'chat').identity.key).toBe(chatBefore)
-    const materializer = new RuntimeHomeMaterializer(join(root, 'data'))
+    const materializer = new RuntimeHomeMaterializer(dataDirectory)
     for (const permission of ['chat', 'workspace'] as const) {
       const request = adapter.prepareRun(agent, permission)
       expect(request.plugins).toBeUndefined()
       const home = await materializer.ensure(request)
+      expect(home.dshHome.startsWith(join(realpathSync(dataDirectory), 'runtime-v2') + sep)).toBe(
+        true
+      )
       expect(
         existsSync(join(home.dshHome, 'profiles', 'sdk', 'node_modules', 'mindmesh-fixture-plugin'))
       ).toBe(false)

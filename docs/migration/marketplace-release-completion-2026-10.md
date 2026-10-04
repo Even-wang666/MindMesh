@@ -14,6 +14,8 @@ Team 卡片增加成员数量与成员预览。预览由本地 curated manifest 
 
 ## 独立安装验收
 
+远程运行 `37206310586` 进一步暴露了既有插件重建故障：Windows runner 的临时目录使用 `RUNNER~1` 短路径，pnpm workspace discovery 使用真实路径，封存 lockfile 的 importer 因而成为指向旧 staging 的相对路径，无法在新 Home 中 frozen 重建。现在 staging 和 runtime 根目录创建后统一 `realpathSync`，不修改封存 lockfile、不关闭 frozen 校验。已有真实插件 integration 增加目录 alias/junction 覆盖：先观察 canonical Home 断言失败，再验证真实安装、重建、core 物理隔离、更新、失败保护与 alias→真实路径重启通过；相关四文件 11 项测试通过。显式开发 CLI 增加脱敏的底层失败原因，临时 fixture 文件输出已经删除。旧的不一致 artifact 仍须完整重新验证，不自动改写。
+
 构建 job 生成 NSIS，明确 `--publish never`，只上传七天留存的测试 artifact。`windows-clean-install` 是独立的 `windows-latest` job，下载该 NSIS 后安装到短路径，不执行项目依赖安装。GitHub 托管任务每次使用新 VM，见 [官方 runner 说明](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners)。它是干净的应用安装环境，包含 runner 的预装系统/测试工具，并非消费版 Windows 的裸 OS 镜像。
 
 测试 harness 只安装固定版本 `tar` 以生成 fixture，不含 Electron、DSH 或 pnpm；已安装应用从自身资源运行。应用和测试进程 PATH 只含 Windows System32，并断言外部 pnpm 不可解析。沿用真实 DSH/SDK/插件 JavaScript，仅模型 HTTP 使用 loopback fixture。
