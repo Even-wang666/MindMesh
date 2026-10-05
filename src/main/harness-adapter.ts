@@ -20,6 +20,7 @@ import {
 import { RuntimeSupervisor, type RuntimeOwner } from './runtime-supervisor'
 import { conversationRuntimeKeyPrefix } from './database'
 import { redactPluginDiagnostic } from './plugins/plugin-diagnostics'
+import { toolDisplayName } from '../shared/tool-display'
 import { randomUUID } from 'node:crypto'
 import { RuntimeFailure, runtimeFailureDetail } from './runtime-errors'
 import type { PluginSetManager } from './plugins/plugin-set'
@@ -379,9 +380,7 @@ export class DeepSeekHarnessAdapter {
                 time,
                 callId: event.data.callId,
                 toolName: event.data.name,
-                // arguments is a JSON string (spike S0.1); the display name is
-                // the tool name until a richer projection is available.
-                displayName: event.data.name,
+                displayName: toolDisplayName(event.data.name),
               })
             }
 

@@ -54,9 +54,6 @@ describe('chat failures', () => {
       expect(stop).toHaveBeenCalledWith({ ...agent, tools: [] }, expect.any(String))
       expect(messages.map((message) => message.authorType)).toEqual(['user', 'agent'])
       expect(messages.at(-1)).toMatchObject({ content: '已经输出', stopped: true })
-      expect(send.mock.calls.filter(([channel]) => channel === 'chat:delta')).toEqual([
-        ['chat:delta', expect.objectContaining({ text: '已经输出' })],
-      ])
     } finally {
       db.close()
     }
@@ -821,10 +818,6 @@ describe('session context', () => {
       const messages = await service.sendPrivate(agent.id, '问题')
       expect(messages.at(-1)).toMatchObject({ content: '最终回答', reasoning: '第一步\n\n第二步' })
       expect(db.listMessages(db.conversationIdFor('private', agent.id)).at(-1)?.reasoning).toBe('第一步\n\n第二步')
-      expect(send).toHaveBeenCalledWith(
-        'chat:delta',
-        expect.objectContaining({ kind: 'reasoning', text: '第一步\n\n第二步' })
-      )
     } finally {
       db.close()
     }
@@ -1119,11 +1112,35 @@ describe('session context', () => {
   it('forwards model text before the run completes', async () => {
     const db = new MindMeshDatabase(':memory:')
     const send = vi.fn()
-    const run = vi.fn(async (_agent, _prompt, _id, onText: (text: string) => void) => {
-      onText('逐步')
-      expect(send).toHaveBeenCalledWith('chat:delta', expect.objectContaining({ text: '逐步' }))
-      return { text: '逐步完成', sessionId: 'saved-session' }
-    })
+    const agent = db.listAgents()[0]
+    const run = vi.fn(
+      async (
+        _agent,
+        _prompt,
+        _id,
+        onText: (text: string) => void,
+        _attachments,
+        _request,
+        _fresh,
+        _runOptions,
+        onRuntimeEvent?: (event: RuntimeEvent) => void
+      ) => {
+        onText('逐步')
+        onRuntimeEvent?.({
+          type: 'text:delta',
+          requestId: 'r1',
+          sessionId: 's',
+          seq: 1,
+          conversationId: `private:${agent.id}`,
+          agentId: agent.id,
+          executionId: 'e1',
+          triggerMessageId: 'm1',
+          time: 0,
+          text: '逐步',
+        })
+        return { text: '逐步完成', sessionId: 'saved-session' }
+      }
+    )
     const service = new MindMeshServices(
       db,
       mockHarness({ run }),
@@ -1131,8 +1148,17 @@ describe('session context', () => {
       () => ({ send }) as unknown as WebContents
     )
     try {
-      await service.sendPrivate(db.listAgents()[0].id, '你好')
-      expect(send.mock.calls.filter(([channel]) => channel === 'chat:delta')).toHaveLength(2)
+      await service.sendPrivate(agent.id, '你好')
+      // The streamed text reached the renderer as a text:delta on the runtime
+      // event channel, batched together with the lifecycle events.
+      const runtimeEvents = send.mock.calls
+        .filter(([channel]) => channel === 'chat:runtimeEvent')
+        .flatMap(([, batch]) => batch as RuntimeEvent[])
+      expect(runtimeEvents.map((event) => event.type)).toEqual([
+        'run:start',
+        'text:delta',
+        'run:end',
+      ])
     } finally {
       db.close()
     }

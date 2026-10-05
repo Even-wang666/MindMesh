@@ -4,6 +4,7 @@ import { MessageList } from './MessageList'
 import { CatalogPage } from './CatalogPage'
 import { AgentDrawer } from './AgentDrawer'
 import { useEffect, useRef, useState } from 'react'
+import { useChatController, type ToolCallState } from './useChatController'
 import {
   Bot,
   Boxes,
@@ -42,7 +43,6 @@ import { Avatar } from './Ui'
 import { AgentWizard, SpaceWizard } from './Wizards'
 import { ConfirmContext, ConfirmDialog, useConfirm, type ConfirmRequest } from './ConfirmDialog'
 import { SettingsPage } from './SettingsPage'
-import { useChatController } from './useChatController'
 import { MarketplacePage } from './MarketplacePage'
 
 type View = 'chats' | 'spaces' | 'agents' | 'skills' | 'tools' | 'marketplace' | 'settings'
@@ -79,8 +79,17 @@ export function App(): React.JSX.Element {
       : view === 'spaces' && selectedSpaceId
         ? { scope: 'space' as const, id: selectedSpaceId }
         : null
-  const { messages, busy, progress, streamingText, streamingReasoning, liveReplyIds, send, stop } =
-    useChatController(chatTarget, profile.name, setRuntime)
+  const {
+    messages,
+    busy,
+    progress,
+    streamingText,
+    streamingReasoning,
+    liveReplyIds,
+    toolCalls,
+    send,
+    stop,
+  } = useChatController(chatTarget, profile.name, setRuntime)
 
   async function refresh(): Promise<void> {
     setRefreshing(true)
@@ -208,6 +217,7 @@ export function App(): React.JSX.Element {
                 streamingText={streamingText}
                 streamingReasoning={streamingReasoning}
                 liveReplyIds={liveReplyIds}
+                toolCalls={toolCalls}
                 invocableSkills={invocableSkills}
                 progress={
                   progress?.scope === 'private' && progress.scopeId === selectedAgent.id
@@ -234,6 +244,7 @@ export function App(): React.JSX.Element {
                 streamingText={streamingText}
                 streamingReasoning={streamingReasoning}
                 liveReplyIds={liveReplyIds}
+                toolCalls={toolCalls}
                 progress={
                   progress?.scope === 'space' && progress.scopeId === selectedSpace.id
                     ? progress.agentName
@@ -591,6 +602,7 @@ function ChatPanel({
   streamingText,
   streamingReasoning,
   liveReplyIds,
+  toolCalls,
   invocableSkills,
   onSend,
   onStop,
@@ -605,6 +617,7 @@ function ChatPanel({
   streamingText: string
   streamingReasoning: string
   liveReplyIds: Set<string>
+  toolCalls: ToolCallState[]
   invocableSkills: CatalogItem[]
   onSend: (
     content: string,
@@ -645,6 +658,7 @@ function ChatPanel({
         streamingText={streamingText}
         streamingReasoning={streamingReasoning}
         liveReplyIds={liveReplyIds}
+        toolCalls={toolCalls}
         starters={['介绍一下你自己', '帮我梳理一个思路', '你能做些什么？']}
         onStarter={setDraft}
       />
@@ -678,6 +692,7 @@ function SpacePanel({
   streamingText,
   streamingReasoning,
   liveReplyIds,
+  toolCalls,
   onSend,
   onStop,
   onEdit,
@@ -695,6 +710,7 @@ function SpacePanel({
   streamingText: string
   streamingReasoning: string
   liveReplyIds: Set<string>
+  toolCalls: ToolCallState[]
   onSend: (
     content: string,
     attachments?: ChatImageAttachment[],
@@ -794,6 +810,7 @@ function SpacePanel({
             streamingText={streamingText}
             streamingReasoning={streamingReasoning}
             liveReplyIds={liveReplyIds}
+            toolCalls={toolCalls}
             starters={['先让每位成员给出一版方案', '统一背景信息后再开始讨论']}
             onStarter={setDraft}
           />

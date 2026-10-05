@@ -1,6 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
-  ChatDelta,
   ChatProgress,
   MindMeshApi,
   RuntimeEvent,
@@ -51,12 +50,6 @@ const api: MindMeshApi = {
       return ipcRenderer.invoke('chat:sendSpace', spaceId, content, attachments, options)
     },
     stop: (scope, scopeId) => ipcRenderer.invoke('chat:stop', scope, scopeId),
-    onDelta: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: ChatDelta): void =>
-        listener(payload)
-      ipcRenderer.on('chat:delta', handler)
-      return () => ipcRenderer.removeListener('chat:delta', handler)
-    },
     onProgress: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: ChatProgress): void =>
         listener(payload)

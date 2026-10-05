@@ -775,11 +775,14 @@ export class MindMeshServices {
       return stopAttempt
     }
     this.activeStops.set(stopKey, stop)
+    // The adapter streams body text both through this callback (for the
+    // streamed/streamedReasoning accumulation used by stop and the final-suffix
+    // check) and through onRuntimeEvent (for the renderer). The legacy
+    // chat:delta channel is gone, so the callback only accumulates now.
     const onText = (text: string, kind: 'text' | 'reasoning') => {
       if (stopRequested) return
       if (kind === 'reasoning') streamedReasoning += text
       else streamed += text
-      this.emitText(requestId, scope, scopeId, agent.id, text, kind)
     }
     const onRuntimeEvent = (event: RuntimeEvent): void => {
       if (stopRequested) {
@@ -839,26 +842,12 @@ export class MindMeshServices {
       if (result.endError?.status) tagged.status = result.endError.status
       throw tagged
     }
-    if (result.text.startsWith(streamed) && result.text.length > streamed.length) {
-      this.emitText(requestId, scope, scopeId, agent.id, result.text.slice(streamed.length))
-    }
     this.runtimeFailed = false
     return result
   }
 
   private emitProgress(scope: Message['scope'], scopeId: string, agentName: string): void {
     this.renderer()?.send('chat:progress', { scope, scopeId, agentName })
-  }
-
-  private emitText(
-    requestId: string,
-    scope: Message['scope'],
-    scopeId: string,
-    agentId: string,
-    text: string,
-    kind: 'text' | 'reasoning' = 'text'
-  ): void {
-    this.renderer()?.send('chat:delta', { requestId, scope, scopeId, agentId, text, kind })
   }
 
   /**

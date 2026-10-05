@@ -1535,6 +1535,91 @@ h1 {
   }
 }
 
+/* ── Tool Card：工具调用审计卡片（折叠/展开，四态） ────────────────────── */
+
+.tool-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.tool-card {
+  border-radius: var(--r-control);
+  background: var(--surface-sunken);
+  border: 1px solid var(--mm-color-border);
+  overflow: hidden;
+}
+.tool-card summary {
+  padding: 9px var(--sp-4);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background var(--dur-1) var(--ease);
+}
+.tool-card summary:hover {
+  background: var(--mm-color-hover);
+}
+.tool-card summary::-webkit-details-marker {
+  display: none;
+}
+.tool-card-status {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+}
+.tool-card.running .tool-card-status {
+  color: var(--mm-color-iris);
+  animation: thinking-pulse 1s ease-in-out infinite alternate;
+}
+.tool-card.ok .tool-card-status {
+  color: var(--mm-color-success);
+  background: var(--mm-color-success-bg);
+}
+.tool-card.error .tool-card-status {
+  color: var(--mm-color-danger);
+  background: var(--mm-color-danger-bg);
+}
+.tool-card.aborted .tool-card-status {
+  color: var(--mm-color-warning);
+  background: var(--mm-color-warning-bg);
+}
+.tool-card-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-card-truncated {
+  color: var(--mm-color-warning);
+  font-size: 11px;
+  font-weight: 600;
+}
+.tool-card-output {
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--mm-color-border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
 /* ── 空态：从「logo + 一行字」升级为有引导的起始面 ──────────────────────── */
 
 .conversation-empty,

@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Message, UserProfile } from '../../shared/contracts'
+import type { ToolCallState } from './useChatController'
+import { toolStatusPhrase } from '../../shared/tool-display'
 import { Avatar } from './Ui'
 import { BrandLogo } from './BrandLogo'
 
@@ -13,6 +15,7 @@ export function MessageList({
   streamingText,
   streamingReasoning,
   liveReplyIds,
+  toolCalls = [],
   starters = [],
   onStarter,
 }: {
@@ -23,6 +26,7 @@ export function MessageList({
   streamingText: string
   streamingReasoning: string
   liveReplyIds: Set<string>
+  toolCalls?: ToolCallState[]
   starters?: string[]
   onStarter?: (starter: string) => void
 }): React.JSX.Element {
@@ -32,8 +36,9 @@ export function MessageList({
     if (!end.current) return
     end.current.scrollIntoView({ behavior: hasScrolled.current ? 'smooth' : 'auto' })
     hasScrolled.current = true
-  }, [messages, progress, streamingText, streamingReasoning])
-  if (!messages.length && !progress && !streamingText && !streamingReasoning)
+  }, [messages, progress, streamingText, streamingReasoning, toolCalls])
+  const runningTool = toolCalls.find((call) => call.status === 'running')
+  if (!messages.length && !progress && !streamingText && !streamingReasoning && !toolCalls.length)
     return (
       <div className="conversation-empty">
         <span className="empty-mark">
@@ -94,7 +99,7 @@ export function MessageList({
           </div>
         </article>
       ))}
-      {(progress || streamingText || streamingReasoning) && (
+      {(progress || streamingText || streamingReasoning || toolCalls.length > 0) && (
         <article className="message agent">
           <Avatar name={progress ?? '智能体'} />
           <div>
@@ -102,13 +107,14 @@ export function MessageList({
               <strong>{progress ?? '智能体'}</strong>
             </header>
             {streamingReasoning && <ReasoningDetails content={streamingReasoning} initiallyOpen />}
+            {toolCalls.length > 0 && <ToolCards calls={toolCalls} />}
             {streamingText ? (
               <MessageBody content={streamingText} />
             ) : (
               !streamingReasoning && (
                 <div className="chat-progress" role="status">
                   <span className="chat-progress-dot" />
-                  思考中…
+                  {runningTool ? toolStatusPhrase(runningTool.toolName) : '思考中'}…
                 </div>
               )
             )}
@@ -116,6 +122,36 @@ export function MessageList({
         </article>
       )}
       <div ref={end} />
+    </div>
+  )
+}
+
+function ToolCards({ calls }: { calls: ToolCallState[] }): React.JSX.Element {
+  return (
+    <div className="tool-cards">
+      {calls.map((call) => (
+        <details key={call.callId} className={`tool-card ${call.status}`}>
+          <summary>
+            <span className="tool-card-status" aria-hidden>
+              {call.status === 'running'
+                ? '…'
+                : call.status === 'ok'
+                  ? '✓'
+                  : call.status === 'error'
+                    ? '✕'
+                    : '⊘'}
+            </span>
+            <span className="tool-card-name">{call.displayName}</span>
+            {call.truncated && <span className="tool-card-truncated">已截断</span>}
+          </summary>
+          {call.output && (
+            <pre className="tool-card-output">
+              {call.output}
+              {call.truncated ? '\n…(已截断)' : ''}
+            </pre>
+          )}
+        </details>
+      ))}
     </div>
   )
 }

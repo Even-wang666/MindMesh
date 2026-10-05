@@ -137,15 +137,6 @@ export type SaveModelProviderInput = {
 export type CreateAgentInput = Omit<Agent, 'id' | 'createdAt' | 'source'>
 export type CreateSpaceInput = Omit<Space, 'id' | 'createdAt' | 'source'>
 
-export type ChatDelta = {
-  requestId: string
-  scope: Message['scope']
-  scopeId: string
-  agentId: string
-  text: string
-  kind?: 'text' | 'reasoning'
-}
-
 export type ChatProgress = Pick<Message, 'scope' | 'scopeId'> & { agentName: string }
 
 /**
@@ -317,7 +308,6 @@ export type MindMeshApi = {
       options?: ChatRunOptions
     ): Promise<Message[]>
     stop(scope: Message['scope'], scopeId: string): Promise<boolean>
-    onDelta(listener: (event: ChatDelta) => void): () => void
     onProgress(listener: (event: ChatProgress) => void): () => void
     onRuntimeEvent(listener: (event: RuntimeEvent) => void): () => void
   }

@@ -77,7 +77,6 @@ function mockApi(): MindMeshApi {
       sendPrivate: vi.fn(async () => []),
       sendSpace: vi.fn(async () => []),
       stop: vi.fn(async () => false),
-      onDelta: vi.fn(() => () => undefined),
       onProgress: vi.fn(() => () => undefined),
       onRuntimeEvent: vi.fn(() => () => undefined),
     },
@@ -1532,6 +1531,67 @@ describe('chat flow', () => {
     expect(result.current.streamingText).toBe('')
     await act(async () => resolveSend([]))
     await send
+  })
+
+  it('renders tool cards and an action status while a tool is running', async () => {
+    const api = mockApi()
+    let notify!: (event: RuntimeEvent) => void
+    let resolveSend!: (messages: Message[]) => void
+    api.chat.onRuntimeEvent = vi.fn((listener) => {
+      notify = listener
+      return () => undefined
+    })
+    api.chat.sendPrivate = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          resolveSend = resolve
+        })
+    )
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+
+    const input = await screen.findByPlaceholderText('给 Researcher 发送消息…')
+    fireEvent.change(input, { target: { value: '请执行' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    act(() =>
+      notify({
+        type: 'tool:start',
+        requestId: 'r',
+        sessionId: 's',
+        seq: 1,
+        conversationId: `private:${agent.id}`,
+        agentId: agent.id,
+        executionId: 'e1',
+        triggerMessageId: 'm1',
+        time: 0,
+        callId: 'c1',
+        toolName: 'pwsh',
+        displayName: '执行命令',
+      })
+    )
+    // The running tool shows a user-facing label and a present-tense status.
+    expect(screen.getByText('执行命令')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('正在执行命令')
+
+    act(() =>
+      notify({
+        type: 'tool:output',
+        requestId: 'r',
+        sessionId: 's',
+        seq: 2,
+        conversationId: `private:${agent.id}`,
+        agentId: agent.id,
+        executionId: 'e1',
+        triggerMessageId: 'm1',
+        time: 0,
+        callId: 'c1',
+        text: '完成',
+        isError: false,
+        truncated: false,
+      })
+    )
+    await act(async () => resolveSend([]))
   })
 
   it('completes a Chinese agent mention in a space message', async () => {
