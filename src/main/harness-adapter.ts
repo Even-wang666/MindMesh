@@ -1,6 +1,12 @@
 import { JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type { Agent, ChatImageAttachment, ChatPermission, RuntimeStatus } from '../shared/contracts'
+import type {
+  Agent,
+  ChatImageAttachment,
+  ChatPermission,
+  RuntimeEvent,
+  RuntimeStatus,
+} from '../shared/contracts'
 import type { ModelProviderSettings } from './model-provider-settings'
 import { getAgentCapabilityHash } from './agent-capability'
 import { resolveSelectedSkills, skillBundlesRevision } from './skills'
@@ -146,7 +152,8 @@ export class DeepSeekHarnessAdapter {
     attachments: ChatImageAttachment[] = [],
     request?: RuntimeRequest,
     freshSession = false,
-    runOptions?: Omit<RuntimeOwner, 'agentId'> & { recoveryPrompt: () => string }
+    runOptions?: Omit<RuntimeOwner, 'agentId'> & { recoveryPrompt: () => string },
+    onRuntimeEvent?: (event: RuntimeEvent) => void
   ): Promise<{ text: string; reasoning?: string; sessionId?: string }> {
     const snapshot = request ?? this.prepareRun(agent, 'chat')
     agent = snapshot.agent
@@ -160,6 +167,12 @@ export class DeepSeekHarnessAdapter {
       contextKey: runOptions?.contextKey ?? agent.id,
       requestId: runOptions?.requestId ?? randomUUID(),
     })
+    // The reducer attributes events by requestId and conversationId. Both are
+    // derived from the run options the services layer supplies; without them the
+    // adapter would have to fabricate ids that the renderer could not match.
+    const eventRequestId = runOptions?.requestId ?? ''
+    const eventConversationId = runOptions?.contextKey ?? agent.id
+    const emit = (event: RuntimeEvent): void => onRuntimeEvent?.(event)
     const reasoning: string[] = []
     const assistantTexts: string[] = []
     const trace: string[] = []
@@ -190,21 +203,115 @@ export class DeepSeekHarnessAdapter {
           onNotification: (notification) => {
             if (notification.method !== 'session.event') return
             const event = notification.params.event as SessionEvent
-            if (event.type !== 'assistant/message') return
-            const textParts: string[] = []
-            for (const block of event.data.message.content) {
-              if (block.type === 'reasoning' && block.text.trim()) {
-                const part = block.text.trim()
-                onText?.(`${reasoning.length ? '\n\n' : ''}${part}`, 'reasoning')
-                reasoning.push(part)
-                trace.push(part)
-              } else if (block.type === 'text' && block.text) textParts.push(block.text)
+
+            // assistant/message: text + reasoning + per-request usage
+            if (event.type === 'assistant/message') {
+              const textParts: string[] = []
+              for (const block of event.data.message.content) {
+                if (block.type === 'reasoning' && block.text.trim()) {
+                  const part = block.text.trim()
+                  onText?.(`${reasoning.length ? '\n\n' : ''}${part}`, 'reasoning')
+                  reasoning.push(part)
+                  trace.push(part)
+                  if (onRuntimeEvent) {
+                    emit({
+                      type: 'reasoning:delta',
+                      requestId: eventRequestId,
+                      conversationId: eventConversationId,
+                      agentId: agent.id,
+                      text: part,
+                    })
+                  }
+                } else if (block.type === 'text' && block.text) textParts.push(block.text)
+              }
+              if (textParts.length) {
+                const text = textParts.join('\n\n')
+                onText?.(`${assistantTexts.length ? '\n\n' : ''}${text}`, 'text')
+                assistantTexts.push(text)
+                trace.push(text)
+                if (onRuntimeEvent) {
+                  emit({
+                    type: 'text:delta',
+                    requestId: eventRequestId,
+                    conversationId: eventConversationId,
+                    agentId: agent.id,
+                    text,
+                  })
+                }
+              }
+              // usage is per-request (spike S0.2), not cumulative
+              if (event.data.usage && onRuntimeEvent) {
+                const usage = event.data.usage
+                emit({
+                  type: 'usage',
+                  requestId: eventRequestId,
+                  conversationId: eventConversationId,
+                  agentId: agent.id,
+                  inputTokens: usage.inputTokens ?? 0,
+                  outputTokens: usage.outputTokens ?? 0,
+                  cacheReadTokens: usage.cacheReadTokens ?? 0,
+                  cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+                })
+              }
             }
-            if (textParts.length) {
-              const text = textParts.join('\n\n')
-              onText?.(`${assistantTexts.length ? '\n\n' : ''}${text}`, 'text')
-              assistantTexts.push(text)
-              trace.push(text)
+
+            // tool/call: a tool invocation starts
+            if (event.type === 'tool/call' && onRuntimeEvent) {
+              emit({
+                type: 'tool:start',
+                requestId: eventRequestId,
+                conversationId: eventConversationId,
+                agentId: agent.id,
+                callId: event.data.callId,
+                toolName: event.data.name,
+                // arguments is a JSON string (spike S0.1); the display name is
+                // the tool name until a richer projection is available.
+                displayName: event.data.name,
+              })
+            }
+
+            // tool/result: a tool invocation completes
+            if (event.type === 'tool/result' && onRuntimeEvent) {
+              const message = event.data.message
+              const content =
+                typeof message.content === 'string'
+                  ? message.content
+                  : Array.isArray(message.content)
+                    ? message.content
+                        .map((block: { type: string; text?: string }) =>
+                          block.type === 'text' && block.text ? block.text : ''
+                        )
+                        .join('')
+                    : ''
+              emit({
+                type: 'tool:output',
+                requestId: eventRequestId,
+                conversationId: eventConversationId,
+                agentId: agent.id,
+                callId: message.toolCallId,
+                text: content,
+                isError: Boolean(message.isError),
+              })
+              emit({
+                type: 'tool:end',
+                requestId: eventRequestId,
+                conversationId: eventConversationId,
+                agentId: agent.id,
+                callId: message.toolCallId,
+                aborted: false,
+              })
+            }
+
+            // turn/end: DSH closed the turn; the services layer decides success
+            // vs stopped vs error, but the renderer benefits from knowing the
+            // harness considers this turn over.
+            if (event.type === 'turn/end' && onRuntimeEvent) {
+              emit({
+                type: 'run:end',
+                requestId: eventRequestId,
+                conversationId: eventConversationId,
+                agentId: agent.id,
+              })
             }
           },
         })

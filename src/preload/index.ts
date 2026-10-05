@@ -3,6 +3,7 @@ import type {
   ChatDelta,
   ChatProgress,
   MindMeshApi,
+  RuntimeEvent,
   SkillInstallProgress,
 } from '../shared/contracts'
 import { validateChatContent } from '../shared/chat-content'
@@ -61,6 +62,16 @@ const api: MindMeshApi = {
         listener(payload)
       ipcRenderer.on('chat:progress', handler)
       return () => ipcRenderer.removeListener('chat:progress', handler)
+    },
+    onRuntimeEvent: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        payload: RuntimeEvent[]
+      ): void => {
+        for (const event of payload) listener(event)
+      }
+      ipcRenderer.on('chat:runtimeEvent', handler)
+      return () => ipcRenderer.removeListener('chat:runtimeEvent', handler)
     },
   },
   catalog: {

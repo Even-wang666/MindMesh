@@ -14,6 +14,14 @@ type ChatTarget = {
   agent?: Agent
 } | null
 
+export type ToolCallState = {
+  callId: string
+  toolName: string
+  displayName: string
+  status: 'running' | 'ok' | 'error' | 'aborted'
+  output: string
+}
+
 export function useChatController(
   target: ChatTarget,
   profileName: string,
@@ -25,6 +33,7 @@ export function useChatController(
   streamingText: string
   streamingReasoning: string
   liveReplyIds: Set<string>
+  toolCalls: ToolCallState[]
   send: (
     content: string,
     attachments?: ChatImageAttachment[],
@@ -37,6 +46,7 @@ export function useChatController(
   const [progress, setProgress] = useState<ChatProgress | null>(null)
   const [streamingText, setStreamingText] = useState('')
   const [streamingReasoning, setStreamingReasoning] = useState('')
+  const [toolCalls, setToolCalls] = useState<ToolCallState[]>([])
   const liveReplyIds = useRef(new Set<string>())
   const activeRun = useRef<{ scope: Message['scope']; id: string; stopRequested: boolean } | null>(
     null
@@ -76,9 +86,66 @@ export function useChatController(
       if (event.kind === 'reasoning') setStreamingReasoning((current) => current + event.text)
       else setStreamingText((current) => current + event.text)
     })
+    const offRuntimeEvent = window.mindmesh.chat.onRuntimeEvent((event) => {
+      if (conversationRef.current !== event.conversationId) return
+      const request = activeRun.current
+      if (request?.stopRequested && event.type !== 'run:end') return
+
+      switch (event.type) {
+        case 'text:delta':
+          setStreamingText((current) => current + event.text)
+          break
+        case 'reasoning:delta':
+          setStreamingReasoning((current) => current + event.text)
+          break
+        case 'tool:start':
+          setToolCalls((current) => [
+            ...current,
+            {
+              callId: event.callId,
+              toolName: event.toolName,
+              displayName: event.displayName,
+              status: 'running',
+              output: '',
+            },
+          ])
+          break
+        case 'tool:delta':
+          setToolCalls((current) =>
+            current.map((call) =>
+              call.callId === event.callId
+                ? { ...call, output: call.output + event.text }
+                : call
+            )
+          )
+          break
+        case 'tool:output':
+          setToolCalls((current) =>
+            current.map((call) =>
+              call.callId === event.callId
+                ? { ...call, output: event.text, status: event.isError ? 'error' : 'ok' }
+                : call
+            )
+          )
+          break
+        case 'tool:end':
+          setToolCalls((current) =>
+            current.map((call) =>
+              call.callId === event.callId && call.status === 'running'
+                ? { ...call, status: event.aborted ? 'aborted' : call.status }
+                : call
+            )
+          )
+          break
+        case 'run:end':
+          setToolCalls([])
+          break
+      }
+    })
     return () => {
       offProgress()
       offDelta()
+      offRuntimeEvent()
     }
   }, [])
 
@@ -89,6 +156,7 @@ export function useChatController(
     setMessages([])
     setStreamingText('')
     setStreamingReasoning('')
+    setToolCalls([])
     liveReplyIds.current.clear()
     void window.mindmesh.chat.messages(target.scope, target.id).then((next) => {
       // A history read started before a send must not overwrite its pending message or result.
@@ -150,6 +218,7 @@ export function useChatController(
         showLiveMessages(result, !requestRun.stopRequested)
         setStreamingText('')
         setStreamingReasoning('')
+        setToolCalls([])
       }
       try {
         onRuntime(await window.mindmesh.runtime.status())
@@ -185,6 +254,7 @@ export function useChatController(
         setMessages((current) => [...(next ?? current), notice])
         setStreamingText('')
         setStreamingReasoning('')
+        setToolCalls([])
       }
       return saved || conversationRef.current !== requestConversation
     } finally {
@@ -215,6 +285,7 @@ export function useChatController(
     streamingText,
     streamingReasoning,
     liveReplyIds: liveReplyIds.current,
+    toolCalls,
     send,
     stop,
   }

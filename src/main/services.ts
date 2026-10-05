@@ -9,6 +9,7 @@ import type {
   Message,
   ModelProviderId,
   ModelProviderStatus,
+  RuntimeEvent,
   RuntimeStatus,
   SaveModelProviderInput,
   UserProfile,
@@ -28,6 +29,72 @@ import {
 
 const SHUTDOWN_TIMEOUT_MS = 15_000
 
+/**
+ * Collects RuntimeEvents and flushes them in batches to avoid high-frequency
+ * IPC chatter while streaming.
+ *
+ * The spike captured up to 28 events for a single short run; sending each one
+ * over IPC immediately would starve the renderer's event loop. The buffer uses
+ * a dual throttle: a 120 ms time window and a 32-event batch ceiling, whichever
+ * fires first. Non-delta events (run:start, run:end, error, usage) are flushed
+ * immediately because they are rare and latency-sensitive.
+ */
+const EVENT_FLUSH_MS = 120
+const EVENT_BATCH_LIMIT = 32
+
+class RuntimeEventBuffer {
+  private queue: RuntimeEvent[] = []
+  private timer: ReturnType<typeof setTimeout> | null = null
+  private flushListeners: Array<(events: RuntimeEvent[]) => void> = []
+
+  add(event: RuntimeEvent): void {
+    // Latency-sensitive events bypass the throttle so the UI can show a run
+    // starting or ending without waiting for the next tick.
+    if (
+      event.type === 'run:start' ||
+      event.type === 'run:end' ||
+      event.type === 'error' ||
+      event.type === 'usage'
+    ) {
+      this.flush()
+      this.deliver([event])
+      return
+    }
+    this.queue.push(event)
+    if (this.queue.length >= EVENT_BATCH_LIMIT) {
+      this.flush()
+    } else if (!this.timer) {
+      this.timer = setTimeout(() => this.flush(), EVENT_FLUSH_MS)
+    }
+  }
+
+  flush(): void {
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+    if (!this.queue.length) return
+    this.deliver(this.queue)
+    this.queue = []
+  }
+
+  private deliver(events: RuntimeEvent[]): void {
+    for (const listener of this.flushListeners) listener(events)
+  }
+
+  onFlush(listener: (events: RuntimeEvent[]) => void): () => void {
+    this.flushListeners.push(listener)
+    return () => {
+      this.flushListeners = this.flushListeners.filter((item) => item !== listener)
+    }
+  }
+
+  dispose(): void {
+    this.flush()
+    this.flushListeners = []
+  }
+}
+
 export class MindMeshServices {
   private runtimeFailed = false
   private runtimeFailureKind: RuntimeFailureKind = 'unknown'
@@ -36,6 +103,7 @@ export class MindMeshServices {
   private balanceRequestGeneration = 0
   private readonly activeStops = new Map<string, () => Promise<boolean>>()
   private readonly activeRuns = new Set<Promise<Message[]>>()
+  private readonly eventBuffer = new RuntimeEventBuffer()
   private shuttingDown = false
   private shutdownTask: Promise<void> | null = null
   private deepSeekModelIds = new Set([
@@ -71,7 +139,11 @@ export class MindMeshServices {
       agentId: string,
       error: unknown
     ) => void = () => {}
-  ) {}
+  ) {
+    this.eventBuffer.onFlush((events) => {
+      this.renderer()?.send('chat:runtimeEvent', events)
+    })
+  }
 
   listAgents = () => this.db.listAgents()
   createAgent = (input: CreateAgentInput) => this.db.createAgent(input)
@@ -456,6 +528,7 @@ export class MindMeshServices {
         (async () => {
           await this.harness.shutdownAll()
           await Promise.allSettled([...this.activeRuns])
+          this.eventBuffer.dispose()
         })(),
         SHUTDOWN_TIMEOUT_MS
       )
@@ -612,6 +685,14 @@ export class MindMeshServices {
     // Derived once and reused: the supervisor lease is keyed by conversation, so
     // rebuilding this inline once drifted from prepareSession and stranded leases.
     const contextKey = runtimeContextKey(this.db.conversationIdFor(scope, scopeId), agent.id)
+    const conversationId = this.db.conversationIdFor(scope, scopeId)
+    this.eventBuffer.add({
+      type: 'run:start',
+      requestId,
+      conversationId,
+      agentId: agent.id,
+      agentName: agent.name,
+    })
     let streamed = ''
     let streamedReasoning = ''
     let stopRequested = false
@@ -644,12 +725,26 @@ export class MindMeshServices {
       else streamed += text
       this.emitText(requestId, scope, scopeId, agent.id, text, kind)
     }
+    const onRuntimeEvent = (event: RuntimeEvent): void => {
+      if (stopRequested && event.type !== 'run:end') return
+      this.eventBuffer.add(event)
+    }
     const run = (input: string, id: string, freshSession = false) =>
-      this.harness.run(agent, input, id, onText, attachments, runtimeRequest, freshSession, {
-        contextKey,
-        requestId,
-        recoveryPrompt,
-      })
+      this.harness.run(
+        agent,
+        input,
+        id,
+        onText,
+        attachments,
+        runtimeRequest,
+        freshSession,
+        {
+          contextKey,
+          requestId,
+          recoveryPrompt,
+        },
+        onRuntimeEvent
+      )
     let result
     try {
       result = await run(prompt, sessionId)
@@ -668,10 +763,26 @@ export class MindMeshServices {
     } finally {
       if (this.activeStops.get(stopKey) === stop) this.activeStops.delete(stopKey)
     }
-    if (stopRequested) throw new ChatStoppedError(streamed, streamedReasoning)
+    if (stopRequested) {
+      this.eventBuffer.add({
+        type: 'run:end',
+        requestId,
+        conversationId,
+        agentId: agent.id,
+      })
+      this.eventBuffer.flush()
+      throw new ChatStoppedError(streamed, streamedReasoning)
+    }
     if (result.text.startsWith(streamed) && result.text.length > streamed.length) {
       this.emitText(requestId, scope, scopeId, agent.id, result.text.slice(streamed.length))
     }
+    this.eventBuffer.add({
+      type: 'run:end',
+      requestId,
+      conversationId,
+      agentId: agent.id,
+    })
+    this.eventBuffer.flush()
     this.runtimeFailed = false
     return result
   }

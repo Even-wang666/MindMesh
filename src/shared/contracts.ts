@@ -148,6 +148,99 @@ export type ChatDelta = {
 
 export type ChatProgress = Pick<Message, 'scope' | 'scopeId'> & { agentName: string }
 
+/**
+ * The runtime event vocabulary surfaced to the renderer.
+ *
+ * Each variant maps to one DSH `session.event` the spike captured, except
+ * `RunStart` and `RunEnd` which the services layer synthesises from the
+ * request lifecycle (DSH has no per-run envelope). `Usage` carries the
+ * per-request accounting the spike proved is non-cumulative, so the caller can
+ * sum runs instead of relying on a single total.
+ *
+ * Every event carries `requestId` (the run identity) and `conversationId`
+ * (the conversation the run belongs to) so the reducer can attribute events
+ * without rebuilding scope joins.
+ */
+export type RuntimeEvent =
+  | {
+      type: 'run:start'
+      requestId: string
+      conversationId: string
+      agentId: string
+      agentName: string
+    }
+  | {
+      type: 'text:delta'
+      requestId: string
+      conversationId: string
+      agentId: string
+      text: string
+    }
+  | {
+      type: 'reasoning:delta'
+      requestId: string
+      conversationId: string
+      agentId: string
+      text: string
+    }
+  | {
+      type: 'tool:start'
+      requestId: string
+      conversationId: string
+      agentId: string
+      callId: string
+      toolName: string
+      displayName: string
+    }
+  | {
+      type: 'tool:delta'
+      requestId: string
+      conversationId: string
+      agentId: string
+      callId: string
+      text: string
+    }
+  | {
+      type: 'tool:output'
+      requestId: string
+      conversationId: string
+      agentId: string
+      callId: string
+      text: string
+      isError: boolean
+    }
+  | {
+      type: 'tool:end'
+      requestId: string
+      conversationId: string
+      agentId: string
+      callId: string
+      aborted: boolean
+    }
+  | {
+      type: 'usage'
+      requestId: string
+      conversationId: string
+      agentId: string
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens: number
+      cacheWriteTokens: number
+    }
+  | {
+      type: 'error'
+      requestId: string
+      conversationId: string
+      agentId: string
+      message: string
+    }
+  | {
+      type: 'run:end'
+      requestId: string
+      conversationId: string
+      agentId: string
+    }
+
 export type MindMeshApi = {
   plugins: {
     state(): Promise<PluginState>
@@ -191,6 +284,7 @@ export type MindMeshApi = {
     stop(scope: Message['scope'], scopeId: string): Promise<boolean>
     onDelta(listener: (event: ChatDelta) => void): () => void
     onProgress(listener: (event: ChatProgress) => void): () => void
+    onRuntimeEvent(listener: (event: RuntimeEvent) => void): () => void
   }
   catalog: {
     skills(): Promise<CatalogItem[]>

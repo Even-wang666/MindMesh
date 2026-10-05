@@ -79,6 +79,7 @@ function mockApi(): MindMeshApi {
       stop: vi.fn(async () => false),
       onDelta: vi.fn(() => () => undefined),
       onProgress: vi.fn(() => () => undefined),
+      onRuntimeEvent: vi.fn(() => () => undefined),
     },
     catalog: {
       skills: vi.fn(async () => []),
