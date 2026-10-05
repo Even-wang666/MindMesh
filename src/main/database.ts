@@ -54,7 +54,7 @@ const RUN_USAGE_COLUMNS = [
  * Bump when adding a migration step below. The migrator refuses to run against a
  * database written by a newer build, so this must never be lowered.
  */
-const SCHEMA_VERSION = 8
+const SCHEMA_VERSION = 9
 
 function validateFieldLength(value: string, label: string, limit: number): void {
   if (value.length > limit)
@@ -325,6 +325,7 @@ export class MindMeshDatabase {
       if (version < 6) this.createExecutionTables()
       if (version < 7) this.migrateRuntimeSessionKeys()
       if (version < 8) this.addRunUsageColumns()
+      if (version < 9) this.backfillDefaultConversations()
       this.db
         .prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)')
         .run('schema_version', String(SCHEMA_VERSION))
@@ -713,6 +714,24 @@ export class MindMeshDatabase {
       // db.exec cannot bind parameters, and node:sqlite cannot prepare DDL with
       // placeholders, so the identifiers come from the closed literal set above.
       this.db.exec(`ALTER TABLE runs ADD COLUMN ${column} ${type}`)
+    }
+  }
+
+  private backfillDefaultConversations(): void {
+    const owners = this.db
+      .prepare(`
+      SELECT 'private' AS scope, id, name FROM agents
+      UNION ALL
+      SELECT 'space' AS scope, id, name FROM spaces
+    `)
+      .all() as Array<{ scope: Message['scope']; id: string; name: string }>
+    for (const owner of owners) {
+      this.ensureConversation(
+        this.conversationIdFor(owner.scope, owner.id),
+        owner.scope,
+        owner.id,
+        owner.name
+      )
     }
   }
 
@@ -1273,14 +1292,6 @@ export class MindMeshDatabase {
     this.db.exec('BEGIN')
     try {
       this.insertSpaceRows(space)
-      // See createAgent: the default conversation must exist before any delete path
-      // can enumerate the space's conversations.
-      this.ensureConversation(
-        this.conversationIdFor('space', space.id),
-        'space',
-        space.id,
-        space.name
-      )
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -1299,6 +1310,13 @@ export class MindMeshDatabase {
       'INSERT INTO space_members (spaceId, agentId, position) VALUES (?, ?, ?)'
     )
     space.memberIds.forEach((agentId, index) => addMember.run(space.id, agentId, index))
+    // Both direct creation and Team installation must own a default conversation.
+    this.ensureConversation(
+      this.conversationIdFor('space', space.id),
+      'space',
+      space.id,
+      space.name
+    )
   }
 
   updateSpace(id: string, input: CreateSpaceInput): Space {

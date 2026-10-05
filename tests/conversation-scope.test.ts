@@ -110,6 +110,53 @@ function conversationTitles(db: MindMeshDatabase): Array<{ id: string; title: st
 }
 
 describe('every scope owns its default conversation', () => {
+  for (const version of [7, 8]) {
+    it(`backfills missing default conversations when upgrading schema ${version}`, () => {
+      const directory = makeDirectory()
+      const path = join(directory, 'upgrade.db')
+      try {
+        const legacy = new MindMeshDatabase(path)
+        const agent = seedAgent(legacy)
+        const space = legacy.createSpace({
+          name: 'Unstarted Squad',
+          description: '',
+          context: '',
+          memberIds: [agent.id],
+        })
+        const privateId = legacy.conversationIdFor('private', agent.id)
+        const spaceId = legacy.conversationIdFor('space', space.id)
+        const retainedId = legacy.conversationIdFor('private', legacy.listAgents()[0].id)
+        legacy.close()
+        const raw = new DatabaseSync(path)
+        raw.prepare('DELETE FROM conversations WHERE id IN (?, ?)').run(privateId, spaceId)
+        raw
+          .prepare('UPDATE conversations SET title = ?, archivedAt = ? WHERE id = ?')
+          .run('Keep this title', '2026-10-05', retainedId)
+        const retained = raw.prepare('SELECT * FROM conversations WHERE id = ?').get(retainedId)
+        raw
+          .prepare("UPDATE app_meta SET value = ? WHERE key = 'schema_version'")
+          .run(String(version))
+        raw.close()
+
+        for (let reopen = 0; reopen < 2; reopen++) {
+          const upgraded = new MindMeshDatabase(path)
+          try {
+            expect(conversationTitles(upgraded)).toContainEqual({ id: privateId, title: agent.name })
+            expect(conversationTitles(upgraded)).toContainEqual({ id: spaceId, title: space.name })
+            const current = (upgraded as unknown as { db: DatabaseSync }).db
+            expect(
+              current.prepare('SELECT * FROM conversations WHERE id = ?').get(retainedId)
+            ).toEqual(retained)
+          } finally {
+            upgraded.close()
+          }
+        }
+      } finally {
+        cleanup(directory)
+      }
+    })
+  }
+
   it('creates the default conversation when an agent is created', () => {
     withDb((db) => {
       const agent = seedAgent(db)

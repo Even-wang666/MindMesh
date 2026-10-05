@@ -73,6 +73,12 @@ describe('curated Team installation', () => {
         installTeam(key, revision, agency, catalog, db),
       ])
       expect(installs[0]).toEqual(installs[1])
+      const raw = (db as unknown as { db: DatabaseSync }).db
+      expect(
+        raw
+          .prepare('SELECT title FROM conversations WHERE id = ?')
+          .get(db.conversationIdFor('space', installs[0].id))
+      ).toEqual({ title: installs[0].name })
       expect(db.listAgents()).toHaveLength(before + 3)
       expect(installs[0].memberIds.map((id) => db.getAgent(id))).toEqual(
         templates.map((template) =>

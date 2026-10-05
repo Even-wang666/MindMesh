@@ -281,7 +281,7 @@ describe('schema migration to conversations and executions', () => {
     )
 
     const version = raw.prepare("SELECT value FROM app_meta WHERE key='schema_version'").get()
-    expect(version?.value).toBe('8')
+    expect(version?.value).toBe('9')
 
     raw.close()
     db.close()
