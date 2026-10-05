@@ -1,6 +1,9 @@
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { pluginAvailable } from './plugin-availability'
 import { parseMarketplaceKey } from '../../shared/marketplace'
+import type { MarketplaceItem } from '../../shared/marketplace'
 import type {
   LocalPluginResult,
   PluginOperation,
@@ -91,6 +94,13 @@ export class PluginMarketplaceService {
   private controller: AbortController | null = null
   private task: Promise<PluginOperation> | null = null
   private closing = false
+  private preparation: Promise<void> | null = null
+  private preparationSignature = ''
+  private readonly preparationController = new AbortController()
+  private readonly available = new Map<
+    string,
+    { version: string; context: string; allowed: boolean; checkedAt: number }
+  >()
   private readonly results = new Map<string, CachedResult>()
   private readonly resultFile: string
   constructor(
@@ -98,9 +108,38 @@ export class PluginMarketplaceService {
     private readonly catalog: MarketplaceCatalogService,
     private readonly manager: PluginManager,
     private readonly notify: (operation: PluginOperation) => void = () => {},
-    private readonly runtimeVersion = getDshRuntimeInfo().version
+    private readonly runtimeVersion = getDshRuntimeInfo().version,
+    private readonly registry = 'https://registry.npmjs.org/'
   ) {
     this.resultFile = join(dataDir, 'marketplace-cache', 'plugin-compatibility.json')
+    try {
+      const file = join(dataDir, 'marketplace-cache', 'plugin-availability.json')
+      if (statSync(file).size <= 8 * 1024 * 1024) {
+        const rows = JSON.parse(readFileSync(file, 'utf8'))
+        if (Array.isArray(rows) && rows.length <= 10_000)
+          for (const row of rows) {
+            const identity = parseMarketplaceKey(row.key)
+            if (identity.kind !== 'plugins' || identity.source !== 'dsh') continue
+            validatePluginSpec(identity.sourceId, row.version)
+            if (
+              typeof row.context === 'string' &&
+              row.context.length <= 4096 &&
+              typeof row.allowed === 'boolean' &&
+              Number.isFinite(row.checkedAt) &&
+              Date.now() >= row.checkedAt &&
+              Date.now() - row.checkedAt < 15 * 60_000
+            )
+              this.available.set(row.key, {
+                version: row.version,
+                context: row.context,
+                allowed: row.allowed,
+                checkedAt: row.checkedAt,
+              })
+          }
+      }
+    } catch {
+      /* Metadata cache affects discovery only, never installation authorization. */
+    }
     try {
       if (statSync(this.resultFile).size > 4 * 1024 * 1024) return
       const cached: unknown = JSON.parse(readFileSync(this.resultFile, 'utf8'))
@@ -136,15 +175,30 @@ export class PluginMarketplaceService {
     return JSON.stringify([
       this.runtimeVersion,
       RUNTIME_SCHEMA_VERSION,
-      1,
+      2,
       process.platform,
       process.arch,
+      process.versions.node,
       this.manager.snapshot().revision,
     ])
   }
   state(): PluginState {
     const context = this.context()
     return {
+      available: [...this.available]
+        .filter(
+          ([key, row]) =>
+            row.allowed &&
+            row.context === context &&
+            Date.now() - row.checkedAt < 15 * 60_000 &&
+            !(
+              this.results.get(key)?.context === context &&
+              this.results.get(key)?.version === row.version &&
+              ['incompatible', 'needs-approval'].includes(this.results.get(key)!.compatibility)
+            )
+        )
+        .map(([key, row]) => ({ key, version: row.version })),
+      preparing: !!this.preparation,
       installed: this.manager
         .snapshot()
         .plugins.map(({ packageName, version, enabled, config }) => ({
@@ -158,6 +212,86 @@ export class PluginMarketplaceService {
         .map(({ context: _context, ...row }) => row),
       operation: this.operation,
     }
+  }
+  async prepareCatalog(): Promise<void> {
+    if (this.closing || this.preparation) return
+    const catalog = await this.catalog.list('plugins'),
+      context = this.context()
+    if (this.closing || this.preparation) return
+    const signature = JSON.stringify([catalog.fetchedAt, context])
+    if (signature === this.preparationSignature) return
+    this.preparationSignature = signature
+    this.preparation = this.prepare(catalog.items, context)
+      .catch(() => {})
+      .finally(() => {
+        try {
+          const file = join(dirname(this.resultFile), 'plugin-availability.json')
+          mkdirSync(dirname(file), { recursive: true })
+          writeFileSync(
+            `${file}.tmp`,
+            JSON.stringify([...this.available].map(([key, row]) => ({ key, ...row })))
+          )
+          renameSync(`${file}.tmp`, file)
+        } catch {
+          /* Discovery remains usable without a writable cache. */
+        }
+        this.preparation = null
+        this.notifyPreparation()
+      })
+  }
+  private notifyPreparation(): void {
+    try {
+      this.notify({
+        requestId: randomUUID(),
+        key: '["plugins","dsh","catalog"]',
+        action: 'check',
+        phase: 'succeeded',
+      })
+    } catch {
+      /* A closed renderer cannot interrupt catalog preparation. */
+    }
+  }
+  private async prepare(items: MarketplaceItem[], context: string): Promise<void> {
+    const pending = items.filter((item) => item.plugin?.packageName && item.plugin.version)
+    let index = 0
+    // Bound network concurrency; no plugin code or desired-state mutation runs here.
+    await Promise.all(
+      Array.from({ length: 6 }, async () => {
+        while (!this.closing && index < pending.length) {
+          const item = pending[index++],
+            version = item.plugin!.version!
+          const cached = this.available.get(item.key)
+          if (
+            cached?.context === context &&
+            cached.version === version &&
+            Date.now() - cached.checkedAt < 15 * 60_000
+          )
+            continue
+          const rejected = this.results.get(item.key)
+          if (
+            rejected?.context === context &&
+            rejected.version === version &&
+            ['incompatible', 'needs-approval'].includes(rejected.compatibility)
+          )
+            continue
+          try {
+            const allowed = await pluginAvailable(
+              item.plugin!.packageName!,
+              version,
+              this.manager.snapshot().plugins,
+              this.preparationController.signal,
+              this.registry
+            )
+            this.available.set(item.key, { version, context, allowed, checkedAt: Date.now() })
+            if (this.available.size > 10_000)
+              this.available.delete(this.available.keys().next().value!)
+          } catch {
+            this.available.delete(item.key)
+          }
+          this.notifyPreparation()
+        }
+      })
+    )
   }
   private report(operation: PluginOperation): void {
     this.operation = operation
@@ -229,16 +363,17 @@ export class PluginMarketplaceService {
           item.plugin.version !== targetVersion
         )
           throw new Error('目录版本已改变，请刷新后重试。')
-        if (request.action !== 'check') {
-          const result = this.results.get(request.key)
-          if (
-            !result ||
-            result.version !== targetVersion ||
-            result.context !== context ||
-            result.compatibility !== 'compatible'
-          )
-            throw new Error('请先检查当前版本的本机兼容性。')
-        }
+        if (
+          request.action !== 'check' &&
+          !(await pluginAvailable(
+            packageName,
+            targetVersion!,
+            before.plugins,
+            signal,
+            this.registry
+          ))
+        )
+          throw new Error('该插件当前无法安装。')
         change = {
           kind:
             request.action === 'check'
@@ -283,10 +418,17 @@ export class PluginMarketplaceService {
       const diagnostics = redactPluginDiagnostic(error).slice(-4096)
       const compatibility = /build script requires approval/i.test(diagnostics)
         ? 'needs-approval'
-        : /network|fetch|ENOTFOUND|timed out|timeout|目录|版本已改变/i.test(diagnostics)
+        : /network|fetch|ENOTFOUND|timed out|timeout|metadata unavailable|目录|版本已改变/i.test(
+              diagnostics
+            )
           ? 'unknown'
           : 'incompatible'
-      if (!signal.aborted && request.action === 'check' && targetVersion)
+      if (
+        !signal.aborted &&
+        ['check', 'install', 'update'].includes(request.action) &&
+        targetVersion
+      ) {
+        this.available.delete(request.key)
         this.remember({
           key: request.key,
           version: targetVersion,
@@ -294,6 +436,7 @@ export class PluginMarketplaceService {
           compatibility,
           diagnostics,
         })
+      }
       this.report({
         ...request,
         phase: signal.aborted ? 'cancelled' : 'failed',
@@ -318,7 +461,9 @@ export class PluginMarketplaceService {
   }
   async shutdown(): Promise<void> {
     this.closing = true
+    this.preparationController.abort()
     this.controller?.abort()
     await this.task?.catch(() => {})
+    await this.preparation
   }
 }

@@ -14,12 +14,6 @@ const phases: Record<PluginPhase, string> = {
   failed: '操作失败',
   cancelled: '已取消',
 }
-const compatibilityLabels = {
-  unknown: '尚未验证',
-  compatible: '本机兼容检查通过',
-  incompatible: '本机验证未通过',
-  'needs-approval': '需要构建批准，本版本不自动批准',
-}
 const done = new Set<PluginPhase>(['succeeded', 'failed', 'cancelled'])
 
 export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): React.JSX.Element {
@@ -49,6 +43,10 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
   useEffect(() => {
     active.current = true
     const unsubscribe = window.mindmesh.plugins.onProgress((operation) => {
+      if (operation.action === 'check') {
+        if (done.has(operation.phase)) void readState()
+        return
+      }
       ++readRevision.current
       setState((current) => ({ ...current, operation }))
       if (done.has(operation.phase)) void readState()
@@ -59,8 +57,9 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
       ++readRevision.current
       unsubscribe()
     }
-  }, [])
-  const busy = !!state.operation && !done.has(state.operation.phase)
+  }, [items])
+  const busy =
+    !!state.operation && state.operation.action !== 'check' && !done.has(state.operation.phase)
   async function change(item: MarketplaceItem, action: PluginAction): Promise<void> {
     const request = {
       requestId: crypto.randomUUID(),
@@ -101,7 +100,14 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
       plugin: { packageName: installed.packageName, warnings: [] },
     })
   }
-  const matches = allItems.filter((item) =>
+  const visible = allItems.filter(
+    (item) =>
+      state.installed.some(
+        (plugin) => plugin.packageName === item.sourceId && item.source === 'dsh'
+      ) ||
+      state.available?.some((row) => row.key === item.key && row.version === item.plugin?.version)
+  )
+  const matches = visible.filter((item) =>
     `${item.name} ${item.plugin?.packageName ?? ''} ${item.description}`
       .toLocaleLowerCase()
       .includes(search.toLocaleLowerCase())
@@ -109,10 +115,7 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
   return (
     <div className="plugin-marketplace">
       <p className="form-error">
-        第三方插件会在验证和运行时执行本机代码，隔离目录不是系统沙箱。请只安装你信任的插件；目录热度和兼容检查不代表安全认证。
-      </p>
-      <p>
-        插件仅在对话选择“完全访问”时可用；安装不会改变当前权限。需要密钥或额外配置的插件可能无法通过验证。
+        请只安装你信任的第三方插件。插件仅在“完全访问”模式下使用，安装不会改变当前对话权限。
       </p>
       <label className="field">
         <span>搜索插件或包名</span>
@@ -133,7 +136,9 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
         </p>
       )}
       {!ready && !error && <p role="status">正在读取已安装插件…</p>}
-      {state.operation && (
+      {state.preparing && <p role="status">正在准备可安装插件…</p>}
+      {ready && !state.preparing && matches.length === 0 && <p>没有找到可安装的插件。</p>}
+      {state.operation && state.operation.action !== 'check' && (
         <div
           className="plugin-operation"
           role={state.operation.phase === 'failed' ? 'alert' : 'status'}
@@ -165,11 +170,9 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
           const installed = state.installed.find(
             (plugin) => item.source === 'dsh' && plugin.packageName === item.sourceId
           )
-          const result = state.results.find(
-            (result) => result.key === item.key && result.version === item.plugin?.version
+          const canInstall = !!state.available?.some(
+            (row) => row.key === item.key && row.version === item.plugin?.version
           )
-          const canInstall = !!item.plugin?.packageName && !!item.plugin.version
-          const compatible = result?.compatibility === 'compatible'
           return (
             <article key={item.key} data-plugin-key={item.key}>
               <h3>{item.name}</h3>
@@ -177,7 +180,6 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
               <small>来源：{item.source}</small>
               <small>包：{item.plugin?.packageName ?? installed?.packageName ?? '无 npm 包'}</small>
               <small>目录版本：{item.plugin?.version ?? '无确切版本'}</small>
-              <small>兼容性：{compatibilityLabels[result?.compatibility ?? 'unknown']}</small>
               {installed && (
                 <>
                   <small>
@@ -192,22 +194,12 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
               {item.plugin?.warnings.map((warning) => (
                 <small key={warning}>{warning}</small>
               ))}
-              {!canInstall && !installed && (
-                <small>需要手动设置；本版本只支持 npm 确切版本安装。</small>
-              )}
               {canInstall && (
                 <>
-                  <button
-                    className="secondary-button compact"
-                    disabled={!ready || busy}
-                    onClick={() => void change(item, 'check')}
-                  >
-                    检查兼容性
-                  </button>
                   {(!installed || installed.version !== item.plugin!.version) && (
                     <button
                       className="secondary-button compact"
-                      disabled={!ready || busy || !compatible}
+                      disabled={!ready || busy}
                       onClick={() => void change(item, installed ? 'update' : 'install')}
                     >
                       {installed ? `更新至 ${item.plugin!.version}` : '安装插件'}
@@ -232,12 +224,6 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
                     移除插件
                   </button>
                 </>
-              )}
-              {result?.diagnostics && (
-                <details>
-                  <summary>兼容性诊断</summary>
-                  <pre>{result.diagnostics}</pre>
-                </details>
               )}
             </article>
           )

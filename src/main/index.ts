@@ -104,9 +104,14 @@ function registerIpc(
     (operation) => {
       if (mainWindow && !mainWindow.webContents.isDestroyed())
         mainWindow.webContents.send('plugins:progress', operation)
-    }
+    },
+    undefined,
+    fixture.registry
   )
-  ipcMain.handle('plugins:state', () => pluginMarketplace!.state())
+  ipcMain.handle('plugins:state', async () => {
+    await pluginMarketplace!.prepareCatalog()
+    return pluginMarketplace!.state()
+  })
   ipcMain.handle('plugins:change', (_event, request) => pluginMarketplace!.change(request))
   ipcMain.handle('plugins:cancel', (_event, requestId) => pluginMarketplace!.cancel(requestId))
   ipcMain.handle('marketplace:list', async (_event, kind, refresh) => {

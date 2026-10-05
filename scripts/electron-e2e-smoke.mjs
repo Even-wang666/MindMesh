@@ -230,17 +230,13 @@ async function runRound(round) {
           console.log(`Plugin UI ${label}: ${expected}`)
           await until(() =>
             evaluate(
-              `!Array.from(document.querySelectorAll('button')).find(button => button.textContent === '检查兼容性')?.disabled`
+              `!Array.from(document.querySelectorAll('[data-plugin-key] button')).some(button => button.disabled)`
             )
           )
           return result
         }
         if (round === 1) {
-          const before = await readState()
-          await action(mainKey, '检查兼容性')
-          assert.deepEqual((await readState()).installed, before.installed)
           await action(mainKey, '安装插件')
-          await action(peerKey, '检查兼容性')
           await action(peerKey, '安装插件')
           const beforeRemove = (await readState()).installed
           assert.deepEqual((await action(mainKey, '移除插件', 'failed')).installed, beforeRemove)
@@ -248,10 +244,16 @@ async function runRound(round) {
           await action(mainKey, '停用插件')
           await action(mainKey, '启用插件')
           assert.equal(
-            (await action(buildKey, '检查兼容性', 'failed')).results.find(
-              (result) => result.key === buildKey
-            ).compatibility,
-            'needs-approval'
+            await evaluate(
+              `Array.from(document.querySelectorAll('[data-plugin-key]')).some(card => card.dataset.pluginKey === ${JSON.stringify(buildKey)})`
+            ),
+            false
+          )
+          assert.equal(
+            await evaluate(
+              `Array.from(document.querySelectorAll('button')).some(button => button.textContent === '检查兼容性')`
+            ),
+            false
           )
           assert.equal(existsSync(join(userData, 'fixtures', 'script-ran')), false)
           pluginRegistry.setCatalogVersion('1.0.1')
@@ -263,7 +265,6 @@ async function runRound(round) {
               `document.querySelector('#marketplace-panel').getAttribute('aria-busy') === 'false' && document.querySelector('.plugin-marketplace').textContent.includes('目录版本：1.0.1')`
             )
           )
-          await action(mainKey, '检查兼容性')
           await action(mainKey, '更新至 1.0.1')
         } else {
           assert.equal((await readState()).installed[0].version, '1.0.1')
@@ -275,6 +276,7 @@ async function runRound(round) {
           )
         }
         if (round === 2) {
+          await action(mainKey, '停用插件')
           const beforeCancel = await readState()
           await evaluate(
             `Array.from(document.querySelectorAll('[data-plugin-key]')).find(card => card.dataset.pluginKey === ${JSON.stringify(mainKey)}).querySelector('button').click()`
@@ -298,6 +300,7 @@ async function runRound(round) {
           await until(async () => (await readState()).operation?.phase === 'cancelled')
           assert.deepEqual((await readState()).installed, beforeCancel.installed)
           console.log('Plugin UI cancellation preserves installed set: OK')
+          await action(mainKey, '启用插件')
         }
         if (process.env.MINDMESH_E2E_SCREENSHOT) {
           const screenshot = await client.call('Page.captureScreenshot', { format: 'png' })
@@ -321,7 +324,7 @@ async function runRound(round) {
         }
         assert.ok((await evaluate('window.__pluginPhases')).includes('booting'))
         console.log(
-          `Electron plugin Marketplace check/install/update/enable/disable/dependency remove gate and real full tool call round ${round}: OK`
+          `Electron plugin Marketplace automatic filtering/one-click install/update/enable/disable/dependency remove gate and real full tool call round ${round}: OK`
         )
       }
       if (teamsOnly) {

@@ -17,6 +17,19 @@ import type { PluginAction } from '../src/shared/plugins'
 const roots: string[] = []
 const key = marketplaceKey({ kind: 'plugins', source: 'dsh', sourceId: 'fixture-plugin' })
 function setup() {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      async (url: string) =>
+        new Response(
+          JSON.stringify({
+            name: 'fixture-plugin',
+            version: url.split('/').at(-1),
+            dsh: { bundle: { patch: './patch.yml' } },
+          })
+        )
+    )
+  )
   const path = mkdtempSync(join(tmpdir(), 'mindmesh-plugin-market-test-'))
   roots.push(path)
   const db = new MindMeshDatabase(join(path, 'db.sqlite'))
@@ -75,6 +88,49 @@ afterEach(() => {
 })
 
 describe('plugin catalog and controlled Marketplace actions', () => {
+  it('caches hidden unsupported entries and does not rescan or notify in a loop', async () => {
+    const { db, path, service, manager, catalog, validate, notify } = setup()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              name: 'fixture-plugin',
+              version: '1.0.0',
+              dsh: { bundle: { patch: './patch.yml' } },
+              scripts: { install: 'must-not-execute' },
+            })
+          )
+      )
+    )
+    try {
+      await service.prepareCatalog()
+      await vi.waitFor(() => expect(service.state().preparing).toBe(false))
+      expect(service.state().available).toEqual([])
+      expect(validate).not.toHaveBeenCalled()
+      const count = notify.mock.calls.length
+      await service.prepareCatalog()
+      expect(notify).toHaveBeenCalledTimes(count)
+      const restarted = new PluginMarketplaceService(
+        path,
+        catalog,
+        manager,
+        undefined,
+        '0.2.0-rc.2'
+      )
+      const fetch = vi.mocked(globalThis.fetch)
+      fetch.mockClear()
+      await restarted.prepareCatalog()
+      await vi.waitFor(() => expect(restarted.state().preparing).toBe(false))
+      expect(fetch).not.toHaveBeenCalled()
+      expect(restarted.state().available).toEqual([])
+      await restarted.shutdown()
+      await service.shutdown()
+    } finally {
+      db.close()
+    }
+  })
   it('normalizes the real discovery schema without carrying commands, URLs or remote authorization', async () => {
     vi.stubGlobal(
       'fetch',
@@ -150,16 +206,16 @@ describe('plugin catalog and controlled Marketplace actions', () => {
     ).toHaveLength(2200)
   })
 
-  it('requires a current local check, revalidates on install/update and exposes only safe installed state', async () => {
+  it('prepares availability without executing plugins and installs in one action with full validation', async () => {
     const { db, service, request, validate, set, updateCatalog, notify } = setup()
     try {
-      expect((await service.change(request('install'))).phase).toBe('failed')
+      await service.prepareCatalog()
+      await vi.waitFor(() => expect(service.state().preparing).toBe(false))
+      expect(service.state().available).toEqual([{ key, version: '1.0.0' }])
       expect(validate).not.toHaveBeenCalled()
-      expect((await service.change(request('check'))).phase).toBe('succeeded')
       expect(set.snapshot().plugins).toHaveLength(0)
-      expect(service.state().results[0].compatibility).toBe('compatible')
       expect((await service.change(request('install'))).phase).toBe('succeeded')
-      expect(validate).toHaveBeenCalledTimes(2)
+      expect(validate).toHaveBeenCalledTimes(1)
       expect(service.state().installed).toEqual([
         {
           packageName: 'fixture-plugin',
@@ -171,7 +227,6 @@ describe('plugin catalog and controlled Marketplace actions', () => {
       expect(service.state()).not.toHaveProperty('artifact')
       await updateCatalog()
       expect((await service.change(request('update', '1.0.0'))).phase).toBe('failed')
-      expect((await service.change(request('check', '1.0.1'))).phase).toBe('succeeded')
       expect((await service.change(request('update', '1.0.1'))).phase).toBe('succeeded')
       expect(set.snapshot().plugins[0].version).toBe('1.0.1')
       expect(notify.mock.calls.some(([operation]) => operation.phase === 'booting')).toBe(true)

@@ -16,7 +16,14 @@ const item: MarketplaceItem = {
   plugin: { packageName: 'fixture-plugin', version: '1.0.1', warnings: ['Third-party code'] },
 }
 afterEach(() => cleanup())
-function setup(initial: PluginState = { installed: [], results: [], operation: null }) {
+function setup(
+  initial: PluginState = {
+    installed: [],
+    results: [],
+    operation: null,
+    available: [{ key: item.key, version: '1.0.1' }],
+  }
+) {
   let current = initial,
     progress!: (operation: PluginOperation) => void
   const unsubscribe = vi.fn()
@@ -67,14 +74,27 @@ function setup(initial: PluginState = { installed: [], results: [], operation: n
   }
 }
 describe('plugin Marketplace UI', () => {
-  it('gates Install on local check, shows exact target update and routes lifecycle controls', async () => {
+  it('hides unprepared and incompatible entries while showing preparation status', async () => {
+    setup({
+      installed: [],
+      results: [{ key: item.key, version: '1.0.1', compatibility: 'incompatible' }],
+      operation: null,
+      available: [],
+      preparing: true,
+    })
+    render(<PluginMarketplace items={[item]} />)
+    expect(await screen.findByText('正在准备可安装插件…')).toBeInTheDocument()
+    expect(screen.queryByText('Fixture')).toBeNull()
+    expect(screen.queryByRole('button', { name: '安装插件' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '检查兼容性' })).toBeNull()
+  })
+  it('offers one-click install for prepared plugins without a compatibility step', async () => {
     const { change } = setup()
     render(<PluginMarketplace items={[item]} />)
-    const install = screen.getByRole('button', { name: '安装插件' })
-    expect(install).toBeDisabled()
+    const install = await screen.findByRole('button', { name: '安装插件' })
+    expect(install).toBeEnabled()
     expect(screen.getByText('<script>data only</script>')).toBeInTheDocument()
-    fireEvent.click(await screen.findByRole('button', { name: '检查兼容性' }))
-    await waitFor(() => expect(install).toBeEnabled())
+    expect(screen.queryByRole('button', { name: '检查兼容性' })).toBeNull()
     fireEvent.click(install)
     const disable = await screen.findByRole('button', { name: '停用插件' })
     expect(change).toHaveBeenLastCalledWith(
@@ -96,6 +116,7 @@ describe('plugin Marketplace UI', () => {
         },
       ],
       results: [{ key: item.key, version: '1.0.1', compatibility: 'compatible' }],
+      available: [{ key: item.key, version: '1.0.1' }],
       operation: null,
     })
     const page = render(<PluginMarketplace items={[item]} />)
@@ -121,7 +142,7 @@ describe('plugin Marketplace UI', () => {
     expect(await screen.findByText('已安装插件；当前目录无可用的更新信息。')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '停用插件' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: '安装插件' })).toBeNull()
-    expect(screen.getByText('需要手动设置；本版本只支持 npm 确切版本安装。')).toBeInTheDocument()
+    expect(screen.queryByText('Manual')).toBeNull()
     page.rerender(
       <PluginMarketplace
         items={[{ ...item, plugin: { warnings: ['Upstream version missing'] } }]}
@@ -136,14 +157,14 @@ describe('plugin Marketplace UI', () => {
     const operation: PluginOperation = {
       requestId: 'owned',
       key: item.key,
-      action: 'check',
+      action: 'install',
       phase: 'booting',
     }
     const { cancel, update, unsubscribe } = setup({ installed: [], results: [], operation })
     const page = render(<PluginMarketplace items={[item]} />)
     fireEvent.click(await screen.findByRole('button', { name: '取消操作' }))
     await waitFor(() => expect(cancel).toHaveBeenCalledWith('owned'))
-    expect(screen.getByRole('button', { name: '检查兼容性' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '检查兼容性' })).toBeNull()
     await act(async () =>
       update({
         installed: [],
@@ -164,8 +185,8 @@ describe('plugin Marketplace UI', () => {
       })
     )
     expect(await screen.findByRole('alert')).toHaveTextContent('Validation failed')
-    expect(screen.getByText('兼容性：需要构建批准，本版本不自动批准')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '安装插件' })).toBeDisabled()
+    expect(screen.queryByText('Fixture')).toBeNull()
+    expect(screen.queryByRole('button', { name: '安装插件' })).toBeNull()
     page.unmount()
     expect(unsubscribe).toHaveBeenCalledOnce()
   })

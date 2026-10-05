@@ -92,6 +92,9 @@ export async function startPluginFixtureRegistry(root) {
           (name === names[0] ? versions : ['1.0.0']).map((version) => [
             version,
             {
+              ...JSON.parse(
+                readFileSync(join(root, name, version, 'package', 'package.json'), 'utf8')
+              ),
               name,
               version,
               ...(version === '6.0.0'

@@ -32,6 +32,8 @@ export type LocalPluginResult = {
   diagnostics?: string
 }
 export type PluginState = {
+  available?: { key: string; version: string }[]
+  preparing?: boolean
   installed: {
     packageName: string
     version: string
