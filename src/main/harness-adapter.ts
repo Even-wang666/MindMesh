@@ -11,6 +11,7 @@ import {
   type RuntimeRequest,
 } from './runtime-revision'
 import { RuntimeSupervisor, type RuntimeOwner } from './runtime-supervisor'
+import { conversationRuntimeKeyPrefix } from './database'
 import { randomUUID } from 'node:crypto'
 import { RuntimeFailure, runtimeFailureDetail } from './runtime-errors'
 import type { PluginSetManager } from './plugins/plugin-set'
@@ -259,7 +260,7 @@ export class DeepSeekHarnessAdapter {
     return this.supervisor.forgetOwner(id)
   }
   forgetSpace(id: string): Promise<void> {
-    return this.supervisor.forgetOwner(undefined, `space:${id}:`)
+    return this.supervisor.forgetOwner(undefined, conversationRuntimeKeyPrefix(`space:${id}`))
   }
 
   /** The SDK cannot cancel one shared turn; only close a sole matching lease. */

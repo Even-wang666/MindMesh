@@ -43,7 +43,7 @@ const MAX_SPACE_CONTEXT_LENGTH = 100_000
  * Bump when adding a migration step below. The migrator refuses to run against a
  * database written by a newer build, so this must never be lowered.
  */
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 function validateFieldLength(value: string, label: string, limit: number): void {
   if (value.length > limit)
@@ -52,6 +52,67 @@ function validateFieldLength(value: string, label: string, limit: number): void 
 
 function validateRecordId(id: unknown): asserts id is string {
   if (typeof id !== 'string' || !id.trim() || id.length > 256) throw new Error('记录 ID 无效')
+}
+
+/**
+ * A runtime session belongs to one agent inside one conversation.
+ *
+ * The conversation id is part of the key so opening a second conversation starts a
+ * separate harness session instead of resuming the first one.
+ */
+export function runtimeContextKey(conversationId: string, agentId: string): string {
+  return `conversation:${conversationId}:${agentId}`
+}
+
+/** The harness-visible session id. Mirrors {@link runtimeContextKey} with filesystem-safe separators. */
+export function runtimeSessionId(conversationId: string, agentId: string): string {
+  return `conversation-${conversationId.replace(/:/g, '-')}-${agentId}`
+}
+
+/**
+ * Translate a pre-Phase-1 runtime session key into the conversation-scoped form.
+ * Returns null for keys that are already migrated or cannot be attributed.
+ */
+export function conversationRuntimeKey(legacyKey: string): string | null {
+  if (legacyKey.startsWith('conversation:')) return null
+  if (legacyKey.startsWith('private:')) {
+    const agentId = legacyKey.slice('private:'.length)
+    return agentId ? runtimeContextKey(`private:${agentId}`, agentId) : null
+  }
+  if (legacyKey.startsWith('space:')) {
+    // space:<spaceId>:<agentId> — agent ids cannot contain ':' (validateRecordId).
+    const separator = legacyKey.lastIndexOf(':')
+    if (separator <= 'space:'.length) return null
+    const spaceId = legacyKey.slice('space:'.length, separator)
+    const agentId = legacyKey.slice(separator + 1)
+    if (!spaceId || !agentId) return null
+    return runtimeContextKey(`space:${spaceId}`, agentId)
+  }
+  return null
+}
+
+/**
+ * The key prefix shared by every runtime session in one conversation. Used for
+ * prefix matching (not SQL LIKE), so it carries no wildcard.
+ */
+export function conversationRuntimeKeyPrefix(conversationId: string): string {
+  return runtimeContextKey(conversationId, '')
+}
+
+/**
+ * Matches every runtime session inside one conversation, across all of its agents.
+ */
+export function conversationRuntimeKeyPattern(conversationId: string): string {
+  return `${conversationRuntimeKeyPrefix(conversationId)}%`
+}
+
+/**
+ * Matches every runtime session of an agent, across its private and space
+ * conversations. `LIKE` treats `%` as a wildcard that also spans the ':' inside
+ * a conversation id, so one pattern is enough.
+ */
+export function agentRuntimeKeyPattern(agentId: string): string {
+  return `conversation:%:${agentId}`
 }
 
 function validateStringList(
@@ -251,6 +312,7 @@ export class MindMeshDatabase {
       )`)
       if (version < 5) this.migrateToConversations()
       if (version < 6) this.createExecutionTables()
+      if (version < 7) this.migrateRuntimeSessionKeys()
       this.db
         .prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)')
         .run('schema_version', String(SCHEMA_VERSION))
@@ -592,6 +654,29 @@ export class MindMeshDatabase {
     this.db.exec('CREATE UNIQUE INDEX tool_calls_run_sequence ON tool_calls(runId, sequence)')
   }
 
+  /**
+   * Re-key runtime sessions so a harness session belongs to a conversation rather
+   * than to an agent.
+   *
+   * Previously `private:<agentId>` and `space:<spaceId>:<agentId>` were the keys.
+   * With conversations, keying on the agent alone would let a second conversation
+   * silently reuse the first conversation's harness session: the UI would look like
+   * a fresh chat while the model still remembered everything. Rows are re-keyed
+   * rather than dropped so an upgrade does not force every agent to start over.
+   */
+  private migrateRuntimeSessionKeys(): void {
+    const rows = this.db.prepare('SELECT contextKey FROM runtime_sessions').all() as Array<{
+      contextKey: string
+    }>
+    const update = this.db.prepare(
+      'UPDATE runtime_sessions SET contextKey = ? WHERE contextKey = ?'
+    )
+    for (const { contextKey } of rows) {
+      const next = conversationRuntimeKey(contextKey)
+      if (next && next !== contextKey) update.run(next, contextKey)
+    }
+  }
+
   private seed(): void {
     const seeded = Boolean(this.db.prepare("SELECT value FROM app_meta WHERE key = 'seeded'").get())
     let seedMode = (
@@ -751,8 +836,8 @@ export class MindMeshDatabase {
         .prepare('UPDATE agents SET skills = ? WHERE id = ?')
         .run(JSON.stringify(skills.current), id)
       this.db
-        .prepare('DELETE FROM runtime_sessions WHERE contextKey = ? OR contextKey LIKE ?')
-        .run(`private:${id}`, `space:%:${id}`)
+        .prepare('DELETE FROM runtime_sessions WHERE contextKey LIKE ?')
+        .run(agentRuntimeKeyPattern(id))
     }
     this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('starterSkillsV3', '1')").run()
   }
@@ -765,8 +850,8 @@ export class MindMeshDatabase {
       const current = starterSkillUpgrades[id as keyof typeof starterSkillUpgrades].current
       this.db.prepare('UPDATE agents SET skills = ? WHERE id = ?').run(JSON.stringify(current), id)
       this.db
-        .prepare('DELETE FROM runtime_sessions WHERE contextKey = ? OR contextKey LIKE ?')
-        .run(`private:${id}`, `space:%:${id}`)
+        .prepare('DELETE FROM runtime_sessions WHERE contextKey LIKE ?')
+        .run(agentRuntimeKeyPattern(id))
     }
     this.db.prepare("INSERT INTO app_meta (key, value) VALUES ('starterSkillRefsV4', '1')").run()
   }
@@ -940,8 +1025,8 @@ export class MindMeshDatabase {
     this.db.exec('BEGIN')
     try {
       this.db
-        .prepare('DELETE FROM runtime_sessions WHERE contextKey = ? OR contextKey LIKE ?')
-        .run(`private:${id}`, `space:%:${id}`)
+        .prepare('DELETE FROM runtime_sessions WHERE contextKey LIKE ?')
+        .run(agentRuntimeKeyPattern(id))
       this.db.prepare('DELETE FROM agents WHERE id = ?').run(id)
       this.db.exec('COMMIT')
     } catch (error) {
@@ -1170,7 +1255,9 @@ export class MindMeshDatabase {
     try {
       // Deleting the space conversation cascades to its messages and executions.
       this.db.prepare('DELETE FROM conversations WHERE id = ?').run(`space:${id}`)
-      this.db.prepare('DELETE FROM runtime_sessions WHERE contextKey LIKE ?').run(`space:${id}:%`)
+      this.db
+        .prepare('DELETE FROM runtime_sessions WHERE contextKey LIKE ?')
+        .run(conversationRuntimeKeyPattern(`space:${id}`))
       this.db.prepare('DELETE FROM space_members WHERE spaceId = ?').run(id)
       this.db.prepare('DELETE FROM spaces WHERE id = ?').run(id)
       this.db.exec('COMMIT')
@@ -1184,9 +1271,11 @@ export class MindMeshDatabase {
    * Resolve the conversation that owns a private agent's or a space's messages.
    *
    * The default conversation was created with a scope-derived id during migration,
-   * so the mapping is deterministic and needs no extra lookup table.
+   * so the mapping is deterministic and needs no extra lookup table. Until Phase 2
+   * lands the UI there is exactly one conversation per scope; afterwards callers
+   * must pass an explicit conversation id instead of resolving the default.
    */
-  private conversationIdFor(scope: Message['scope'], scopeId: string): string {
+  conversationIdFor(scope: Message['scope'], scopeId: string): string {
     return `${scope}:${scopeId}`
   }
 
@@ -1231,14 +1320,20 @@ export class MindMeshDatabase {
     )
   }
 
-  lastAgentMessageSequence(spaceId: string, agentId: string): number {
+  /**
+   * The space consumption cursor: how far this agent has already been fed.
+   *
+   * Sequences are per conversation, so this must be scoped to the same conversation
+   * the runtime session belongs to — otherwise a second conversation in the same
+   * space would start from the first one's cursor and silently skip messages.
+   */
+  lastAgentMessageSequence(conversationId: string, agentId: string): number {
     const row = this.db
       .prepare(`
-      SELECT COALESCE(MAX(m.sequence), 0) AS sequence
-      FROM messages m JOIN conversations c ON c.id = m.conversationId
-      WHERE c.scope = 'space' AND c.scopeId = ? AND m.authorId = ?
+      SELECT COALESCE(MAX(sequence), 0) AS sequence
+      FROM messages WHERE conversationId = ? AND authorId = ?
     `)
-      .get(spaceId, agentId) as { sequence: number }
+      .get(conversationId, agentId) as { sequence: number }
     return row.sequence
   }
 

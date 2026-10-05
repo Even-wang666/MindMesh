@@ -2,7 +2,7 @@ import { getAgentCapabilityHash } from '../src/main/agent-capability'
 import { mockHarness, mockProviderSettings } from './service-mocks'
 import { describe, expect, it, vi } from 'vitest'
 import type { WebContents } from 'electron'
-import { MindMeshDatabase } from '../src/main/database'
+import { MindMeshDatabase, runtimeContextKey } from '../src/main/database'
 import { MindMeshServices } from '../src/main/services'
 import {
   SessionResumeUnsupportedError,
@@ -920,7 +920,7 @@ describe('session context', () => {
       expect(run.mock.calls[2][2]).not.toBe('old-session')
       expect(
         db.getOrCreateRuntimeSession(
-          `private:${agent.id}`,
+          runtimeContextKey(`private:${agent.id}`, agent.id),
           agent,
           'unused',
           getAgentCapabilityHash(agent)

@@ -58,7 +58,7 @@ vi.mock('@deepseek-ai/dsh-sdk-client', () => ({
   JsonRpcResponseError: class extends Error {},
 }))
 import { DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
-import { MindMeshDatabase } from '../src/main/database'
+import { MindMeshDatabase, runtimeContextKey } from '../src/main/database'
 import { MindMeshServices } from '../src/main/services'
 
 const dirs: string[] = []
@@ -343,7 +343,7 @@ it('provider saves preserve an active answer and prevent its late Session ID fro
     expect(sdk.closed).toEqual([])
     await service.sendPrivate(agent.id, 'next')
     const current = db.getOrCreateRuntimeSession(
-      `private:${agent.id}`,
+      runtimeContextKey(`private:${agent.id}`, agent.id),
       agent,
       'unused',
       adapter.capabilityHash(agent)
@@ -351,7 +351,7 @@ it('provider saves preserve an active answer and prevent its late Session ID fro
     sdk.finish?.()
     await held
     const after = db.getOrCreateRuntimeSession(
-      `private:${agent.id}`,
+      runtimeContextKey(`private:${agent.id}`, agent.id),
       agent,
       'unused',
       adapter.capabilityHash(agent)

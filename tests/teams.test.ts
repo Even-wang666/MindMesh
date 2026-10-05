@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { downgradeToSchema2 } from './service-mocks'
 import { AgencyProvider, parseAgencyTemplate } from '../src/main/agency-provider'
 import { MindMeshDatabase } from '../src/main/database'
 import { MarketplaceCatalogService } from '../src/main/marketplace'
@@ -235,6 +236,7 @@ describe('curated Team installation', () => {
     initial.close()
     const raw = new DatabaseSync(file)
     raw.exec('DROP TABLE space_sources')
+    downgradeToSchema2(raw)
     raw.prepare("UPDATE app_meta SET value = '3' WHERE key = 'schema_version'").run()
     raw.prepare("UPDATE app_meta SET value = '7' WHERE key = 'plugin_set_generation'").run()
     raw.close()

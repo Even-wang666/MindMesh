@@ -13,7 +13,7 @@ import { join, resolve, sep } from 'node:path'
 import { expect, test, vi } from 'vitest'
 import { startPluginFixtureRegistry } from '../scripts/plugin-fixture-registry.mjs'
 import { startPluginModelFixture } from '../scripts/plugin-model-fixture.mjs'
-import { MindMeshDatabase } from '../src/main/database'
+import { MindMeshDatabase, runtimeContextKey } from '../src/main/database'
 import { PluginSetManager } from '../src/main/plugins/plugin-set'
 import { PluginManager, PluginStaging } from '../src/main/plugins/plugin-manager'
 import { DeepSeekHarnessAdapter } from '../src/main/harness-adapter'
@@ -151,7 +151,7 @@ test('full materializes the validated lockfile; core physically contains no thir
       const start = model.requests.length
       await services.sendPrivate(member.id, 'new private request', [], { permission: 'full' })
       newSession = db.getOrCreateRuntimeSession(
-        `private:${member.id}`,
+        runtimeContextKey(`private:${member.id}`, member.id),
         member,
         'unused',
         updated.identity.capabilityHash
@@ -168,7 +168,7 @@ test('full materializes the validated lockfile; core physically contains no thir
     expect((await old).at(-1)?.content).toContain('fixture:1.0.0')
     expect(
       db.getOrCreateRuntimeSession(
-        `private:${member.id}`,
+        runtimeContextKey(`private:${member.id}`, member.id),
         member,
         'unused',
         adapter.capabilityHash(member, 'full')

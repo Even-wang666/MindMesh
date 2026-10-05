@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it, vi } from 'vitest'
-import { MindMeshDatabase } from '../src/main/database'
+import { MindMeshDatabase, runtimeContextKey } from '../src/main/database'
 import { createSkillReference } from '../src/shared/skill-reference'
 import { getAgentCapabilityHash } from '../src/main/agent-capability'
 
@@ -513,13 +513,13 @@ describe('space membership and agent deletion', () => {
       })
       const capabilityHash = getAgentCapabilityHash(agent)
       db.getOrCreateRuntimeSession(
-        `space:${first.id}:${agent.id}`,
+        runtimeContextKey(`space:${first.id}`, agent.id),
         agent,
         'first-session',
         capabilityHash
       )
       db.getOrCreateRuntimeSession(
-        `space:${second.id}:${agent.id}`,
+        runtimeContextKey(`space:${second.id}`, agent.id),
         agent,
         'second-session',
         capabilityHash
@@ -530,12 +530,20 @@ describe('space membership and agent deletion', () => {
       expect(db.listMessages('space', second.id)).toHaveLength(1)
       expect(db.listMessages('private', agent.id)).toHaveLength(1)
       expect(
-        db.getOrCreateRuntimeSession(`space:${second.id}:${agent.id}`, agent, 'new', capabilityHash)
-          .harnessSessionId
+        db.getOrCreateRuntimeSession(
+          runtimeContextKey(`space:${second.id}`, agent.id),
+          agent,
+          'new',
+          capabilityHash
+        ).harnessSessionId
       ).toBe('second-session')
       expect(
-        db.getOrCreateRuntimeSession(`space:${first.id}:${agent.id}`, agent, 'new', capabilityHash)
-          .harnessSessionId
+        db.getOrCreateRuntimeSession(
+          runtimeContextKey(`space:${first.id}`, agent.id),
+          agent,
+          'new',
+          capabilityHash
+        ).harnessSessionId
       ).toBe('new')
     } finally {
       db.close()
@@ -632,7 +640,12 @@ describe('workspace selection', () => {
     const db = new MindMeshDatabase(path)
     const agent = db.listAgents()[0]
     const capabilityHash = getAgentCapabilityHash(agent)
-    db.getOrCreateRuntimeSession(`private:${agent.id}`, agent, 'old-session', capabilityHash)
+    db.getOrCreateRuntimeSession(
+      runtimeContextKey(`private:${agent.id}`, agent.id),
+      agent,
+      'old-session',
+      capabilityHash
+    )
     db.addMessage({
       scope: 'private',
       scopeId: agent.id,
@@ -648,7 +661,7 @@ describe('workspace selection', () => {
         expect(reopened.getWorkspacePath()).toBe(directory)
         expect(
           reopened.getOrCreateRuntimeSession(
-            `private:${agent.id}`,
+            runtimeContextKey(`private:${agent.id}`, agent.id),
             agent,
             'new-session',
             capabilityHash
@@ -710,8 +723,15 @@ describe('runtime sessions', () => {
       const db = new MindMeshDatabase(path)
       try {
         const agent = db.listAgents()[0]
+        // 'private:old' is re-keyed to a conversation on upgrade, so the row is
+        // looked up under its new identity rather than dropped.
         expect(
-          db.getOrCreateRuntimeSession('private:old', agent, 'new-session', 'current-hash')
+          db.getOrCreateRuntimeSession(
+            runtimeContextKey('private:old', 'old'),
+            agent,
+            'new-session',
+            'current-hash'
+          )
         ).toMatchObject({ harnessSessionId: 'new-session', agent, lastConsumedMessageSequence: 0 })
         expect(db.referencedCapabilityHashes()).toEqual(['current-hash'])
       } finally {
@@ -727,7 +747,7 @@ describe('runtime sessions', () => {
     const path = join(directory, 'mindmesh.sqlite')
     const db = new MindMeshDatabase(path)
     const agent = db.listAgents()[0]
-    const key = `space:example:${agent.id}`
+    const key = runtimeContextKey('space:example', agent.id)
     db.getOrCreateRuntimeSession(key, agent, 'original-session', getAgentCapabilityHash(agent))
     db.saveRuntimeSessionProgress(key, 'saved-session', 7)
     db.close()

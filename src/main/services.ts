@@ -16,7 +16,7 @@ import type {
 import { buildPrivatePrompt, buildSpacePrompt, parseMentions } from '../shared/domain'
 import { getModelContextWindow, MODEL_CATALOG, supportsImageInput } from '../shared/model-providers'
 import { validateChatContent } from '../shared/chat-content'
-import { MindMeshDatabase } from './database'
+import { MindMeshDatabase, runtimeContextKey, runtimeSessionId } from './database'
 import { DeepSeekHarnessAdapter, SessionResumeUnsupportedError } from './harness-adapter'
 import type { ModelProviderSettings } from './model-provider-settings'
 import type { RuntimeRequest } from './runtime-revision'
@@ -545,14 +545,19 @@ export class MindMeshServices {
     options: ChatRunOptions | undefined,
     hasImages: boolean
   ) {
-    const contextKey = scope === 'private' ? `private:${scopeId}` : `space:${scopeId}:${agent.id}`
-    const sessionId = scope === 'private' ? `private-${scopeId}` : `space-${scopeId}-${agent.id}`
+    // A harness session is scoped to one conversation inside one agent. Keying on
+    // the agent alone would let a second conversation resume the first one's
+    // context, so the UI would look like a fresh chat while the model still
+    // remembered everything.
+    const conversationId = this.db.conversationIdFor(scope, scopeId)
+    const contextKey = runtimeContextKey(conversationId, agent.id)
+    const sessionId = runtimeSessionId(conversationId, agent.id)
     let session = this.db.getOrCreateRuntimeSession(
       contextKey,
       runAgent,
       sessionId,
       getAgentCapabilityHash(runAgent),
-      scope === 'space' ? this.db.lastAgentMessageSequence(scopeId, agent.id) : 0
+      scope === 'space' ? this.db.lastAgentMessageSequence(conversationId, agent.id) : 0
     )
     // Persona stays a conversation snapshot; tools and reasoning effort follow live configuration.
     let sessionRunAgent = resolveRunAgent(
@@ -632,7 +637,7 @@ export class MindMeshServices {
     }
     const run = (input: string, id: string, freshSession = false) =>
       this.harness.run(agent, input, id, onText, attachments, runtimeRequest, freshSession, {
-        contextKey: scope === 'private' ? `private:${scopeId}` : `space:${scopeId}:${agent.id}`,
+        contextKey: runtimeContextKey(this.db.conversationIdFor(scope, scopeId), agent.id),
         requestId,
         recoveryPrompt,
       })

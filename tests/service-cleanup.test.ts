@@ -1,7 +1,7 @@
 import { getAgentCapabilityHash } from '../src/main/agent-capability'
 import { mockHarness, mockProviderSettings } from './service-mocks'
 import { describe, expect, it, vi } from 'vitest'
-import { MindMeshDatabase } from '../src/main/database'
+import { MindMeshDatabase, runtimeContextKey } from '../src/main/database'
 import {
   SessionResumeUnsupportedError,
   type DeepSeekHarnessAdapter,
@@ -29,7 +29,7 @@ describe('orphan Harness home cleanup', () => {
     try {
       const agent = db.listAgents()[0]
       db.getOrCreateRuntimeSession(
-        `private:${agent.id}`,
+        runtimeContextKey(`private:${agent.id}`, agent.id),
         agent,
         'session',
         getAgentCapabilityHash(agent)
@@ -50,7 +50,7 @@ describe('orphan Harness home cleanup', () => {
       const space = db.listSpaces()[0]
       const agent = db.getAgent(space.memberIds[0])!
       db.getOrCreateRuntimeSession(
-        `space:${space.id}:${agent.id}`,
+        runtimeContextKey(`space:${space.id}`, agent.id),
         agent,
         'session',
         getAgentCapabilityHash(agent)
@@ -70,7 +70,7 @@ describe('orphan Harness home cleanup', () => {
     try {
       const agent = db.listAgents()[0]
       db.getOrCreateRuntimeSession(
-        `private:${agent.id}`,
+        runtimeContextKey(`private:${agent.id}`, agent.id),
         agent,
         'session',
         getAgentCapabilityHash(agent)

@@ -16,7 +16,7 @@ import type { Agent } from '../src/shared/contracts'
 import { getRuntimeIdentity } from '../src/main/runtime-revision'
 import { RuntimeHomeMaterializer } from '../src/main/runtime-home-materializer'
 import { getAgentCapabilityBaseHash } from '../src/main/agent-capability'
-import { MindMeshDatabase } from '../src/main/database'
+import { MindMeshDatabase, runtimeContextKey } from '../src/main/database'
 import { MindMeshServices } from '../src/main/services'
 
 const launches = vi.hoisted(() => [] as { dshHome: string; env: Record<string, string> }[])
@@ -276,7 +276,7 @@ describe('Runtime V2 identity', () => {
       })
       await services.sendSpace(space.id, `@${member.name} space remembered`)
       const before = db.getOrCreateRuntimeSession(
-        `private:${member.id}`,
+        runtimeContextKey(`private:${member.id}`, member.id),
         member,
         'unused',
         adapter.capabilityHash(member)
@@ -294,7 +294,7 @@ describe('Runtime V2 identity', () => {
       expect(prompts.at(-2)).toContain('private remembered')
       expect(prompts.at(-1)).toContain('space remembered')
       const after = db.getOrCreateRuntimeSession(
-        `private:${member.id}`,
+        runtimeContextKey(`private:${member.id}`, member.id),
         member,
         'unused',
         adapter.capabilityHash(member)
