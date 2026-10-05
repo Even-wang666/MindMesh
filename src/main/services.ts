@@ -9,6 +9,7 @@ import type {
   Message,
   ModelProviderId,
   ModelProviderStatus,
+  RunEndReason,
   RuntimeEvent,
   RuntimeStatus,
   SaveModelProviderInput,
@@ -39,10 +40,10 @@ const SHUTDOWN_TIMEOUT_MS = 15_000
  * fires first. Non-delta events (run:start, run:end, error, usage) are flushed
  * immediately because they are rare and latency-sensitive.
  */
-const EVENT_FLUSH_MS = 120
-const EVENT_BATCH_LIMIT = 32
+export const EVENT_FLUSH_MS = 120
+export const EVENT_BATCH_LIMIT = 32
 
-class RuntimeEventBuffer {
+export class RuntimeEventBuffer {
   private queue: RuntimeEvent[] = []
   private timer: ReturnType<typeof setTimeout> | null = null
   private flushListeners: Array<(events: RuntimeEvent[]) => void> = []
@@ -302,7 +303,7 @@ export class MindMeshServices {
       options,
       images.length > 0
     )
-    this.db.addMessage({
+    const triggerMessage = this.db.addMessage({
       scope: 'private',
       scopeId: agentId,
       authorType: 'user',
@@ -310,8 +311,12 @@ export class MindMeshServices {
       content,
       attachments: images,
     })
-    const history = this.db.listMessages(privateConversation).slice(-31, -1)
+    // The user message becomes the trigger for this execution; the run id and
+    // execution id are minted once and threaded through every event so the
+    // renderer and, later, the runs/executions tables can join them.
+    const executionId = crypto.randomUUID()
     const requestId = crypto.randomUUID()
+    const history = this.db.listMessages(privateConversation).slice(-31, -1)
     this.emitProgress('private', agentId, sessionAgent.name)
     let result
     try {
@@ -322,6 +327,8 @@ export class MindMeshServices {
         'private',
         agentId,
         requestId,
+        executionId,
+        triggerMessage.id,
         () => buildPrivatePrompt(sessionAgent, promptContent, history),
         images,
         runtimeRequest
@@ -342,6 +349,7 @@ export class MindMeshServices {
             stopped: true,
           })
         }
+        this.emitRunEnd(requestId, privateConversation, agent.id, 'stopped')
         void this.refreshDeepSeekBalance()
         return this.db.listMessages(privateConversation)
       }
@@ -353,10 +361,17 @@ export class MindMeshServices {
         authorName: 'MindMesh',
         content: `${agent.name} 回复失败：${runtimeFailureDetail(this.runtimeFailureKind)}`,
       })
+      this.emitRunError(
+        requestId,
+        privateConversation,
+        agent.id,
+        runtimeFailureDetail(this.runtimeFailureKind)
+      )
+      this.emitRunEnd(requestId, privateConversation, agent.id, 'error')
       return this.db.listMessages(privateConversation)
     }
     if (this.shuttingDown || !this.db.getAgent(agentId)) return []
-    this.db.addMessage({
+    const reply = this.db.addMessage({
       scope: 'private',
       scopeId: agentId,
       authorType: 'agent',
@@ -370,6 +385,13 @@ export class MindMeshServices {
       result.sessionId ?? session.harnessSessionId,
       0,
       session
+    )
+    this.emitRunEnd(
+      requestId,
+      privateConversation,
+      agent.id,
+      result.endReason ?? 'completed',
+      reply.id
     )
     void this.refreshDeepSeekBalance()
     return this.db.listMessages(privateConversation)
@@ -414,7 +436,7 @@ export class MindMeshServices {
             attachments
           )
         : validateImageAttachments('', '', attachments)
-    this.db.addMessage({
+    const triggerMessage = this.db.addMessage({
       scope: 'space',
       scopeId: spaceId,
       authorType: 'user',
@@ -422,6 +444,9 @@ export class MindMeshServices {
       content,
       attachments: images,
     })
+    // One execution fans out to one run per mentioned agent; all share the
+    // trigger message and execution id.
+    const executionId = crypto.randomUUID()
     if (mentioned.length === 0) {
       this.db.addMessage({
         scope: 'space',
@@ -451,6 +476,7 @@ export class MindMeshServices {
       )
       const prompt = buildSpacePrompt(sessionAgent, space, visibleMessages)
       this.emitProgress('space', spaceId, sessionAgent.name)
+      const requestId = crypto.randomUUID()
       let result
       try {
         result = await this.runAgent(
@@ -459,7 +485,9 @@ export class MindMeshServices {
           session.harnessSessionId,
           'space',
           spaceId,
-          crypto.randomUUID(),
+          requestId,
+          executionId,
+          triggerMessage.id,
           () => buildSpacePrompt(sessionAgent, space, this.db.listMessages(spaceConversation)),
           images,
           runtimeRequest
@@ -486,6 +514,7 @@ export class MindMeshServices {
               session
             )
           }
+          this.emitRunEnd(requestId, spaceConversation, agent.id, 'stopped')
           void this.refreshDeepSeekBalance()
           break
         }
@@ -497,6 +526,13 @@ export class MindMeshServices {
           authorName: 'MindMesh',
           content: `${agent.name} 回复失败：${runtimeFailureDetail(this.runtimeFailureKind)}`,
         })
+        this.emitRunError(
+          requestId,
+          spaceConversation,
+          agent.id,
+          runtimeFailureDetail(this.runtimeFailureKind)
+        )
+        this.emitRunEnd(requestId, spaceConversation, agent.id, 'error')
         continue
       }
       if (this.shuttingDown || !this.db.getSpace(spaceId)) break
@@ -515,6 +551,13 @@ export class MindMeshServices {
         result.sessionId ?? session.harnessSessionId,
         reply.sequence,
         session
+      )
+      this.emitRunEnd(
+        requestId,
+        spaceConversation,
+        agent.id,
+        result.endReason ?? 'completed',
+        reply.id
       )
       void this.refreshDeepSeekBalance()
     }
@@ -678,6 +721,8 @@ export class MindMeshServices {
     scope: Message['scope'],
     scopeId: string,
     requestId: string,
+    executionId: string,
+    triggerMessageId: string,
     recoveryPrompt: () => string,
     attachments: ChatImageAttachment[],
     runtimeRequest: RuntimeRequest
@@ -692,6 +737,9 @@ export class MindMeshServices {
       conversationId,
       agentId: agent.id,
       agentName: agent.name,
+      executionId,
+      triggerMessageId,
+      time: Date.now(),
     })
     let streamed = ''
     let streamedReasoning = ''
@@ -726,7 +774,12 @@ export class MindMeshServices {
       this.emitText(requestId, scope, scopeId, agent.id, text, kind)
     }
     const onRuntimeEvent = (event: RuntimeEvent): void => {
-      if (stopRequested && event.type !== 'run:end') return
+      if (stopRequested) {
+        // A confirmed stop suppresses further body text, but the adapter's
+        // stranded-tool aborts must still reach the renderer or its tool cards
+        // stay "running" forever.
+        if (event.type === 'text:delta' || event.type === 'reasoning:delta') return
+      }
       this.eventBuffer.add(event)
     }
     const run = (input: string, id: string, freshSession = false) =>
@@ -742,6 +795,7 @@ export class MindMeshServices {
           contextKey,
           requestId,
           recoveryPrompt,
+          conversationId,
         },
         onRuntimeEvent
       )
@@ -763,26 +817,10 @@ export class MindMeshServices {
     } finally {
       if (this.activeStops.get(stopKey) === stop) this.activeStops.delete(stopKey)
     }
-    if (stopRequested) {
-      this.eventBuffer.add({
-        type: 'run:end',
-        requestId,
-        conversationId,
-        agentId: agent.id,
-      })
-      this.eventBuffer.flush()
-      throw new ChatStoppedError(streamed, streamedReasoning)
-    }
+    if (stopRequested) throw new ChatStoppedError(streamed, streamedReasoning)
     if (result.text.startsWith(streamed) && result.text.length > streamed.length) {
       this.emitText(requestId, scope, scopeId, agent.id, result.text.slice(streamed.length))
     }
-    this.eventBuffer.add({
-      type: 'run:end',
-      requestId,
-      conversationId,
-      agentId: agent.id,
-    })
-    this.eventBuffer.flush()
     this.runtimeFailed = false
     return result
   }
@@ -800,6 +838,40 @@ export class MindMeshServices {
     kind: 'text' | 'reasoning' = 'text'
   ): void {
     this.renderer()?.send('chat:delta', { requestId, scope, scopeId, agentId, text, kind })
+  }
+
+  /**
+   * Emit the single terminal run:end for a run. It must fire exactly once per
+   * run — on success, on a confirmed stop, and on error — so the renderer never
+   * leaves a run dangling. `responseMessageId` links a completed run back to the
+   * assistant message just persisted.
+   */
+  private emitRunEnd(
+    requestId: string,
+    conversationId: string,
+    agentId: string,
+    reason: RunEndReason,
+    responseMessageId?: string
+  ): void {
+    this.eventBuffer.add({
+      type: 'run:end',
+      requestId,
+      conversationId,
+      agentId,
+      reason,
+      ...(responseMessageId ? { responseMessageId } : {}),
+    })
+    this.eventBuffer.flush()
+  }
+
+  private emitRunError(
+    requestId: string,
+    conversationId: string,
+    agentId: string,
+    message: string
+  ): void {
+    this.eventBuffer.add({ type: 'error', requestId, conversationId, agentId, message })
+    this.eventBuffer.flush()
   }
 }
 

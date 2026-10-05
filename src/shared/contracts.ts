@@ -149,17 +149,44 @@ export type ChatDelta = {
 export type ChatProgress = Pick<Message, 'scope' | 'scopeId'> & { agentName: string }
 
 /**
+ * Why a run reached its terminal state.
+ *
+ * `completed` and `error` come from DSH `turn/end` `reason.kind`; `stopped` is
+ * asserted by the services layer when `stop()` succeeds but no `turn/end`
+ * arrives (closing the runtime cuts the event stream mid-flight). `blocked`,
+ * `max-tokens` and `interrupted` map the remaining `TurnEndReason` kinds.
+ */
+export type RunEndReason =
+  | 'completed'
+  | 'stopped'
+  | 'error'
+  | 'blocked'
+  | 'max-tokens'
+  | 'interrupted'
+
+/**
  * The runtime event vocabulary surfaced to the renderer.
  *
- * Each variant maps to one DSH `session.event` the spike captured, except
- * `RunStart` and `RunEnd` which the services layer synthesises from the
- * request lifecycle (DSH has no per-run envelope). `Usage` carries the
- * per-request accounting the spike proved is non-cumulative, so the caller can
- * sum runs instead of relying on a single total.
+ * Identity fields, in descending order of authority (spike §6, v9 review):
+ *   - `requestId`  = the run id. One MindMesh execution of one agent, and the
+ *     value `runs.id` will hold. A session can host several runs.
+ *   - `sessionId`  = the native `params.sessionId` from the DSH notification.
+ *     This is the authoritative Session identity and is NOT interchangeable
+ *     with `requestId` — the SDK subscribes a Session tree, so child sessions
+ *     have their own `seq` space.
+ *   - `seq`        = the native per-Session monotonic sequence. Dedup/sort key
+ *     is `(sessionId, seq)`, never `seq` alone and never `runId`.
+ *   - `conversationId` = the `conversationIdFor(scope, scopeId)` value such as
+ *     `private:<agentId>` or `space:<spaceId>`. This is what the renderer's
+ *     `conversationRef` holds, so it must match exactly — not the runtime
+ *     session `contextKey` (`conversation:<conversationId>:<agentId>`).
+ *   - `agentId`     = the agent that produced the event.
+ *   - `time`        = native epoch-millis timestamp when available.
  *
- * Every event carries `requestId` (the run identity) and `conversationId`
- * (the conversation the run belongs to) so the reducer can attribute events
- * without rebuilding scope joins.
+ * `run:start` carries `executionId` and `triggerMessageId` (one level above the
+ * run — an Execution fans out to several runs); `run:end` carries the terminal
+ * `reason` and, once persisted, the `responseMessageId` that links a completed
+ * run back to its stored assistant message.
  */
 export type RuntimeEvent =
   | {
@@ -168,26 +195,38 @@ export type RuntimeEvent =
       conversationId: string
       agentId: string
       agentName: string
+      executionId: string
+      triggerMessageId: string
+      time: number
     }
   | {
       type: 'text:delta'
       requestId: string
+      sessionId: string
+      seq: number
       conversationId: string
       agentId: string
+      time: number
       text: string
     }
   | {
       type: 'reasoning:delta'
       requestId: string
+      sessionId: string
+      seq: number
       conversationId: string
       agentId: string
+      time: number
       text: string
     }
   | {
       type: 'tool:start'
       requestId: string
+      sessionId: string
+      seq: number
       conversationId: string
       agentId: string
+      time: number
       callId: string
       toolName: string
       displayName: string
@@ -195,33 +234,46 @@ export type RuntimeEvent =
   | {
       type: 'tool:delta'
       requestId: string
+      sessionId: string
+      seq: number
       conversationId: string
       agentId: string
+      time: number
       callId: string
       text: string
     }
   | {
       type: 'tool:output'
       requestId: string
+      sessionId: string
+      seq: number
       conversationId: string
       agentId: string
+      time: number
       callId: string
       text: string
       isError: boolean
+      truncated: boolean
     }
   | {
       type: 'tool:end'
       requestId: string
+      sessionId: string
+      seq: number
       conversationId: string
       agentId: string
+      time: number
       callId: string
       aborted: boolean
     }
   | {
       type: 'usage'
       requestId: string
+      sessionId: string
+      seq: number
       conversationId: string
       agentId: string
+      time: number
       inputTokens: number
       outputTokens: number
       cacheReadTokens: number
@@ -239,6 +291,8 @@ export type RuntimeEvent =
       requestId: string
       conversationId: string
       agentId: string
+      reason: RunEndReason
+      responseMessageId?: string
     }
 
 export type MindMeshApi = {

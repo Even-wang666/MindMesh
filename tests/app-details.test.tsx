@@ -14,11 +14,11 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   Agent,
-  ChatDelta,
   ChatProgress,
   Message,
   MindMeshApi,
   ModelProviderStatus,
+  RuntimeEvent,
   SkillInstallProgress,
   Space,
   UserProfile,
@@ -1052,7 +1052,7 @@ describe('space background', () => {
 describe('chat flow', () => {
   it('opens existing conversations at the bottom without scrolling through history', async () => {
     const api = mockApi()
-    let notify!: (event: ChatDelta) => void
+    let notify!: (event: RuntimeEvent) => void
     api.chat.messages = vi.fn(
       async (): Promise<Message[]> => [
         {
@@ -1067,7 +1067,7 @@ describe('chat flow', () => {
         },
       ]
     )
-    api.chat.onDelta = vi.fn((listener) => {
+    api.chat.onRuntimeEvent = vi.fn((listener) => {
       notify = listener
       return () => undefined
     })
@@ -1082,10 +1082,13 @@ describe('chat flow', () => {
     scrollIntoView.mockClear()
     act(() =>
       notify({
+        type: 'text:delta',
         requestId: 'request',
-        scope: 'private',
-        scopeId: agent.id,
+        sessionId: 's',
+        seq: 1,
+        conversationId: `private:${agent.id}`,
         agentId: agent.id,
+        time: 0,
         text: '新内容',
       })
     )
@@ -1552,9 +1555,9 @@ describe('chat flow', () => {
 
   it('shows a reply event before the send promise resolves', async () => {
     const api = mockApi()
-    let notify!: (event: ChatDelta) => void
+    let notify!: (event: RuntimeEvent) => void
     let resolveSend!: (messages: Message[]) => void
-    api.chat.onDelta = vi.fn((listener) => {
+    api.chat.onRuntimeEvent = vi.fn((listener) => {
       notify = listener
       return () => undefined
     })
@@ -1576,11 +1579,13 @@ describe('chat flow', () => {
     expect(screen.getByRole('status').closest('.message')).toHaveTextContent('Researcher')
     act(() =>
       notify({
+        type: 'reasoning:delta',
         requestId: 'request',
-        scope: 'private',
-        scopeId: agent.id,
+        sessionId: 's',
+        seq: 1,
+        conversationId: `private:${agent.id}`,
         agentId: agent.id,
-        kind: 'reasoning',
+        time: 0,
         text: '先分析\n\n再回答',
       })
     )
@@ -1589,10 +1594,13 @@ describe('chat flow', () => {
     await waitFor(() => expect(thinking.querySelectorAll('p')).toHaveLength(2))
     act(() =>
       notify({
+        type: 'text:delta',
         requestId: 'request',
-        scope: 'private',
-        scopeId: agent.id,
+        sessionId: 's',
+        seq: 2,
+        conversationId: `private:${agent.id}`,
         agentId: agent.id,
+        time: 0,
         text: '**正在生成**',
       })
     )
@@ -1603,10 +1611,10 @@ describe('chat flow', () => {
 
   it('turns the send button into an enabled stop button while a reply is pending', async () => {
     const api = mockApi()
-    let notify!: (event: ChatDelta) => void
+    let notify!: (event: RuntimeEvent) => void
     let resolveSend!: (messages: Message[]) => void
     let resolveStop!: (stopped: boolean) => void
-    api.chat.onDelta = vi.fn((listener) => {
+    api.chat.onRuntimeEvent = vi.fn((listener) => {
       notify = listener
       return () => undefined
     })
@@ -1636,10 +1644,13 @@ describe('chat flow', () => {
     await waitFor(() => expect(stop).toHaveBeenCalledWith('private', agent.id))
     act(() =>
       notify({
+        type: 'text:delta',
         requestId: 'late',
-        scope: 'private',
-        scopeId: agent.id,
+        sessionId: 's',
+        seq: 1,
+        conversationId: `private:${agent.id}`,
         agentId: agent.id,
+        time: 0,
         text: '停止后不应显示',
       })
     )

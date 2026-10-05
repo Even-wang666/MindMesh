@@ -20,6 +20,7 @@ export type ToolCallState = {
   displayName: string
   status: 'running' | 'ok' | 'error' | 'aborted'
   output: string
+  truncated: boolean
 }
 
 export function useChatController(
@@ -78,14 +79,9 @@ export function useChatController(
         })
       }
     })
-    const offDelta = window.mindmesh.chat.onDelta((event) => {
-      if (conversationRef.current !== `${event.scope}:${event.scopeId}`) return
-      const request = activeRun.current
-      if (request?.stopRequested && request.scope === event.scope && request.id === event.scopeId)
-        return
-      if (event.kind === 'reasoning') setStreamingReasoning((current) => current + event.text)
-      else setStreamingText((current) => current + event.text)
-    })
+    // The legacy chat:delta channel is superseded by onRuntimeEvent, which carries
+    // the same text/reasoning deltas. Subscribing to both would append every token
+    // twice, so body text and reasoning come only from onRuntimeEvent now.
     const offRuntimeEvent = window.mindmesh.chat.onRuntimeEvent((event) => {
       if (conversationRef.current !== event.conversationId) return
       const request = activeRun.current
@@ -107,6 +103,7 @@ export function useChatController(
               displayName: event.displayName,
               status: 'running',
               output: '',
+              truncated: false,
             },
           ])
           break
@@ -123,7 +120,12 @@ export function useChatController(
           setToolCalls((current) =>
             current.map((call) =>
               call.callId === event.callId
-                ? { ...call, output: event.text, status: event.isError ? 'error' : 'ok' }
+                ? {
+                    ...call,
+                    output: event.text,
+                    status: event.isError ? 'error' : 'ok',
+                    truncated: event.truncated,
+                  }
                 : call
             )
           )
@@ -144,7 +146,6 @@ export function useChatController(
     })
     return () => {
       offProgress()
-      offDelta()
       offRuntimeEvent()
     }
   }, [])

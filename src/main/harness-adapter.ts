@@ -1,9 +1,10 @@
 import { JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, TurnEndReason } from '@deepseek-ai/dsh-session'
 import type {
   Agent,
   ChatImageAttachment,
   ChatPermission,
+  RunEndReason,
   RuntimeEvent,
   RuntimeStatus,
 } from '../shared/contracts'
@@ -18,9 +19,48 @@ import {
 } from './runtime-revision'
 import { RuntimeSupervisor, type RuntimeOwner } from './runtime-supervisor'
 import { conversationRuntimeKeyPrefix } from './database'
+import { redactPluginDiagnostic } from './plugins/plugin-diagnostics'
 import { randomUUID } from 'node:crypto'
 import { RuntimeFailure, runtimeFailureDetail } from './runtime-errors'
 import type { PluginSetManager } from './plugins/plugin-set'
+
+/**
+ * A tool result can be arbitrarily large (a 100k-character file read is routine).
+ * Streaming that raw into an IPC event would freeze the renderer, so the preview
+ * is capped here and `truncated` flags the cut. The cap is a preview only — the
+ * full output is still what the run persists to the tool_call row later.
+ */
+const MAX_TOOL_PREVIEW_CHARS = 4_000
+
+/** Cap a tool result to a preview and mark whether anything was cut. */
+export function toolPreview(value: string): { text: string; truncated: boolean } {
+  const text = redactPluginDiagnostic(value)
+  if (text.length <= MAX_TOOL_PREVIEW_CHARS) return { text, truncated: false }
+  return { text: text.slice(0, MAX_TOOL_PREVIEW_CHARS), truncated: true }
+}
+
+/** Map a DSH turn-end reason onto the renderer-visible terminal state. */
+export function mapTurnEndReason(reason: TurnEndReason): RunEndReason {
+  switch (reason.kind) {
+    case 'completed':
+      return 'completed'
+    case 'aborted':
+      return 'stopped'
+    case 'error':
+      return 'error'
+    case 'blocked':
+      return 'blocked'
+    case 'max-tokens':
+      return 'max-tokens'
+    case 'interrupted':
+      return 'interrupted'
+    case 'forked':
+      // A fork boundary is not a failure; the source turn simply ends.
+      return 'completed'
+    default:
+      return 'completed'
+  }
+}
 
 export class SessionResumeUnsupportedError extends Error {
   constructor() {
@@ -152,9 +192,17 @@ export class DeepSeekHarnessAdapter {
     attachments: ChatImageAttachment[] = [],
     request?: RuntimeRequest,
     freshSession = false,
-    runOptions?: Omit<RuntimeOwner, 'agentId'> & { recoveryPrompt: () => string },
+    runOptions?: Omit<RuntimeOwner, 'agentId'> & {
+      recoveryPrompt: () => string
+      conversationId: string
+    },
     onRuntimeEvent?: (event: RuntimeEvent) => void
-  ): Promise<{ text: string; reasoning?: string; sessionId?: string }> {
+  ): Promise<{
+    text: string
+    reasoning?: string
+    sessionId?: string
+    endReason?: RunEndReason
+  }> {
     const snapshot = request ?? this.prepareRun(agent, 'chat')
     agent = snapshot.agent
     const provider = snapshot.providers.find((value) => value.id === agent.provider)
@@ -167,15 +215,25 @@ export class DeepSeekHarnessAdapter {
       contextKey: runOptions?.contextKey ?? agent.id,
       requestId: runOptions?.requestId ?? randomUUID(),
     })
-    // The reducer attributes events by requestId and conversationId. Both are
-    // derived from the run options the services layer supplies; without them the
-    // adapter would have to fabricate ids that the renderer could not match.
+    // requestId is the run identity; conversationId must be the renderer-facing
+    // `conversationIdFor` value (`private:<id>` / `space:<id>`), NOT the runtime
+    // session `contextKey` (`conversation:<id>:<agentId>`). Using contextKey here
+    // was the original bug: the renderer filters on conversationId and would drop
+    // every event because the two never matched.
     const eventRequestId = runOptions?.requestId ?? ''
-    const eventConversationId = runOptions?.contextKey ?? agent.id
+    const eventConversationId = runOptions?.conversationId ?? agent.id
     const emit = (event: RuntimeEvent): void => onRuntimeEvent?.(event)
     const reasoning: string[] = []
     const assistantTexts: string[] = []
     const trace: string[] = []
+    // (sessionId, seq) dedup: the SDK subscribes a Session tree, so child
+    // sessions deliver events with an independent seq space. The native
+    // notification may also be re-delivered; only the first occurrence counts.
+    const seen = new Set<string>()
+    // Tool calls opened by tool/call but never closed by tool/result — an
+    // interrupted run strands these, and they must surface as aborted.
+    const openToolCalls = new Set<string>()
+    let terminalReason: RunEndReason | undefined
     let result
     let failure: unknown
     try {
@@ -203,6 +261,15 @@ export class DeepSeekHarnessAdapter {
           onNotification: (notification) => {
             if (notification.method !== 'session.event') return
             const event = notification.params.event as SessionEvent
+            const eventSessionId = String(notification.params.sessionId ?? '')
+            const seq = event.seq
+            const time = event.time
+            // Dedup on the authoritative (sessionId, seq) pair. seq is always
+            // present on a real wire event, but guard against a missing one so
+            // an untagged event is never silently dropped as a duplicate.
+            const dedupKey = typeof seq === 'number' ? `${eventSessionId}:${seq}` : null
+            if (dedupKey && seen.has(dedupKey)) return
+            if (dedupKey) seen.add(dedupKey)
 
             // assistant/message: text + reasoning + per-request usage
             if (event.type === 'assistant/message') {
@@ -217,8 +284,11 @@ export class DeepSeekHarnessAdapter {
                     emit({
                       type: 'reasoning:delta',
                       requestId: eventRequestId,
+                      sessionId: eventSessionId,
+                      seq,
                       conversationId: eventConversationId,
                       agentId: agent.id,
+                      time,
                       text: part,
                     })
                   }
@@ -233,8 +303,11 @@ export class DeepSeekHarnessAdapter {
                   emit({
                     type: 'text:delta',
                     requestId: eventRequestId,
+                    sessionId: eventSessionId,
+                    seq,
                     conversationId: eventConversationId,
                     agentId: agent.id,
+                    time,
                     text,
                   })
                 }
@@ -245,8 +318,11 @@ export class DeepSeekHarnessAdapter {
                 emit({
                   type: 'usage',
                   requestId: eventRequestId,
+                  sessionId: eventSessionId,
+                  seq,
                   conversationId: eventConversationId,
                   agentId: agent.id,
+                  time,
                   inputTokens: usage.inputTokens ?? 0,
                   outputTokens: usage.outputTokens ?? 0,
                   cacheReadTokens: usage.cacheReadTokens ?? 0,
@@ -257,11 +333,15 @@ export class DeepSeekHarnessAdapter {
 
             // tool/call: a tool invocation starts
             if (event.type === 'tool/call' && onRuntimeEvent) {
+              openToolCalls.add(event.data.callId)
               emit({
                 type: 'tool:start',
                 requestId: eventRequestId,
+                sessionId: eventSessionId,
+                seq,
                 conversationId: eventConversationId,
                 agentId: agent.id,
+                time,
                 callId: event.data.callId,
                 toolName: event.data.name,
                 // arguments is a JSON string (spike S0.1); the display name is
@@ -273,7 +353,8 @@ export class DeepSeekHarnessAdapter {
             // tool/result: a tool invocation completes
             if (event.type === 'tool/result' && onRuntimeEvent) {
               const message = event.data.message
-              const content =
+              openToolCalls.delete(message.toolCallId)
+              const raw =
                 typeof message.content === 'string'
                   ? message.content
                   : Array.isArray(message.content)
@@ -283,35 +364,42 @@ export class DeepSeekHarnessAdapter {
                         )
                         .join('')
                     : ''
+              // Redact secrets and cap the preview: a 100k-character file read
+              // must never enter the event verbatim. The full value is still
+              // what gets persisted to the tool_call row downstream.
+              const { text: preview, truncated } = toolPreview(raw)
               emit({
                 type: 'tool:output',
                 requestId: eventRequestId,
+                sessionId: eventSessionId,
+                seq,
                 conversationId: eventConversationId,
                 agentId: agent.id,
+                time,
                 callId: message.toolCallId,
-                text: content,
+                text: preview,
                 isError: Boolean(message.isError),
+                truncated,
               })
               emit({
                 type: 'tool:end',
                 requestId: eventRequestId,
+                sessionId: eventSessionId,
+                seq,
                 conversationId: eventConversationId,
                 agentId: agent.id,
+                time,
                 callId: message.toolCallId,
                 aborted: false,
               })
             }
 
-            // turn/end: DSH closed the turn; the services layer decides success
-            // vs stopped vs error, but the renderer benefits from knowing the
-            // harness considers this turn over.
-            if (event.type === 'turn/end' && onRuntimeEvent) {
-              emit({
-                type: 'run:end',
-                requestId: eventRequestId,
-                conversationId: eventConversationId,
-                agentId: agent.id,
-              })
+            // turn/end: the only protocol-authoritative terminal state. Other
+            // terminal outcomes (stop with no turn/end, harness rejection) are
+            // asserted by the services layer, so this only records the reason
+            // and lets services emit the single run:end.
+            if (event.type === 'turn/end') {
+              terminalReason = mapTurnEndReason(event.data.reason)
             }
           },
         })
@@ -341,6 +429,23 @@ export class DeepSeekHarnessAdapter {
       }
       throw error
     } finally {
+      // Stranded tool calls — interrupted before their tool/result — surface as
+      // aborted so the renderer does not show them as running forever.
+      if (onRuntimeEvent) {
+        for (const callId of openToolCalls) {
+          emit({
+            type: 'tool:end',
+            requestId: eventRequestId,
+            sessionId: '',
+            seq: -1,
+            conversationId: eventConversationId,
+            agentId: agent.id,
+            time: Date.now(),
+            callId,
+            aborted: true,
+          })
+        }
+      }
       await lease.release(failure)
     }
     // DSH may emit intermediate assistant text before the final reply. Persist the last text
@@ -351,6 +456,7 @@ export class DeepSeekHarnessAdapter {
       text,
       reasoning: (assistantTexts.length ? trace.slice(0, -1) : trace).join('\n\n') || undefined,
       sessionId: result.sessionId,
+      endReason: terminalReason,
     }
   }
 
