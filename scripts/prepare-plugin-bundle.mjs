@@ -4,6 +4,7 @@ import { resolve, join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { parse } from 'yaml'
 import { extract } from 'tar'
+import checkPluginBundle from './check-plugin-bundle.cjs'
 
 const root = resolve('.runtime', `plugin-build-${randomUUID()}`)
 const output = join(root, 'bundle')
@@ -115,6 +116,7 @@ writeFileSync(
   JSON.stringify(
     {
       schema: 1,
+      validationHash: checkPluginBundle.validationHash(process.cwd()),
       electronVersion: JSON.parse(readFileSync('node_modules/electron/package.json', 'utf8'))
         .version,
       runtimeVersion: runtime.runtimeVersion,

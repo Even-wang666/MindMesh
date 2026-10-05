@@ -1,5 +1,13 @@
 const { existsSync, readFileSync } = require('node:fs')
 const { join } = require('node:path')
+const { createHash } = require('node:crypto')
+
+function validationHash(project) {
+  const hash = createHash('sha256')
+  for (const file of ['out/main/index.js', 'pnpm-lock.yaml', 'resources/plugins/candidates.json'])
+    hash.update(file).update(readFileSync(join(project, file)))
+  return hash.digest('hex')
+}
 
 // Fail closed even when electron-builder is invoked directly instead of package:win.
 module.exports = async ({ packager, electronVersion }) => {
@@ -14,6 +22,7 @@ module.exports = async ({ packager, electronVersion }) => {
   const manifest = JSON.parse(readFileSync(join(project, 'package.json'), 'utf8'))
   if (
     bundle.schema !== 1 ||
+    bundle.validationHash !== validationHash(project) ||
     bundle.platform !== 'win32' ||
     bundle.arch !== process.arch ||
     bundle.electronVersion !== (electronVersion ?? manifest.devDependencies.electron) ||
@@ -45,3 +54,4 @@ module.exports = async ({ packager, electronVersion }) => {
   for (const name of ['store', 'cache', 'licenses'])
     if (!existsSync(join(root, name))) throw new Error(`Missing offline plugin payload: ${name}`)
 }
+module.exports.validationHash = validationHash
