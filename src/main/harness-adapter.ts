@@ -32,9 +32,17 @@ import type { PluginSetManager } from './plugins/plugin-set'
  */
 const MAX_TOOL_PREVIEW_CHARS = 4_000
 
-/** Cap a tool result to a preview and mark whether anything was cut. */
-export function toolPreview(value: string): { text: string; truncated: boolean } {
-  const text = redactPluginDiagnostic(value)
+/**
+ * Redact a tool result for the renderer: configured provider secrets first,
+ * then the shared credential redaction, then cookie headers (which the shared
+ * helper does not cover) and finally the preview cap.
+ */
+export function toolPreview(
+  value: string,
+  secrets: readonly string[] = []
+): { text: string; truncated: boolean } {
+  const text = redactPluginDiagnostic(value, secrets)
+    .replace(/((?:cookie|set-cookie)\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]')
   if (text.length <= MAX_TOOL_PREVIEW_CHARS) return { text, truncated: false }
   return { text: text.slice(0, MAX_TOOL_PREVIEW_CHARS), truncated: true }
 }
@@ -195,6 +203,8 @@ export class DeepSeekHarnessAdapter {
     runOptions?: Omit<RuntimeOwner, 'agentId'> & {
       recoveryPrompt: () => string
       conversationId: string
+      executionId: string
+      triggerMessageId: string
     },
     onRuntimeEvent?: (event: RuntimeEvent) => void
   ): Promise<{
@@ -202,6 +212,7 @@ export class DeepSeekHarnessAdapter {
     reasoning?: string
     sessionId?: string
     endReason?: RunEndReason
+    endError?: { message: string; code?: string; status?: number }
   }> {
     const snapshot = request ?? this.prepareRun(agent, 'chat')
     agent = snapshot.agent
@@ -219,9 +230,17 @@ export class DeepSeekHarnessAdapter {
     // `conversationIdFor` value (`private:<id>` / `space:<id>`), NOT the runtime
     // session `contextKey` (`conversation:<id>:<agentId>`). Using contextKey here
     // was the original bug: the renderer filters on conversationId and would drop
-    // every event because the two never matched.
+    // every event because the two never matched. executionId/triggerMessageId are
+    // threaded onto every event so any single one is independently routable.
     const eventRequestId = runOptions?.requestId ?? ''
     const eventConversationId = runOptions?.conversationId ?? agent.id
+    const executionId = runOptions?.executionId ?? ''
+    const triggerMessageId = runOptions?.triggerMessageId ?? ''
+    // Configured provider keys are secrets that must never leak into a preview.
+    const secrets = this.providerSettings
+      .configuredProviders()
+      .map((item) => item.apiKey)
+      .filter(Boolean)
     const emit = (event: RuntimeEvent): void => onRuntimeEvent?.(event)
     const reasoning: string[] = []
     const assistantTexts: string[] = []
@@ -231,9 +250,12 @@ export class DeepSeekHarnessAdapter {
     // notification may also be re-delivered; only the first occurrence counts.
     const seen = new Set<string>()
     // Tool calls opened by tool/call but never closed by tool/result — an
-    // interrupted run strands these, and they must surface as aborted.
-    const openToolCalls = new Set<string>()
+    // interrupted run strands these, and they must surface as aborted. The map
+    // records the native session so the synthetic aborted tool:end keeps its
+    // attribution instead of collapsing onto a shared placeholder.
+    const openToolCalls = new Map<string, { sessionId: string }>()
     let terminalReason: RunEndReason | undefined
+    let terminalError: { message: string; code?: string; status?: number } | undefined
     let result
     let failure: unknown
     try {
@@ -277,7 +299,11 @@ export class DeepSeekHarnessAdapter {
               for (const block of event.data.message.content) {
                 if (block.type === 'reasoning' && block.text.trim()) {
                   const part = block.text.trim()
-                  onText?.(`${reasoning.length ? '\n\n' : ''}${part}`, 'reasoning')
+                  // One delta string shared by the legacy callback and the new
+                  // event: the leading separator must be part of the delta or the
+                  // renderer concatenates reasoning blocks without any gap.
+                  const delta = `${reasoning.length ? '\n\n' : ''}${part}`
+                  onText?.(delta, 'reasoning')
                   reasoning.push(part)
                   trace.push(part)
                   if (onRuntimeEvent) {
@@ -288,15 +314,18 @@ export class DeepSeekHarnessAdapter {
                       seq,
                       conversationId: eventConversationId,
                       agentId: agent.id,
+                      executionId,
+                      triggerMessageId,
                       time,
-                      text: part,
+                      text: delta,
                     })
                   }
                 } else if (block.type === 'text' && block.text) textParts.push(block.text)
               }
               if (textParts.length) {
                 const text = textParts.join('\n\n')
-                onText?.(`${assistantTexts.length ? '\n\n' : ''}${text}`, 'text')
+                const delta = `${assistantTexts.length ? '\n\n' : ''}${text}`
+                onText?.(delta, 'text')
                 assistantTexts.push(text)
                 trace.push(text)
                 if (onRuntimeEvent) {
@@ -307,8 +336,10 @@ export class DeepSeekHarnessAdapter {
                     seq,
                     conversationId: eventConversationId,
                     agentId: agent.id,
+                    executionId,
+                    triggerMessageId,
                     time,
-                    text,
+                    text: delta,
                   })
                 }
               }
@@ -322,6 +353,8 @@ export class DeepSeekHarnessAdapter {
                   seq,
                   conversationId: eventConversationId,
                   agentId: agent.id,
+                  executionId,
+                  triggerMessageId,
                   time,
                   inputTokens: usage.inputTokens ?? 0,
                   outputTokens: usage.outputTokens ?? 0,
@@ -333,7 +366,7 @@ export class DeepSeekHarnessAdapter {
 
             // tool/call: a tool invocation starts
             if (event.type === 'tool/call' && onRuntimeEvent) {
-              openToolCalls.add(event.data.callId)
+              openToolCalls.set(event.data.callId, { sessionId: eventSessionId })
               emit({
                 type: 'tool:start',
                 requestId: eventRequestId,
@@ -341,6 +374,8 @@ export class DeepSeekHarnessAdapter {
                 seq,
                 conversationId: eventConversationId,
                 agentId: agent.id,
+                executionId,
+                triggerMessageId,
                 time,
                 callId: event.data.callId,
                 toolName: event.data.name,
@@ -367,7 +402,7 @@ export class DeepSeekHarnessAdapter {
               // Redact secrets and cap the preview: a 100k-character file read
               // must never enter the event verbatim. The full value is still
               // what gets persisted to the tool_call row downstream.
-              const { text: preview, truncated } = toolPreview(raw)
+              const { text: preview, truncated } = toolPreview(raw, secrets)
               emit({
                 type: 'tool:output',
                 requestId: eventRequestId,
@@ -375,6 +410,8 @@ export class DeepSeekHarnessAdapter {
                 seq,
                 conversationId: eventConversationId,
                 agentId: agent.id,
+                executionId,
+                triggerMessageId,
                 time,
                 callId: message.toolCallId,
                 text: preview,
@@ -388,6 +425,8 @@ export class DeepSeekHarnessAdapter {
                 seq,
                 conversationId: eventConversationId,
                 agentId: agent.id,
+                executionId,
+                triggerMessageId,
                 time,
                 callId: message.toolCallId,
                 aborted: false,
@@ -397,9 +436,19 @@ export class DeepSeekHarnessAdapter {
             // turn/end: the only protocol-authoritative terminal state. Other
             // terminal outcomes (stop with no turn/end, harness rejection) are
             // asserted by the services layer, so this only records the reason
-            // and lets services emit the single run:end.
-            if (event.type === 'turn/end') {
-              terminalReason = mapTurnEndReason(event.data.reason)
+            // and lets services emit the single run:end. Only the root session
+            // (the id this invoke passed to the SDK) decides the run's terminal
+            // state — a child session's turn/end must not overwrite it.
+            if (event.type === 'turn/end' && eventSessionId === id) {
+              const reason = event.data.reason
+              terminalReason = mapTurnEndReason(reason)
+              if (reason.kind === 'error') {
+                terminalError = {
+                  message: reason.error.message,
+                  code: reason.error.code,
+                  status: reason.error.status,
+                }
+              }
             }
           },
         })
@@ -430,16 +479,21 @@ export class DeepSeekHarnessAdapter {
       throw error
     } finally {
       // Stranded tool calls — interrupted before their tool/result — surface as
-      // aborted so the renderer does not show them as running forever.
+      // aborted so the renderer does not show them as running forever. Each keeps
+      // its native session and gets a unique negative seq, so the synthetic
+      // events never collide with wire events or with each other.
       if (onRuntimeEvent) {
-        for (const callId of openToolCalls) {
+        let syntheticSeq = -1
+        for (const [callId, { sessionId: ownerSessionId }] of openToolCalls) {
           emit({
             type: 'tool:end',
             requestId: eventRequestId,
-            sessionId: '',
-            seq: -1,
+            sessionId: ownerSessionId,
+            seq: syntheticSeq--,
             conversationId: eventConversationId,
             agentId: agent.id,
+            executionId,
+            triggerMessageId,
             time: Date.now(),
             callId,
             aborted: true,
@@ -457,6 +511,7 @@ export class DeepSeekHarnessAdapter {
       reasoning: (assistantTexts.length ? trace.slice(0, -1) : trace).join('\n\n') || undefined,
       sessionId: result.sessionId,
       endReason: terminalReason,
+      endError: terminalError,
     }
   }
 

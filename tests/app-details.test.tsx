@@ -1088,6 +1088,8 @@ describe('chat flow', () => {
         seq: 1,
         conversationId: `private:${agent.id}`,
         agentId: agent.id,
+        executionId: 'e1',
+        triggerMessageId: 'm1',
         time: 0,
         text: '新内容',
       })
@@ -1440,6 +1442,98 @@ describe('chat flow', () => {
     expect(screen.getByPlaceholderText('给 Developer 发送消息…')).toHaveValue('')
   })
 
+  it('forwards aborted tool closures after a stop but suppresses later text', async () => {
+    const api = mockApi()
+    let notify!: (event: RuntimeEvent) => void
+    let resolveSend!: (messages: Message[]) => void
+    let resolveStop!: (stopped: boolean) => void
+    api.chat.onRuntimeEvent = vi.fn((listener) => {
+      notify = listener
+      return () => undefined
+    })
+    api.chat.sendPrivate = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          resolveSend = resolve
+        })
+    )
+    api.chat.stop = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveStop = resolve
+        })
+    )
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    const { result } = renderHook(() =>
+      useChatController({ scope: 'private', id: agent.id, agent }, '你', vi.fn())
+    )
+    let send!: Promise<boolean>
+    act(() => {
+      send = result.current.send('请分析')
+    })
+    act(() =>
+      notify({
+        type: 'tool:start',
+        requestId: 'r',
+        sessionId: 's',
+        seq: 1,
+        conversationId: `private:${agent.id}`,
+        agentId: agent.id,
+        executionId: 'e1',
+        triggerMessageId: 'm1',
+        time: 0,
+        callId: 'c1',
+        toolName: 'read',
+        displayName: 'read',
+      })
+    )
+    expect(result.current.toolCalls[0]).toMatchObject({ callId: 'c1', status: 'running' })
+
+    let stopped!: Promise<boolean>
+    act(() => {
+      stopped = result.current.stop()
+    })
+    await act(async () => resolveStop(true))
+    await stopped
+
+    act(() =>
+      notify({
+        type: 'tool:end',
+        requestId: 'r',
+        sessionId: 's',
+        seq: -1,
+        conversationId: `private:${agent.id}`,
+        agentId: agent.id,
+        executionId: 'e1',
+        triggerMessageId: 'm1',
+        time: 0,
+        callId: 'c1',
+        aborted: true,
+      })
+    )
+    // The aborted closure lands even though the run is stopped.
+    expect(result.current.toolCalls[0].status).toBe('aborted')
+
+    act(() =>
+      notify({
+        type: 'text:delta',
+        requestId: 'r',
+        sessionId: 's',
+        seq: 2,
+        conversationId: `private:${agent.id}`,
+        agentId: agent.id,
+        executionId: 'e1',
+        triggerMessageId: 'm1',
+        time: 0,
+        text: '停止后不应显示',
+      })
+    )
+    // Body text after a stop stays suppressed.
+    expect(result.current.streamingText).toBe('')
+    await act(async () => resolveSend([]))
+    await send
+  })
+
   it('completes a Chinese agent mention in a space message', async () => {
     const chineseAgent = { ...agent, id: 'analyst', name: '数据分析师' }
     const space: Space = {
@@ -1585,6 +1679,8 @@ describe('chat flow', () => {
         seq: 1,
         conversationId: `private:${agent.id}`,
         agentId: agent.id,
+        executionId: 'e1',
+        triggerMessageId: 'm1',
         time: 0,
         text: '先分析\n\n再回答',
       })
@@ -1600,6 +1696,8 @@ describe('chat flow', () => {
         seq: 2,
         conversationId: `private:${agent.id}`,
         agentId: agent.id,
+        executionId: 'e1',
+        triggerMessageId: 'm1',
         time: 0,
         text: '**正在生成**',
       })
@@ -1650,6 +1748,8 @@ describe('chat flow', () => {
         seq: 1,
         conversationId: `private:${agent.id}`,
         agentId: agent.id,
+        executionId: 'e1',
+        triggerMessageId: 'm1',
         time: 0,
         text: '停止后不应显示',
       })

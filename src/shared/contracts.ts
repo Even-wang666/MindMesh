@@ -181,119 +181,100 @@ export type RunEndReason =
  *     `conversationRef` holds, so it must match exactly — not the runtime
  *     session `contextKey` (`conversation:<conversationId>:<agentId>`).
  *   - `agentId`     = the agent that produced the event.
+ *   - `executionId` / `triggerMessageId` = one level above the run — an
+ *     Execution fans out to several runs and every run belongs to exactly one
+ *     execution. They are carried on EVERY event, not just run:start, so any
+ *     single event can be routed and joined without replaying the start.
  *   - `time`        = native epoch-millis timestamp when available.
  *
- * `run:start` carries `executionId` and `triggerMessageId` (one level above the
- * run — an Execution fans out to several runs); `run:end` carries the terminal
- * `reason` and, once persisted, the `responseMessageId` that links a completed
- * run back to its stored assistant message.
+ * `sessionId`/`seq` are absent on the synthesised lifecycle events
+ * (`run:start`, `error`, `run:end`) which have no wire event; they are present
+ * on every DSH-mapped event and on the synthetic aborted `tool:end`, where the
+ * native session is preserved and a negative seq disambiguates it from the
+ * wire events.
  */
+export type RuntimeEventIdentity = {
+  requestId: string
+  conversationId: string
+  agentId: string
+  executionId: string
+  triggerMessageId: string
+}
+
 export type RuntimeEvent =
-  | {
+  | (RuntimeEventIdentity & {
       type: 'run:start'
-      requestId: string
-      conversationId: string
-      agentId: string
       agentName: string
-      executionId: string
-      triggerMessageId: string
       time: number
-    }
-  | {
+    })
+  | (RuntimeEventIdentity & {
       type: 'text:delta'
-      requestId: string
       sessionId: string
       seq: number
-      conversationId: string
-      agentId: string
       time: number
       text: string
-    }
-  | {
+    })
+  | (RuntimeEventIdentity & {
       type: 'reasoning:delta'
-      requestId: string
       sessionId: string
       seq: number
-      conversationId: string
-      agentId: string
       time: number
       text: string
-    }
-  | {
+    })
+  | (RuntimeEventIdentity & {
       type: 'tool:start'
-      requestId: string
       sessionId: string
       seq: number
-      conversationId: string
-      agentId: string
       time: number
       callId: string
       toolName: string
       displayName: string
-    }
-  | {
+    })
+  | (RuntimeEventIdentity & {
       type: 'tool:delta'
-      requestId: string
       sessionId: string
       seq: number
-      conversationId: string
-      agentId: string
       time: number
       callId: string
       text: string
-    }
-  | {
+    })
+  | (RuntimeEventIdentity & {
       type: 'tool:output'
-      requestId: string
       sessionId: string
       seq: number
-      conversationId: string
-      agentId: string
       time: number
       callId: string
       text: string
       isError: boolean
       truncated: boolean
-    }
-  | {
+    })
+  | (RuntimeEventIdentity & {
       type: 'tool:end'
-      requestId: string
       sessionId: string
       seq: number
-      conversationId: string
-      agentId: string
       time: number
       callId: string
       aborted: boolean
-    }
-  | {
+    })
+  | (RuntimeEventIdentity & {
       type: 'usage'
-      requestId: string
       sessionId: string
       seq: number
-      conversationId: string
-      agentId: string
       time: number
       inputTokens: number
       outputTokens: number
       cacheReadTokens: number
       cacheWriteTokens: number
-    }
-  | {
+    })
+  | (RuntimeEventIdentity & {
       type: 'error'
-      requestId: string
-      conversationId: string
-      agentId: string
       message: string
-    }
-  | {
+    })
+  | (RuntimeEventIdentity & {
       type: 'run:end'
-      requestId: string
-      conversationId: string
-      agentId: string
       reason: RunEndReason
       responseMessageId?: string
-    }
+    })
 
 export type MindMeshApi = {
   plugins: {

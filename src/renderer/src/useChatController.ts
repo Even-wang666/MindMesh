@@ -85,7 +85,12 @@ export function useChatController(
     const offRuntimeEvent = window.mindmesh.chat.onRuntimeEvent((event) => {
       if (conversationRef.current !== event.conversationId) return
       const request = activeRun.current
-      if (request?.stopRequested && event.type !== 'run:end') return
+      if (request?.stopRequested) {
+        // After a stop, only the terminal event and the aborted tool closures
+        // (which Main now forwards) may pass; body deltas are suppressed.
+        const isToolClose = event.type === 'tool:end' && event.aborted
+        if (event.type !== 'run:end' && !isToolClose) return
+      }
 
       switch (event.type) {
         case 'text:delta':

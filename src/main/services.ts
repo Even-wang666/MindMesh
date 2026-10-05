@@ -349,7 +349,7 @@ export class MindMeshServices {
             stopped: true,
           })
         }
-        this.emitRunEnd(requestId, privateConversation, agent.id, 'stopped')
+        this.emitRunEnd(requestId, privateConversation, agent.id, executionId, triggerMessage.id, 'stopped')
         void this.refreshDeepSeekBalance()
         return this.db.listMessages(privateConversation)
       }
@@ -365,9 +365,11 @@ export class MindMeshServices {
         requestId,
         privateConversation,
         agent.id,
+        executionId,
+        triggerMessage.id,
         runtimeFailureDetail(this.runtimeFailureKind)
       )
-      this.emitRunEnd(requestId, privateConversation, agent.id, 'error')
+      this.emitRunEnd(requestId, privateConversation, agent.id, executionId, triggerMessage.id, 'error')
       return this.db.listMessages(privateConversation)
     }
     if (this.shuttingDown || !this.db.getAgent(agentId)) return []
@@ -390,6 +392,8 @@ export class MindMeshServices {
       requestId,
       privateConversation,
       agent.id,
+      executionId,
+      triggerMessage.id,
       result.endReason ?? 'completed',
       reply.id
     )
@@ -514,7 +518,7 @@ export class MindMeshServices {
               session
             )
           }
-          this.emitRunEnd(requestId, spaceConversation, agent.id, 'stopped')
+          this.emitRunEnd(requestId, spaceConversation, agent.id, executionId, triggerMessage.id, 'stopped')
           void this.refreshDeepSeekBalance()
           break
         }
@@ -530,9 +534,11 @@ export class MindMeshServices {
           requestId,
           spaceConversation,
           agent.id,
+          executionId,
+          triggerMessage.id,
           runtimeFailureDetail(this.runtimeFailureKind)
         )
-        this.emitRunEnd(requestId, spaceConversation, agent.id, 'error')
+        this.emitRunEnd(requestId, spaceConversation, agent.id, executionId, triggerMessage.id, 'error')
         continue
       }
       if (this.shuttingDown || !this.db.getSpace(spaceId)) break
@@ -556,6 +562,8 @@ export class MindMeshServices {
         requestId,
         spaceConversation,
         agent.id,
+        executionId,
+        triggerMessage.id,
         result.endReason ?? 'completed',
         reply.id
       )
@@ -796,6 +804,8 @@ export class MindMeshServices {
           requestId,
           recoveryPrompt,
           conversationId,
+          executionId,
+          triggerMessageId,
         },
         onRuntimeEvent
       )
@@ -818,6 +828,17 @@ export class MindMeshServices {
       if (this.activeStops.get(stopKey) === stop) this.activeStops.delete(stopKey)
     }
     if (stopRequested) throw new ChatStoppedError(streamed, streamedReasoning)
+    // A native turn/end:error is a completed SDK call, not a rejection: the
+    // adapter returns endReason='error' plus the raw code/status. Route it into
+    // the failure path instead of persisting a success reply.
+    if (result.endReason === 'error') {
+      const message = result.endError?.message ?? '模型运行失败'
+      const error = new Error(message)
+      const tagged = error as Error & { code?: string; status?: number }
+      if (result.endError?.code) tagged.code = result.endError.code
+      if (result.endError?.status) tagged.status = result.endError.status
+      throw tagged
+    }
     if (result.text.startsWith(streamed) && result.text.length > streamed.length) {
       this.emitText(requestId, scope, scopeId, agent.id, result.text.slice(streamed.length))
     }
@@ -850,6 +871,8 @@ export class MindMeshServices {
     requestId: string,
     conversationId: string,
     agentId: string,
+    executionId: string,
+    triggerMessageId: string,
     reason: RunEndReason,
     responseMessageId?: string
   ): void {
@@ -858,6 +881,8 @@ export class MindMeshServices {
       requestId,
       conversationId,
       agentId,
+      executionId,
+      triggerMessageId,
       reason,
       ...(responseMessageId ? { responseMessageId } : {}),
     })
@@ -868,9 +893,19 @@ export class MindMeshServices {
     requestId: string,
     conversationId: string,
     agentId: string,
+    executionId: string,
+    triggerMessageId: string,
     message: string
   ): void {
-    this.eventBuffer.add({ type: 'error', requestId, conversationId, agentId, message })
+    this.eventBuffer.add({
+      type: 'error',
+      requestId,
+      conversationId,
+      agentId,
+      executionId,
+      triggerMessageId,
+      message,
+    })
     this.eventBuffer.flush()
   }
 }

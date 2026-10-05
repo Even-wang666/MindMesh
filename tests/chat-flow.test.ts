@@ -8,7 +8,7 @@ import {
   SessionResumeUnsupportedError,
   type DeepSeekHarnessAdapter,
 } from '../src/main/harness-adapter'
-import type { ChatImageAttachment } from '../src/shared/contracts'
+import type { ChatImageAttachment, RuntimeEvent } from '../src/shared/contracts'
 
 const image: ChatImageAttachment = {
   type: 'image',
@@ -1133,6 +1133,40 @@ describe('session context', () => {
     try {
       await service.sendPrivate(db.listAgents()[0].id, '你好')
       expect(send.mock.calls.filter(([channel]) => channel === 'chat:delta')).toHaveLength(2)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('routes a native turn/end:error into the failure path instead of a success reply', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const send = vi.fn()
+    const run = vi.fn(async () => ({
+      text: '部分回答',
+      sessionId: 'saved-session',
+      endReason: 'error' as const,
+      endError: { message: 'rate limited', code: 'RATE_LIMIT', status: 429 },
+    }))
+    const service = new MindMeshServices(
+      db,
+      mockHarness({ run }),
+      mockProviderSettings(),
+      () => ({ send }) as unknown as WebContents
+    )
+    try {
+      const messages = await service.sendPrivate(db.listAgents()[0].id, '你好')
+      // No assistant reply is persisted; a system failure notice takes its place.
+      expect(messages.map((message) => message.authorType)).toEqual(['user', 'system'])
+      expect(messages.at(-1)).toMatchObject({ authorType: 'system' })
+      expect(messages.at(-1)?.content).toContain('回复失败')
+      // The renderer receives an error event followed by a run:end(error).
+      const runtimeEvents = send.mock.calls
+        .filter(([channel]) => channel === 'chat:runtimeEvent')
+        .flatMap(([, batch]) => batch as RuntimeEvent[])
+      expect(runtimeEvents.map((event) => event.type)).toEqual(['run:start', 'error', 'run:end'])
+      expect(runtimeEvents.find((event) => event.type === 'run:end')).toMatchObject({
+        reason: 'error',
+      })
     } finally {
       db.close()
     }

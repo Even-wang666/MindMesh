@@ -266,7 +266,7 @@ it('cancels the requested sole lease without closing another generation of the s
       [],
       adapter.prepareRun({ ...agent, persona }, 'chat'),
       false,
-      { contextKey: `private:${requestId}`, requestId, recoveryPrompt: () => '', conversationId: `private:${requestId}` }
+      { contextKey: `private:${requestId}`, requestId, recoveryPrompt: () => '', conversationId: `private:${requestId}`, executionId: 'e1', triggerMessageId: 'm1' }
     )
   const first = run('first', 'one')
   const second = run('second', 'two')

@@ -32,6 +32,8 @@ function deltaEvent(text: string, index: number): RuntimeEvent {
     seq: index,
     conversationId: 'private:a',
     agentId: 'a',
+    executionId: 'e1',
+    triggerMessageId: 'm1',
     time: 0,
     text: `${text}-${index}`,
   }
@@ -42,6 +44,8 @@ function lifecycleEvent(type: 'run:start' | 'run:end' | 'error' | 'usage'): Runt
     requestId: 'r1',
     conversationId: 'private:a',
     agentId: 'a',
+    executionId: 'e1',
+    triggerMessageId: 'm1',
   }
   switch (type) {
     case 'run:start':
@@ -49,8 +53,6 @@ function lifecycleEvent(type: 'run:start' | 'run:end' | 'error' | 'usage'): Runt
         ...base,
         type: 'run:start',
         agentName: 'PM',
-        executionId: 'e1',
-        triggerMessageId: 'm1',
         time: 0,
       }
     case 'run:end':
@@ -142,6 +144,21 @@ describe('toolPreview', () => {
     expect(text).toBe('short output')
     expect(truncated).toBe(false)
   })
+
+  it('redacts Cookie and Set-Cookie headers', () => {
+    const value = 'Cookie: session=abc123\nSet-Cookie: token=xyz; HttpOnly'
+    const { text } = toolPreview(value)
+    expect(text).not.toContain('abc123')
+    expect(text).not.toContain('xyz')
+    expect(text).toContain('Cookie: [REDACTED]')
+    expect(text).toContain('Set-Cookie: [REDACTED]')
+  })
+
+  it('redacts a configured provider secret passed in as a secret', () => {
+    const { text } = toolPreview('Authorization: Bearer supersecretvalue', ['supersecretvalue'])
+    expect(text).not.toContain('supersecretvalue')
+    expect(text).toContain('[REDACTED]')
+  })
 })
 
 describe('mapTurnEndReason', () => {
@@ -165,16 +182,20 @@ describe('mapTurnEndReason', () => {
 
 const sdk = vi.hoisted(() => ({
   events: [] as Array<Record<string, unknown>>,
+  // Per-event session override so a test can simulate child-session events.
+  sessionIds: [] as Array<string | undefined>,
   finalResponse: 'done',
 }))
 vi.mock('@deepseek-ai/dsh-sdk-client', () => ({
   DeepSeekHarness: class {
     async start() {}
     async run(_input: unknown, options?: { sessionId?: string; onNotification?: (n: unknown) => void }) {
-      for (const raw of sdk.events) {
+      for (let i = 0; i < sdk.events.length; i++) {
+        const raw = sdk.events[i]
+        const sessionId = sdk.sessionIds[i] ?? options?.sessionId ?? 's1'
         options?.onNotification?.({
           method: 'session.event',
-          params: { sessionId: options.sessionId ?? 's1', event: raw },
+          params: { sessionId, event: raw },
         })
       }
       return { finalResponse: sdk.finalResponse, sessionId: options?.sessionId ?? 's1' }
@@ -192,6 +213,7 @@ const dirs: string[] = []
 afterEach(() => {
   vi.unstubAllGlobals()
   sdk.events.length = 0
+  sdk.sessionIds.length = 0
   sdk.finalResponse = 'done'
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
@@ -253,6 +275,8 @@ describe('adapter event mapping', () => {
         contextKey: 'conversation:private:a:a',
         requestId: 'r1',
         conversationId: 'private:a',
+        executionId: 'e1',
+        triggerMessageId: 'm1',
         recoveryPrompt: () => '',
       },
       (event) => emitted.push(event)
@@ -281,7 +305,7 @@ describe('adapter event mapping', () => {
       [],
       adapter.prepareRun(agent, 'chat'),
       true,
-      { contextKey: 'c', requestId: 'r1', conversationId: 'private:a', recoveryPrompt: () => '' },
+      { contextKey: 'c', requestId: 'r1', conversationId: 'private:a', executionId: 'e1', triggerMessageId: 'm1', recoveryPrompt: () => '' },
       (event) => emitted.push(event)
     )
     const textDelta = emitted.find((event) => event.type === 'text:delta')
@@ -309,7 +333,7 @@ describe('adapter event mapping', () => {
       [],
       adapter.prepareRun(agent, 'chat'),
       false,
-      { contextKey: 'c', requestId: 'r1', conversationId: 'private:a', recoveryPrompt: () => '' },
+      { contextKey: 'c', requestId: 'r1', conversationId: 'private:a', executionId: 'e1', triggerMessageId: 'm1', recoveryPrompt: () => '' },
       (event) => emitted.push(event)
     )
     expect(emitted.filter((event) => event.type === 'text:delta')).toHaveLength(1)
@@ -343,7 +367,7 @@ describe('adapter event mapping', () => {
       [],
       adapter.prepareRun(agent, 'chat'),
       false,
-      { contextKey: 'c', requestId: 'r1', conversationId: 'private:a', recoveryPrompt: () => '' },
+      { contextKey: 'c', requestId: 'r1', conversationId: 'private:a', executionId: 'e1', triggerMessageId: 'm1', recoveryPrompt: () => '' },
       (event) => emitted.push(event)
     )
     const output = emitted.find((event) => event.type === 'tool:output')
@@ -357,6 +381,132 @@ describe('adapter event mapping', () => {
         expect.objectContaining({ callId: 'c2', aborted: true }),
       ])
     )
+    await adapter.shutdownAll()
+  })
+
+  it('keeps the separator between consecutive text and reasoning blocks', async () => {
+    const { adapter, agent } = fixture()
+    sdk.events = [
+      sessionEvent(
+        'assistant/message',
+        {
+          message: {
+            content: [
+              { type: 'reasoning', text: '第一段' },
+              { type: 'reasoning', text: '第二段' },
+              { type: 'text', text: '答案一' },
+              { type: 'text', text: '答案二' },
+            ],
+          },
+        },
+        1
+      ),
+    ]
+    const emitted: RuntimeEvent[] = []
+    await adapter.run(
+      agent,
+      'hi',
+      's',
+      undefined,
+      [],
+      adapter.prepareRun(agent, 'chat'),
+      true,
+      { contextKey: 'c', requestId: 'r1', conversationId: 'private:a', executionId: 'e1', triggerMessageId: 'm1', recoveryPrompt: () => '' },
+      (event) => emitted.push(event)
+    )
+    const reasoning = emitted
+      .filter((event) => event.type === 'reasoning:delta')
+      .map((event) => event.text)
+      .join('')
+    const text = emitted
+      .filter((event) => event.type === 'text:delta')
+      .map((event) => event.text)
+      .join('')
+    // The legacy callback and the new event must share the same delta, so the
+    // concatenated stream has the same separators the callback used to deliver.
+    expect(reasoning).toBe('第一段\n\n第二段')
+    expect(text).toBe('答案一\n\n答案二')
+    await adapter.shutdownAll()
+  })
+
+  it('does not let a child session turn/end overwrite the root terminal state', async () => {
+    const { adapter, agent } = fixture()
+    sdk.events = [
+      sessionEvent('turn/end', { reason: { kind: 'error', error: { message: 'boom', code: 'E500' } } }, 1),
+      // A child session completes afterwards — this must not mask the root error.
+      sessionEvent('turn/end', { reason: { kind: 'completed' } }, 1),
+    ]
+    sdk.sessionIds = ['s', 'child-s']
+    const result = await adapter.run(
+      agent,
+      'hi',
+      's',
+      undefined,
+      [],
+      adapter.prepareRun(agent, 'chat'),
+      true,
+      { contextKey: 'c', requestId: 'r1', conversationId: 'private:a', executionId: 'e1', triggerMessageId: 'm1', recoveryPrompt: () => '' }
+    )
+    expect(result.endReason).toBe('error')
+    expect(result.endError).toMatchObject({ message: 'boom', code: 'E500' })
+    await adapter.shutdownAll()
+  })
+
+  it('returns the native error details for a root turn/end:error', async () => {
+    const { adapter, agent } = fixture()
+    sdk.events = [
+      sessionEvent(
+        'turn/end',
+        { reason: { kind: 'error', error: { message: 'rate limited', code: 'RATE_LIMIT', status: 429 } } },
+        1
+      ),
+    ]
+    const result = await adapter.run(
+      agent,
+      'hi',
+      's',
+      undefined,
+      [],
+      adapter.prepareRun(agent, 'chat'),
+      true,
+      { contextKey: 'c', requestId: 'r1', conversationId: 'private:a', executionId: 'e1', triggerMessageId: 'm1', recoveryPrompt: () => '' }
+    )
+    expect(result.endReason).toBe('error')
+    expect(result.endError).toEqual({ message: 'rate limited', code: 'RATE_LIMIT', status: 429 })
+    await adapter.shutdownAll()
+  })
+
+  it('gives every synthetic aborted tool a unique session-scoped seq', async () => {
+    const { adapter, agent } = fixture()
+    sdk.events = [
+      sessionEvent('tool/call', { callId: 'c1', name: 'read', arguments: '{}' }, 1),
+      sessionEvent('tool/call', { callId: 'c2', name: 'write', arguments: '{}' }, 2),
+    ]
+    const emitted: RuntimeEvent[] = []
+    await adapter.run(
+      agent,
+      'hi',
+      's',
+      undefined,
+      [],
+      adapter.prepareRun(agent, 'chat'),
+      true,
+      { contextKey: 'c', requestId: 'r1', conversationId: 'private:a', executionId: 'e1', triggerMessageId: 'm1', recoveryPrompt: () => '' },
+      (event) => emitted.push(event)
+    )
+    const aborts = emitted.filter(
+      (event): event is Extract<RuntimeEvent, { type: 'tool:end' }> =>
+        event.type === 'tool:end' && event.aborted
+    )
+    expect(aborts).toHaveLength(2)
+    // Each aborted tool keeps the native session and a unique negative seq.
+    expect(aborts.every((event) => event.sessionId === 's')).toBe(true)
+    expect(new Set(aborts.map((event) => event.seq)).size).toBe(2)
+    expect(aborts.every((event) => event.seq < 0)).toBe(true)
+    // Identity fields are present on every event, not just run:start.
+    for (const event of aborts) {
+      expect(event).toMatchObject({ executionId: 'e1', triggerMessageId: 'm1' })
+    }
     await adapter.shutdownAll()
   })
 })
