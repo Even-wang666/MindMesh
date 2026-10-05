@@ -39,6 +39,12 @@ type RuntimeSessionRow = {
 
 const MAX_SPACE_CONTEXT_LENGTH = 100_000
 
+/**
+ * Bump when adding a migration step below. The migrator refuses to run against a
+ * database written by a newer build, so this must never be lowered.
+ */
+const SCHEMA_VERSION = 6
+
 function validateFieldLength(value: string, label: string, limit: number): void {
   if (value.length > limit)
     throw new Error(`${label}不能超过 ${limit.toLocaleString('en-US')} 个字符`)
@@ -210,9 +216,9 @@ export class MindMeshDatabase {
       | { value: string }
       | undefined
     const version = Number(row?.value ?? 0)
-    if (!Number.isInteger(version) || version < 0 || version > 4)
+    if (!Number.isInteger(version) || version < 0 || version > SCHEMA_VERSION)
       throw new Error('Unsupported database schema version')
-    if (version === 4) return
+    if (version === SCHEMA_VERSION) return
     // VACUUM INTO captures a consistent SQLite snapshot, including WAL, before migration.
     const backup = `${path}.before-schema-${version}.sqlite`
     if (path !== ':memory:' && !existsSync(backup)) this.db.prepare('VACUUM INTO ?').run(backup)
@@ -237,14 +243,17 @@ export class MindMeshDatabase {
         repository TEXT NOT NULL, content TEXT NOT NULL, license TEXT NOT NULL, license_text TEXT NOT NULL,
         UNIQUE(source, source_id)
       )`)
-      this.db.exec(`CREATE TABLE space_sources (
+      if (version < 4)
+        this.db.exec(`CREATE TABLE space_sources (
         space_id TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
         source TEXT NOT NULL, source_id TEXT NOT NULL, revision TEXT NOT NULL, manifest TEXT NOT NULL,
         UNIQUE(source, source_id)
       )`)
+      if (version < 5) this.migrateToConversations()
+      if (version < 6) this.createExecutionTables()
       this.db
         .prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)')
-        .run('schema_version', '4')
+        .run('schema_version', String(SCHEMA_VERSION))
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -414,6 +423,173 @@ export class MindMeshDatabase {
     if (!agentColumns.some((column) => column.name === 'reasoningEffort')) {
       this.db.exec('ALTER TABLE agents ADD COLUMN reasoningEffort TEXT')
     }
+  }
+
+  /**
+   * v5: introduce conversations as the unit that owns messages, runs and usage.
+   *
+   * The messages table is rebuilt rather than ALTERed because its uniqueness rule
+   * changes: `sequence` is only meaningful *within* a conversation, so the index
+   * must move from (scope, scopeId, sequence) to (conversationId, sequence).
+   * Rebuilding once here avoids a second table rewrite in a later phase.
+   *
+   * Runs inside the caller's BEGIN IMMEDIATE transaction, so a failure anywhere
+   * leaves both the table and schema_version untouched.
+   */
+  private migrateToConversations(): void {
+    this.db.exec(`CREATE TABLE conversations (
+      id TEXT PRIMARY KEY,
+      scope TEXT NOT NULL CHECK(scope IN ('private', 'space')),
+      scopeId TEXT NOT NULL,
+      title TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL,
+      archivedAt TEXT
+    )`)
+    this.db.exec(
+      'CREATE INDEX conversations_scope ON conversations(scope, scopeId, updatedAt DESC)'
+    )
+
+    // One default conversation per existing agent and per existing space, so no
+    // history is orphaned. Ids are derived from the scope key to stay stable and
+    // collision-free across repeated runs.
+    const insertConversation = this.db.prepare(
+      `INSERT OR IGNORE INTO conversations (id, scope, scopeId, title, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    const stamp = new Date().toISOString()
+    const agents = this.db.prepare('SELECT id, name FROM agents').all() as Array<{
+      id: string
+      name: string
+    }>
+    for (const agent of agents) {
+      insertConversation.run(`private:${agent.id}`, 'private', agent.id, agent.name, stamp, stamp)
+    }
+    const spaces = this.db.prepare('SELECT id, name FROM spaces').all() as Array<{
+      id: string
+      name: string
+    }>
+    for (const space of spaces) {
+      insertConversation.run(`space:${space.id}`, 'space', space.id, space.name, stamp, stamp)
+    }
+    // A conversation must exist before messages can reference it. Older databases
+    // could hold messages for an agent or space that has since been deleted, so the
+    // leftovers get a conversation titled from their id rather than failing the
+    // migration on the foreign key.
+    const backfill = this.db.prepare(
+      `INSERT OR IGNORE INTO conversations (id, scope, scopeId, title, createdAt, updatedAt)
+       SELECT ? || m.scopeId, ?, m.scopeId, m.scopeId, ?, ?
+         FROM messages m
+        WHERE m.scope = ? AND m.scopeId <> ''
+        GROUP BY m.scopeId`
+    )
+    backfill.run('private:', 'private', stamp, stamp, 'private')
+    backfill.run('space:', 'space', stamp, stamp, 'space')
+
+    this.db.exec(`CREATE TABLE messages_v2 (
+      id TEXT PRIMARY KEY,
+      conversationId TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      authorType TEXT NOT NULL CHECK(authorType IN ('user', 'agent', 'system')),
+      authorId TEXT,
+      authorName TEXT NOT NULL,
+      content TEXT NOT NULL,
+      reasoning TEXT,
+      attachments TEXT NOT NULL DEFAULT '[]',
+      stopped INTEGER NOT NULL DEFAULT 0,
+      sequence INTEGER NOT NULL,
+      createdAt TEXT NOT NULL
+    )`)
+    // scope/scopeId are dropped: they are now reachable via conversations.
+    this.db.exec(`INSERT INTO messages_v2 (
+        id, conversationId, authorType, authorId, authorName, content,
+        reasoning, attachments, stopped, sequence, createdAt
+      )
+      SELECT m.id,
+        CASE WHEN m.scope = 'space' THEN 'space:' || m.scopeId ELSE 'private:' || m.scopeId END,
+        m.authorType, m.authorId, m.authorName, m.content,
+        m.reasoning, m.attachments, m.stopped, m.sequence, m.createdAt
+      FROM messages m`)
+    this.db.exec('DROP TABLE messages')
+    this.db.exec('ALTER TABLE messages_v2 RENAME TO messages')
+    this.db.exec(`CREATE UNIQUE INDEX messages_conversation_sequence
+      ON messages(conversationId, sequence)`)
+  }
+
+  /**
+   * v6: execution history.
+   *
+   * An Execution is one full attempt at a user request. In a Space it fans out to
+   * several Runs (one per participating agent), all sharing `triggerMessageId`.
+   * That indirection is what makes Regenerate countable: `COUNT(*) over runs` would
+   * return the agent count, not the number of attempts.
+   *
+   * Token/cost columns are populated in a later phase; the spike only proved usage
+   * is per-request and must be summed, so nothing is written here yet.
+   *
+   * workflowSnapshot holds the Space execution order captured at start time, so a
+   * later edit to the Space cannot change how an in-flight execution is explained.
+   */
+  private createExecutionTables(): void {
+    this.db.exec(`CREATE TABLE executions (
+      id TEXT PRIMARY KEY,
+      conversationId TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      triggerMessageId TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN (
+        'running', 'completed', 'completed_with_errors', 'stopped', 'error', 'interrupted'
+      )),
+      workflowSnapshot TEXT,
+      generationIndex INTEGER NOT NULL DEFAULT 1,
+      regeneratedFromExecutionId TEXT,
+      startedAt TEXT NOT NULL,
+      endedAt TEXT,
+      inputTokens INTEGER,
+      outputTokens INTEGER,
+      cacheReadTokens INTEGER,
+      cacheWriteTokens INTEGER,
+      costMicros INTEGER,
+      currency TEXT
+    )`)
+    this.db.exec(`CREATE INDEX executions_conversation
+      ON executions(conversationId, startedAt DESC)`)
+    this.db.exec(`CREATE INDEX executions_trigger
+      ON executions(triggerMessageId, generationIndex)`)
+
+    this.db.exec(`CREATE TABLE runs (
+      id TEXT PRIMARY KEY,
+      executionId TEXT NOT NULL REFERENCES executions(id) ON DELETE CASCADE,
+      conversationId TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      triggerMessageId TEXT NOT NULL,
+      responseMessageId TEXT,
+      agentId TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      permission TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN (
+        'running', 'completed', 'stopped', 'error', 'interrupted'
+      )),
+      startedAt TEXT NOT NULL,
+      firstOutputAt TEXT,
+      endedAt TEXT,
+      agentSnapshot TEXT
+    )`)
+    this.db.exec('CREATE INDEX runs_execution ON runs(executionId, startedAt)')
+    this.db.exec('CREATE INDEX runs_conversation ON runs(conversationId, startedAt DESC)')
+
+    this.db.exec(`CREATE TABLE tool_calls (
+      id TEXT PRIMARY KEY,
+      runId TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      sequence INTEGER NOT NULL,
+      toolName TEXT NOT NULL,
+      displayName TEXT,
+      inputPreview TEXT,
+      outputPreview TEXT,
+      errorPreview TEXT,
+      status TEXT NOT NULL CHECK(status IN ('running', 'ok', 'error', 'aborted')),
+      startedAt TEXT NOT NULL,
+      endedAt TEXT,
+      elapsedMs INTEGER
+    )`)
+    this.db.exec('CREATE UNIQUE INDEX tool_calls_run_sequence ON tool_calls(runId, sequence)')
   }
 
   private seed(): void {
@@ -992,7 +1168,8 @@ export class MindMeshDatabase {
     if (!this.getSpace(id)) throw new Error('协作空间不存在')
     this.db.exec('BEGIN')
     try {
-      this.db.prepare("DELETE FROM messages WHERE scope = 'space' AND scopeId = ?").run(id)
+      // Deleting the space conversation cascades to its messages and executions.
+      this.db.prepare('DELETE FROM conversations WHERE id = ?').run(`space:${id}`)
       this.db.prepare('DELETE FROM runtime_sessions WHERE contextKey LIKE ?').run(`space:${id}:%`)
       this.db.prepare('DELETE FROM space_members WHERE spaceId = ?').run(id)
       this.db.prepare('DELETE FROM spaces WHERE id = ?').run(id)
@@ -1003,28 +1180,63 @@ export class MindMeshDatabase {
     }
   }
 
-  listMessages(scope: Message['scope'], scopeId: string): Message[] {
+  /**
+   * Resolve the conversation that owns a private agent's or a space's messages.
+   *
+   * The default conversation was created with a scope-derived id during migration,
+   * so the mapping is deterministic and needs no extra lookup table.
+   */
+  private conversationIdFor(scope: Message['scope'], scopeId: string): string {
+    return `${scope}:${scopeId}`
+  }
+
+  /**
+   * Messages are stored per conversation; callers still speak in scope/scopeId.
+   * Joining conversations keeps `Message` a stable shape for the renderer and IPC
+   * while the storage layer moves to conversation-scoped sequences.
+   */
+  private hydrateMessageRow(row: Record<string, unknown>): Message {
+    return this.hydrateMessage({
+      ...row,
+      scope: row.conversationScope,
+      scopeId: row.conversationScopeId,
+    })
+  }
+
+  private listMessageRows(where: string, ...params: Array<string | number>): Message[] {
     return this.db
-      .prepare('SELECT * FROM messages WHERE scope = ? AND scopeId = ? ORDER BY sequence ASC')
-      .all(scope, scopeId)
-      .map((row) => this.hydrateMessage(row))
+      .prepare(`
+      SELECT m.*, c.scope AS conversationScope, c.scopeId AS conversationScopeId
+      FROM messages m JOIN conversations c ON c.id = m.conversationId
+      ${where}
+    `)
+      .all(...params)
+      .map((row) => this.hydrateMessageRow(row as Record<string, unknown>))
+  }
+
+  listMessages(scope: Message['scope'], scopeId: string): Message[] {
+    return this.listMessageRows(
+      'WHERE c.scope = ? AND c.scopeId = ? ORDER BY m.sequence ASC',
+      scope,
+      scopeId
+    )
   }
 
   listMessagesSince(scope: Message['scope'], scopeId: string, sequence: number): Message[] {
-    return this.db
-      .prepare(`
-      SELECT * FROM messages WHERE scope = ? AND scopeId = ? AND sequence > ?
-      ORDER BY sequence ASC
-    `)
-      .all(scope, scopeId, sequence)
-      .map((row) => this.hydrateMessage(row))
+    return this.listMessageRows(
+      'WHERE c.scope = ? AND c.scopeId = ? AND m.sequence > ? ORDER BY m.sequence ASC',
+      scope,
+      scopeId,
+      sequence
+    )
   }
 
   lastAgentMessageSequence(spaceId: string, agentId: string): number {
     const row = this.db
       .prepare(`
-      SELECT COALESCE(MAX(sequence), 0) AS sequence FROM messages
-      WHERE scope = 'space' AND scopeId = ? AND authorId = ?
+      SELECT COALESCE(MAX(m.sequence), 0) AS sequence
+      FROM messages m JOIN conversations c ON c.id = m.conversationId
+      WHERE c.scope = 'space' AND c.scopeId = ? AND m.authorId = ?
     `)
       .get(spaceId, agentId) as { sequence: number }
     return row.sequence
@@ -1147,11 +1359,13 @@ export class MindMeshDatabase {
   }
 
   addMessage(input: Omit<Message, 'id' | 'sequence' | 'createdAt'>): Message {
+    const conversationId = this.conversationIdFor(input.scope, input.scopeId)
+    this.ensureConversation(conversationId, input.scope, input.scopeId)
     const next = this.db
       .prepare(
-        'SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM messages WHERE scope = ? AND scopeId = ?'
+        'SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM messages WHERE conversationId = ?'
       )
-      .get(input.scope, input.scopeId) as { sequence: number }
+      .get(conversationId) as { sequence: number }
     const message: Message = {
       ...input,
       reasoning: input.reasoning ?? null,
@@ -1163,13 +1377,12 @@ export class MindMeshDatabase {
     }
     this.db
       .prepare(`
-      INSERT INTO messages (id, scope, scopeId, authorType, authorId, authorName, content, reasoning, attachments, stopped, sequence, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, conversationId, authorType, authorId, authorName, content, reasoning, attachments, stopped, sequence, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .run(
         message.id,
-        message.scope,
-        message.scopeId,
+        conversationId,
         message.authorType,
         message.authorId ?? null,
         message.authorName,
@@ -1181,6 +1394,31 @@ export class MindMeshDatabase {
         message.createdAt
       )
     return message
+  }
+
+  /**
+   * Guarantee a conversation exists before a message references it. A private or
+   * space scope can gain messages after its default conversation was archived or
+   * removed, and the message insert must not fail on the foreign key.
+   */
+  private ensureConversation(
+    conversationId: string,
+    scope: Message['scope'],
+    scopeId: string
+  ): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO conversations (id, scope, scopeId, title, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        conversationId,
+        scope,
+        scopeId,
+        scopeId,
+        new Date().toISOString(),
+        new Date().toISOString()
+      )
   }
 
   private hydrateMessage(row: unknown): Message {
