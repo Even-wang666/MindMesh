@@ -50,7 +50,7 @@ export function mockHarness(overrides: Partial<Harness> = {}): Harness {
     },
     status: vi.fn(() => ({ state: 'ready' as const, label: '', detail: '' })),
     forgetAgent: vi.fn(async () => undefined),
-    forgetSpace: vi.fn(async () => undefined),
+    forgetConversations: vi.fn(async () => undefined),
     workspacePath: '',
     setWorkspace: vi.fn(),
     invalidateWorkspace: vi.fn(async () => undefined),

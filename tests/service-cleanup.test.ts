@@ -13,7 +13,7 @@ function setup() {
   const harness = mockHarness({
     shutdownAll: vi.fn(async () => undefined),
     forgetAgent: vi.fn(async () => undefined),
-    forgetSpace: vi.fn(async () => undefined),
+    forgetConversations: vi.fn(async () => undefined),
     invalidateWorkspace: vi.fn(async () => undefined),
     cleanupUnusedHomes: vi.fn(),
     setWorkspace: vi.fn(),
@@ -58,7 +58,7 @@ describe('orphan Harness home cleanup', () => {
       await service.removeSpace(space.id)
       expect(db.referencedCapabilityHashes()).toEqual([])
       expect(harness.shutdownAll).not.toHaveBeenCalled()
-      expect(harness.forgetSpace).toHaveBeenCalledWith(space.id)
+      expect(harness.forgetConversations).toHaveBeenCalledWith([`space:${space.id}`])
       expect(harness.cleanupUnusedHomes).toHaveBeenCalledWith([])
     } finally {
       db.close()

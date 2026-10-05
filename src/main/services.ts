@@ -53,7 +53,7 @@ export class MindMeshServices {
       | 'prepareRun'
       | 'status'
       | 'forgetAgent'
-      | 'forgetSpace'
+      | 'forgetConversations'
       | 'workspacePath'
       | 'setWorkspace'
       | 'invalidateWorkspace'
@@ -85,12 +85,13 @@ export class MindMeshServices {
   createSpace = (input: CreateSpaceInput) => this.db.createSpace(input)
   updateSpace = (id: string, input: CreateSpaceInput) => this.db.updateSpace(id, input)
   removeSpace = async (id: string): Promise<void> => {
-    this.db.removeSpace(id)
-    await this.harness.forgetSpace(id)
+    const conversationIds = this.db.removeSpace(id)
+    await this.harness.forgetConversations(conversationIds)
     this.cleanupUnusedHomes()
   }
   updateSpaceContext = (id: string, context: string) => this.db.updateSpaceContext(id, context)
-  messages = (scope: Message['scope'], scopeId: string) => this.db.listMessages(scope, scopeId)
+  messages = (scope: Message['scope'], scopeId: string) =>
+    this.db.listMessages(this.db.conversationIdFor(scope, scopeId))
   async stop(scope: Message['scope'], scopeId: string): Promise<boolean> {
     if ((scope !== 'private' && scope !== 'space') || typeof scopeId !== 'string') return false
     const stop = this.activeStops.get(`${scope}:${scopeId}`)
@@ -215,6 +216,9 @@ export class MindMeshServices {
     validateChatContent(content)
     const agent = this.db.getAgent(agentId)
     if (!agent) throw new Error('智能体不存在')
+    // Every read below must use the same conversation the runtime session belongs
+    // to, otherwise history and the harness session could describe different chats.
+    const privateConversation = this.db.conversationIdFor('private', agentId)
     const runAgent = resolveRunAgent(agent, options, this.deepSeekModelIds)
     const images = validateImageAttachments(runAgent.provider, runAgent.model, attachments)
     const promptContent = content.trim() || '请分析附带的图片。'
@@ -234,7 +238,7 @@ export class MindMeshServices {
       content,
       attachments: images,
     })
-    const history = this.db.listMessages('private', agentId).slice(-31, -1)
+    const history = this.db.listMessages(privateConversation).slice(-31, -1)
     const requestId = crypto.randomUUID()
     this.emitProgress('private', agentId, sessionAgent.name)
     let result
@@ -267,7 +271,7 @@ export class MindMeshServices {
           })
         }
         void this.refreshDeepSeekBalance()
-        return this.db.listMessages('private', agentId)
+        return this.db.listMessages(privateConversation)
       }
       this.recordRuntimeError('private', agent.id, error)
       this.db.addMessage({
@@ -277,7 +281,7 @@ export class MindMeshServices {
         authorName: 'MindMesh',
         content: `${agent.name} 回复失败：${runtimeFailureDetail(this.runtimeFailureKind)}`,
       })
-      return this.db.listMessages('private', agentId)
+      return this.db.listMessages(privateConversation)
     }
     if (this.shuttingDown || !this.db.getAgent(agentId)) return []
     this.db.addMessage({
@@ -296,7 +300,7 @@ export class MindMeshServices {
       session
     )
     void this.refreshDeepSeekBalance()
-    return this.db.listMessages('private', agentId)
+    return this.db.listMessages(privateConversation)
   }
 
   sendSpace(
@@ -317,6 +321,9 @@ export class MindMeshServices {
     validateChatContent(content)
     const space = this.db.getSpace(spaceId)
     if (!space) throw new Error('协作空间不存在')
+    // The consumption cursor is per conversation, so visible history must be read
+    // from that same conversation or an agent would skip messages it never saw.
+    const spaceConversation = this.db.conversationIdFor('space', spaceId)
     const members = space.memberIds
       .map((id) => this.db.getAgent(id))
       .filter((agent) => agent !== undefined)
@@ -351,7 +358,7 @@ export class MindMeshServices {
         authorName: 'MindMesh',
         content: '请使用 @智能体 指定参与本次讨论的成员。',
       })
-      return this.db.listMessages('space', spaceId)
+      return this.db.listMessages(spaceConversation)
     }
 
     for (const runAgent of runAgents) {
@@ -367,8 +374,7 @@ export class MindMeshServices {
         images.length > 0
       )
       const visibleMessages = this.db.listMessagesSince(
-        'space',
-        spaceId,
+        spaceConversation,
         session.lastConsumedMessageSequence
       )
       const prompt = buildSpacePrompt(sessionAgent, space, visibleMessages)
@@ -382,7 +388,7 @@ export class MindMeshServices {
           'space',
           spaceId,
           crypto.randomUUID(),
-          () => buildSpacePrompt(sessionAgent, space, this.db.listMessages('space', spaceId)),
+          () => buildSpacePrompt(sessionAgent, space, this.db.listMessages(spaceConversation)),
           images,
           runtimeRequest
         )
@@ -440,7 +446,7 @@ export class MindMeshServices {
       )
       void this.refreshDeepSeekBalance()
     }
-    return this.shuttingDown ? [] : this.db.listMessages('space', spaceId)
+    return this.shuttingDown ? [] : this.db.listMessages(spaceConversation)
   }
 
   shutdown(): Promise<void> {
@@ -603,6 +609,9 @@ export class MindMeshServices {
     attachments: ChatImageAttachment[],
     runtimeRequest: RuntimeRequest
   ): ReturnType<DeepSeekHarnessAdapter['run']> {
+    // Derived once and reused: the supervisor lease is keyed by conversation, so
+    // rebuilding this inline once drifted from prepareSession and stranded leases.
+    const contextKey = runtimeContextKey(this.db.conversationIdFor(scope, scopeId), agent.id)
     let streamed = ''
     let streamedReasoning = ''
     let stopRequested = false
@@ -637,7 +646,7 @@ export class MindMeshServices {
     }
     const run = (input: string, id: string, freshSession = false) =>
       this.harness.run(agent, input, id, onText, attachments, runtimeRequest, freshSession, {
-        contextKey: runtimeContextKey(this.db.conversationIdFor(scope, scopeId), agent.id),
+        contextKey,
         requestId,
         recoveryPrompt,
       })

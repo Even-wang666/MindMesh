@@ -400,7 +400,7 @@ describe('updateSpaceContext', () => {
           context: '新的背景',
           memberIds: space.memberIds,
         })
-        expect(db.listMessages('space', space.id)).toHaveLength(1)
+        expect(db.listMessages(db.conversationIdFor('space', space.id))).toHaveLength(1)
       } finally {
         db.close()
       }
@@ -526,9 +526,9 @@ describe('space membership and agent deletion', () => {
       )
       db.removeSpace(first.id)
       expect(db.getSpace(first.id)).toBeUndefined()
-      expect(db.listMessages('space', first.id)).toEqual([])
-      expect(db.listMessages('space', second.id)).toHaveLength(1)
-      expect(db.listMessages('private', agent.id)).toHaveLength(1)
+      expect(db.listMessages(db.conversationIdFor('space', first.id))).toEqual([])
+      expect(db.listMessages(db.conversationIdFor('space', second.id))).toHaveLength(1)
+      expect(db.listMessages(db.conversationIdFor('private', agent.id))).toHaveLength(1)
       expect(
         db.getOrCreateRuntimeSession(
           runtimeContextKey(`space:${second.id}`, agent.id),
@@ -578,7 +578,7 @@ describe('space membership and agent deletion', () => {
         context: '新背景',
         memberIds: [originalMembers[1]],
       })
-      expect(db.listMessages('space', space.id)).toMatchObject([message])
+      expect(db.listMessages(db.conversationIdFor('space', space.id))).toMatchObject([message])
       expect(() =>
         db.updateSpace(space.id, { ...updated, name: '不应保存', memberIds: ['missing-agent'] })
       ).toThrow()
@@ -587,7 +587,7 @@ describe('space membership and agent deletion', () => {
       expect(restored.memberIds).toEqual(originalMembers)
       db.removeAgent(originalMembers[0])
       expect(db.getSpace(space.id)?.memberIds).toEqual([originalMembers[1]])
-      expect(db.listMessages('space', space.id)).toMatchObject([message])
+      expect(db.listMessages(db.conversationIdFor('space', space.id))).toMatchObject([message])
     } finally {
       db.close()
       rmSync(directory, { recursive: true, force: true })
@@ -667,7 +667,7 @@ describe('workspace selection', () => {
             capabilityHash
           ).harnessSessionId
         ).toBe('new-session')
-        expect(reopened.listMessages('private', agent.id)[0].content).toBe('历史')
+        expect(reopened.listMessages(db.conversationIdFor('private', agent.id))[0].content).toBe('历史')
       } finally {
         reopened.close()
       }
@@ -853,7 +853,7 @@ describe('message metadata', () => {
     try {
       const db = new MindMeshDatabase(path)
       try {
-        expect(db.listMessages('private', 'agent')[0]).toMatchObject({
+        expect(db.listMessages(db.conversationIdFor('private', 'agent'))[0]).toMatchObject({
           content: '旧消息',
           reasoning: null,
           attachments: [],
@@ -882,7 +882,7 @@ describe('message metadata', () => {
       }
       const reopened = new MindMeshDatabase(path)
       try {
-        expect(reopened.listMessages('private', 'agent')[1]).toMatchObject({
+        expect(reopened.listMessages(db.conversationIdFor('private', 'agent'))[1]).toMatchObject({
           content: '回答',
           reasoning: '先分析\n\n再回答',
           stopped: true,

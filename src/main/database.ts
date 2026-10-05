@@ -40,10 +40,21 @@ type RuntimeSessionRow = {
 const MAX_SPACE_CONTEXT_LENGTH = 100_000
 
 /**
+ * The authoritative per-run usage columns, shared by table creation and the v8
+ * upgrade so the two can never drift. `executions` mirrors these as a summary.
+ */
+const RUN_USAGE_COLUMNS = [
+  ['inputTokens', 'INTEGER'],
+  ['outputTokens', 'INTEGER'],
+  ['cacheReadTokens', 'INTEGER'],
+  ['cacheWriteTokens', 'INTEGER'],
+] as const
+
+/**
  * Bump when adding a migration step below. The migrator refuses to run against a
  * database written by a newer build, so this must never be lowered.
  */
-const SCHEMA_VERSION = 7
+const SCHEMA_VERSION = 8
 
 function validateFieldLength(value: string, label: string, limit: number): void {
   if (value.length > limit)
@@ -313,6 +324,7 @@ export class MindMeshDatabase {
       if (version < 5) this.migrateToConversations()
       if (version < 6) this.createExecutionTables()
       if (version < 7) this.migrateRuntimeSessionKeys()
+      if (version < 8) this.addRunUsageColumns()
       this.db
         .prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)')
         .run('schema_version', String(SCHEMA_VERSION))
@@ -632,7 +644,8 @@ export class MindMeshDatabase {
       startedAt TEXT NOT NULL,
       firstOutputAt TEXT,
       endedAt TEXT,
-      agentSnapshot TEXT
+      agentSnapshot TEXT,
+      ${RUN_USAGE_COLUMNS.map(([column, type]) => `${column} ${type}`).join(',\n      ')}
     )`)
     this.db.exec('CREATE INDEX runs_execution ON runs(executionId, startedAt)')
     this.db.exec('CREATE INDEX runs_conversation ON runs(conversationId, startedAt DESC)')
@@ -674,6 +687,32 @@ export class MindMeshDatabase {
     for (const { contextKey } of rows) {
       const next = conversationRuntimeKey(contextKey)
       if (next && next !== contextKey) update.run(next, contextKey)
+    }
+  }
+
+  /**
+   * v8: authoritative per-run token usage.
+   *
+   * `executions` already carries token columns but they are a summary, and the spike
+   * proved `assistant/message.usage` is per-request rather than cumulative. Without
+   * the same columns on `runs` the per-agent numbers could never be written, and an
+   * execution total could not be recomputed if the summary were ever wrong.
+   *
+   * ALTER TABLE ADD COLUMN is used instead of a table rebuild: the table is small,
+   * the columns are nullable, and existing rows predate usage reporting so they
+   * have no correct value to preserve.
+   */
+  private addRunUsageColumns(): void {
+    const existing = new Set(
+      (this.db.prepare('PRAGMA table_info(runs)').all() as Array<{ name: string }>).map(
+        (column) => column.name
+      )
+    )
+    for (const [column, type] of RUN_USAGE_COLUMNS) {
+      if (existing.has(column)) continue
+      // db.exec cannot bind parameters, and node:sqlite cannot prepare DDL with
+      // placeholders, so the identifiers come from the closed literal set above.
+      this.db.exec(`ALTER TABLE runs ADD COLUMN ${column} ${type}`)
     }
   }
 
@@ -980,6 +1019,15 @@ export class MindMeshDatabase {
         agent.reasoningEffort ?? null,
         agent.createdAt
       )
+    // The default conversation is created up front rather than on first message:
+    // deleteAgent relies on enumerating an agent's conversations, and a lazy row
+    // would leave that loop empty and strand the agent's runtime sessions.
+    this.ensureConversation(
+      this.conversationIdFor('private', agent.id),
+      'private',
+      agent.id,
+      agent.name
+    )
     return agent
   }
 
@@ -1008,6 +1056,10 @@ export class MindMeshDatabase {
         agent.reasoningEffort ?? null,
         id
       )
+    // See updateSpace: the default conversation is titled after its owner.
+    this.db
+      .prepare('UPDATE conversations SET title = ? WHERE id = ?')
+      .run(agent.name, this.conversationIdFor('private', id))
     return agent
   }
 
@@ -1024,6 +1076,21 @@ export class MindMeshDatabase {
     validateRecordId(id)
     this.db.exec('BEGIN')
     try {
+      // Mirror of removeSpace: an agent's private conversations and their history
+      // must not outlive the agent, and Phase 2 gives each agent several.
+      const conversations = this.db
+        .prepare('SELECT id FROM conversations WHERE scope = ? AND scopeId = ?')
+        .all('private', id) as Array<{ id: string }>
+      const deleteConversation = this.db.prepare('DELETE FROM conversations WHERE id = ?')
+      const deleteSessions = this.db.prepare(
+        'DELETE FROM runtime_sessions WHERE contextKey LIKE ?'
+      )
+      for (const conversation of conversations) {
+        deleteSessions.run(conversationRuntimeKeyPattern(conversation.id))
+        deleteConversation.run(conversation.id)
+      }
+      // Catches sessions whose conversation row is already gone, e.g. an agent
+      // imported from a template whose conversations were pruned.
       this.db
         .prepare('DELETE FROM runtime_sessions WHERE contextKey LIKE ?')
         .run(agentRuntimeKeyPattern(id))
@@ -1206,6 +1273,14 @@ export class MindMeshDatabase {
     this.db.exec('BEGIN')
     try {
       this.insertSpaceRows(space)
+      // See createAgent: the default conversation must exist before any delete path
+      // can enumerate the space's conversations.
+      this.ensureConversation(
+        this.conversationIdFor('space', space.id),
+        'space',
+        space.id,
+        space.name
+      )
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -1240,6 +1315,11 @@ export class MindMeshDatabase {
         'INSERT INTO space_members (spaceId, agentId, position) VALUES (?, ?, ?)'
       )
       normalized.memberIds.forEach((agentId, index) => addMember.run(id, agentId, index))
+      // Keep the default conversation's title in step with the space name; Phase 2
+      // lists conversations by title, so a stale name would surface in the UI.
+      this.db
+        .prepare('UPDATE conversations SET title = ? WHERE id = ?')
+        .run(normalized.name, this.conversationIdFor('space', id))
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -1248,19 +1328,37 @@ export class MindMeshDatabase {
     return this.getSpace(id)!
   }
 
-  removeSpace(id: string): void {
+  /**
+   * Deletes a space and every conversation inside it.
+   *
+   * Returns the deleted conversation ids so the caller can release the matching
+   * harness leases — those are keyed by conversation and cannot be re-derived from
+   * the space id once several conversations exist.
+   */
+  removeSpace(id: string): string[] {
     validateRecordId(id)
     if (!this.getSpace(id)) throw new Error('协作空间不存在')
     this.db.exec('BEGIN')
     try {
-      // Deleting the space conversation cascades to its messages and executions.
-      this.db.prepare('DELETE FROM conversations WHERE id = ?').run(`space:${id}`)
-      this.db
-        .prepare('DELETE FROM runtime_sessions WHERE contextKey LIKE ?')
-        .run(conversationRuntimeKeyPattern(`space:${id}`))
+      // Every conversation in the space goes, not just the default one. Phase 2
+      // lets a space hold several conversations, and each owns its messages,
+      // executions, runs and tool calls; deleting only `space:<id>` would strand a
+      // second conversation's whole history after the space itself was gone.
+      const conversations = this.db
+        .prepare('SELECT id FROM conversations WHERE scope = ? AND scopeId = ?')
+        .all('space', id) as Array<{ id: string }>
+      const deleteConversation = this.db.prepare('DELETE FROM conversations WHERE id = ?')
+      const deleteSessions = this.db.prepare(
+        'DELETE FROM runtime_sessions WHERE contextKey LIKE ?'
+      )
+      for (const conversation of conversations) {
+        deleteSessions.run(conversationRuntimeKeyPattern(conversation.id))
+        deleteConversation.run(conversation.id)
+      }
       this.db.prepare('DELETE FROM space_members WHERE spaceId = ?').run(id)
       this.db.prepare('DELETE FROM spaces WHERE id = ?').run(id)
       this.db.exec('COMMIT')
+      return conversations.map((conversation) => conversation.id)
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
@@ -1303,19 +1401,27 @@ export class MindMeshDatabase {
       .map((row) => this.hydrateMessageRow(row as Record<string, unknown>))
   }
 
-  listMessages(scope: Message['scope'], scopeId: string): Message[] {
+  /**
+   * History reads are conversation-scoped, matching the storage layout and the
+   * consumption cursor in {@link lastAgentMessageSequence}.
+   *
+   * Querying by scope/scopeId looked equivalent while there was one conversation
+   * per scope, but it silently concatenates every conversation in a scope — so a
+   * second conversation would render the first one's history and the Space
+   * consumption cursor would skip messages it had never seen. Callers that only
+   * know a scope must resolve a conversation id first.
+   */
+  listMessages(conversationId: string): Message[] {
     return this.listMessageRows(
-      'WHERE c.scope = ? AND c.scopeId = ? ORDER BY m.sequence ASC',
-      scope,
-      scopeId
+      'WHERE m.conversationId = ? ORDER BY m.sequence ASC',
+      conversationId
     )
   }
 
-  listMessagesSince(scope: Message['scope'], scopeId: string, sequence: number): Message[] {
+  listMessagesSince(conversationId: string, sequence: number): Message[] {
     return this.listMessageRows(
-      'WHERE c.scope = ? AND c.scopeId = ? AND m.sequence > ? ORDER BY m.sequence ASC',
-      scope,
-      scopeId,
+      'WHERE m.conversationId = ? AND m.sequence > ? ORDER BY m.sequence ASC',
+      conversationId,
       sequence
     )
   }
@@ -1496,10 +1602,19 @@ export class MindMeshDatabase {
    * space scope can gain messages after its default conversation was archived or
    * removed, and the message insert must not fail on the foreign key.
    */
+  /**
+   * Insert the scope's default conversation if it does not exist yet.
+   *
+   * `addMessage` also calls this, but creating it at entity-creation time keeps the
+   * invariant "every agent and space owns exactly one default conversation", which is
+   * what the delete paths enumerate. A lazily created row would make a brand-new
+   * agent or space look like it had none.
+   */
   private ensureConversation(
     conversationId: string,
     scope: Message['scope'],
-    scopeId: string
+    scopeId: string,
+    title?: string
   ): void {
     this.db
       .prepare(
@@ -1510,7 +1625,7 @@ export class MindMeshDatabase {
         conversationId,
         scope,
         scopeId,
-        scopeId,
+        title || scopeId,
         new Date().toISOString(),
         new Date().toISOString()
       )

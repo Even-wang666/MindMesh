@@ -256,7 +256,7 @@ describe('chat failures', () => {
       expect(messages.map((message) => message.authorType)).toEqual(['user', 'system'])
       expect(messages[1].content).toContain('回复失败')
       expect(messages[1].content).not.toContain('secret token')
-      expect(db.listMessages('private', agent.id)).toEqual(messages)
+      expect(db.listMessages(db.conversationIdFor('private', agent.id))).toEqual(messages)
       expect(send).toHaveBeenCalledWith('chat:progress', {
         scope: 'private',
         scopeId: agent.id,
@@ -617,8 +617,8 @@ describe('session context', () => {
       await expect(service.sendPrivate(agent.id, oversized)).rejects.toThrow('64 KiB')
       await expect(service.sendSpace(space.id, oversized)).rejects.toThrow('64 KiB')
       expect(run).not.toHaveBeenCalled()
-      expect(db.listMessages('private', agent.id)).toEqual([])
-      expect(db.listMessages('space', space.id)).toEqual([])
+      expect(db.listMessages(db.conversationIdFor('private', agent.id))).toEqual([])
+      expect(db.listMessages(db.conversationIdFor('space', space.id))).toEqual([])
       expect(db.referencedCapabilityHashes()).toEqual([])
     } finally {
       db.close()
@@ -756,7 +756,7 @@ describe('session context', () => {
       const agent = db.listAgents()[0]
       await service.sendPrivate(agent.id, '分析图片', [image])
       expect(run.mock.calls[0][4]).toEqual([image])
-      expect(db.listMessages('private', agent.id)[0].attachments).toEqual([image])
+      expect(db.listMessages(db.conversationIdFor('private', agent.id))[0].attachments).toEqual([image])
 
       db.updateAgent(agent.id, { ...agent, model: 'deepseek-v3.2' })
       await expect(service.sendPrivate(agent.id, '再看一张', [image])).rejects.toThrow(
@@ -820,7 +820,7 @@ describe('session context', () => {
       const agent = db.listAgents()[0]
       const messages = await service.sendPrivate(agent.id, '问题')
       expect(messages.at(-1)).toMatchObject({ content: '最终回答', reasoning: '第一步\n\n第二步' })
-      expect(db.listMessages('private', agent.id).at(-1)?.reasoning).toBe('第一步\n\n第二步')
+      expect(db.listMessages(db.conversationIdFor('private', agent.id)).at(-1)?.reasoning).toBe('第一步\n\n第二步')
       expect(send).toHaveBeenCalledWith(
         'chat:delta',
         expect.objectContaining({ kind: 'reasoning', text: '第一步\n\n第二步' })

@@ -259,8 +259,20 @@ export class DeepSeekHarnessAdapter {
   forgetAgent(id: string): Promise<void> {
     return this.supervisor.forgetOwner(id)
   }
-  forgetSpace(id: string): Promise<void> {
-    return this.supervisor.forgetOwner(undefined, conversationRuntimeKeyPrefix(`space:${id}`))
+  /**
+   * Release the leases of the given conversations.
+   *
+   * Conversation ids are passed explicitly rather than derived from the space id:
+   * Phase 2 gives a space several conversations whose ids no longer share the
+   * `space:<id>` prefix, so a single-prefix match would leak the second one's
+   * runtime instead of closing it.
+   */
+  forgetConversations(conversationIds: string[]): Promise<void> {
+    return Promise.all(
+      conversationIds.map((conversationId) =>
+        this.supervisor.forgetOwner(undefined, conversationRuntimeKeyPrefix(conversationId))
+      )
+    ).then(() => undefined)
   }
 
   /** The SDK cannot cancel one shared turn; only close a sole matching lease. */

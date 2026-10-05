@@ -196,12 +196,31 @@ describe('schema migration to conversations and executions', () => {
       expect(messageIndexes).toContain('messages_conversation_sequence')
       expect(messageIndexes).not.toContain('messages_scope_sequence')
 
-      // One default conversation per agent and per space.
-      const conversations = raw.prepare('SELECT id, scope FROM conversations ORDER BY id').all()
-      expect(conversations).toEqual([
-        { id: 'private:a1', scope: 'private' },
-        { id: 'space:s1', scope: 'space' },
-      ])
+      // One default conversation per agent and per space, including the ones seeded
+      // after the migration — the delete paths enumerate conversations, so "every
+      // scope owns its default conversation" has to hold for newly created rows too.
+      const conversations = raw
+        .prepare('SELECT id, scope FROM conversations ORDER BY id')
+        .all() as Array<{ id: string; scope: string }>
+      expect(conversations).toEqual(
+        expect.arrayContaining([
+          { id: 'private:a1', scope: 'private' },
+          { id: 'space:s1', scope: 'space' },
+        ])
+      )
+      const agentIds = (raw.prepare('SELECT id FROM agents').all() as Array<{ id: string }>).map(
+        (row) => row.id
+      )
+      const spaceIds = (raw.prepare('SELECT id FROM spaces').all() as Array<{ id: string }>).map(
+        (row) => row.id
+      )
+      expect(conversations).toHaveLength(agentIds.length + spaceIds.length)
+      for (const id of agentIds) {
+        expect(conversations).toContainEqual({ id: `private:${id}`, scope: 'private' })
+      }
+      for (const id of spaceIds) {
+        expect(conversations).toContainEqual({ id: `space:${id}`, scope: 'space' })
+      }
 
       // History survives and maps onto the right conversation.
       const messages = raw
@@ -250,8 +269,19 @@ describe('schema migration to conversations and executions', () => {
       expect.arrayContaining(['runId', 'sequence', 'toolName', 'status', 'elapsedMs'])
     )
 
+    // §4.6: runs hold the authoritative per-agent usage, executions the summary.
+    const runUsageColumns = columnsOf(raw, 'runs')
+    expect([...runUsageColumns]).toEqual(
+      expect.arrayContaining([
+        'inputTokens',
+        'outputTokens',
+        'cacheReadTokens',
+        'cacheWriteTokens',
+      ])
+    )
+
     const version = raw.prepare("SELECT value FROM app_meta WHERE key='schema_version'").get()
-    expect(version?.value).toBe('7')
+    expect(version?.value).toBe('8')
 
     raw.close()
     db.close()
