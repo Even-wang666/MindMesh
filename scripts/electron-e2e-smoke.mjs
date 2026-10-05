@@ -233,11 +233,12 @@ async function runRound(round) {
             true
           )
           await evaluate(
-            `(() => { const input = document.querySelector('[aria-labelledby="github-plugin-title"] input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'http://127.0.0.1/plugin'); input.dispatchEvent(new Event('input', { bubbles: true })); })()`
+            `document.querySelector('[aria-labelledby="github-plugin-title"] input').focus()`
           )
+          await client.call('Input.insertText', { text: 'http://127.0.0.1/plugin' })
           await until(() =>
             evaluate(
-              `document.querySelector('[aria-labelledby="github-plugin-title"] button[type="submit"]?.disabled === false`
+              `document.querySelector('[aria-labelledby="github-plugin-title"] button[type="submit"]')?.disabled === false`
             )
           )
           await evaluate(

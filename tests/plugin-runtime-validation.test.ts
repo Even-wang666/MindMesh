@@ -39,6 +39,7 @@ test('rejects malformed sealed capability YAML before running package installati
           revision: 'fixture',
           runtimeVersion: runtime.version,
           pnpmVersion: '11.7.0',
+          registry: 'http://127.0.0.1:65534/',
           enabled: [],
         }),
       }
