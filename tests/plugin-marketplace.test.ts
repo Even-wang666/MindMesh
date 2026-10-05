@@ -182,7 +182,7 @@ describe('plugin catalog and controlled Marketplace actions', () => {
     ).toBeUndefined()
   })
 
-  it('bounds catalog bytes and preserves more than 2000 normalized plugin entries in the summary cache', async () => {
+  it('bounds upstream catalog bytes and never restores its old entries after switching to release-owned plugins', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(new Uint8Array(16 * 1024 * 1024 + 1)))
@@ -203,7 +203,7 @@ describe('plugin catalog and controlled Marketplace actions', () => {
     load.mockRejectedValue(new Error('offline'))
     expect(
       (await new MarketplaceCatalogService(path, providers).list('plugins')).items
-    ).toHaveLength(2200)
+    ).toHaveLength(0)
   })
 
   it('prepares availability without executing plugins and installs in one action with full validation', async () => {

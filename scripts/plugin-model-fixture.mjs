@@ -1,7 +1,10 @@
 import { createServer } from 'node:http'
 
 /** Replaces only the model HTTP boundary. DSH, tool dispatch and plugin JS are real. */
-export async function startPluginModelFixture() {
+export async function startPluginModelFixture({
+  toolName = 'mindmesh_fixture_echo',
+  toolArguments = {},
+} = {}) {
   const requests = []
   let held
   const server = createServer(async (request, response) => {
@@ -20,13 +23,13 @@ export async function startPluginModelFixture() {
       .filter((message) => message.role === 'tool')
       .at(-1)
     const names = (input.tools ?? []).map((tool) => tool.function.name)
-    const present =
-      names.includes('mindmesh_fixture_echo') ||
-      JSON.stringify(input.messages).includes('mindmesh_fixture_echo')
+    const present = names.includes(toolName) || JSON.stringify(input.messages).includes(toolName)
     const toolCall = !lastTool && present
-    const name = names.includes('mindmesh_fixture_echo') ? 'mindmesh_fixture_echo' : 'run_code'
+    const name = names.includes(toolName) ? toolName : 'run_code'
     const args =
-      name === 'run_code' ? { code: 'return await tools.mindmesh_fixture_echo({});' } : {}
+      name === 'run_code'
+        ? { code: `return await tools.${toolName}(${JSON.stringify(toolArguments)});` }
+        : toolArguments
     const content = lastTool ? String(lastTool.content) : 'core-without-plugin'
     const message = toolCall
       ? {

@@ -35,15 +35,46 @@ export async function pluginAvailable(
     await reader.cancel().catch(() => {})
   }
   const manifest = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  return pluginMetadataAvailable(manifest, packageName, version, installed)
+}
+
+export type PluginPackageMetadata = {
+  name?: unknown
+  version?: unknown
+  dsh?: { bundle?: { patch?: unknown } }
+  scripts?: Record<string, unknown>
+  os?: unknown
+  cpu?: unknown
+  engines?: { node?: unknown }
+  peerDependencies?: Record<string, unknown>
+  peerDependenciesMeta?: Record<string, { optional?: unknown }>
+}
+
+export function pluginMetadataAvailable(
+  manifest: PluginPackageMetadata,
+  packageName: string,
+  version: string,
+  installed: readonly InstalledPlugin[]
+): boolean {
+  return !pluginMetadataError(manifest, packageName, version, installed)
+}
+
+export function pluginMetadataError(
+  manifest: PluginPackageMetadata,
+  packageName: string,
+  version: string,
+  installed: readonly InstalledPlugin[]
+): string | undefined {
+  validatePluginSpec(packageName, version)
   if (
     manifest?.name !== packageName ||
     manifest.version !== version ||
     typeof manifest.dsh?.bundle?.patch !== 'string' ||
     !manifest.dsh.bundle.patch
   )
-    return false
+    return '插件包名称、确切版本或 DSH bundle 声明无效。'
   if (['preinstall', 'install', 'postinstall', 'prepare'].some((name) => manifest.scripts?.[name]))
-    return false
+    return '插件需要执行安装或构建脚本，请提供已构建的插件。'
   for (const [field, target] of [
     ['os', process.platform],
     ['cpu', process.arch],
@@ -53,14 +84,14 @@ export async function pluginAvailable(
       values !== undefined &&
       (!Array.isArray(values) || values.some((value) => typeof value !== 'string'))
     )
-      return false
+      return `插件 ${field} 平台要求格式无效。`
     if (
       values?.includes(`!${target}`) ||
       (values?.some((value: string) => !value.startsWith('!')) &&
         !values.includes(target) &&
         !values.includes('any'))
     )
-      return false
+      return `插件不支持当前 ${field}：${target}。`
   }
   const require = createRequire(getDshRuntimeInfo().dshBin)
   const { satisfies } = require('semver') as {
@@ -72,9 +103,10 @@ export async function pluginAvailable(
     manifest.engines?.node !== undefined &&
     !matches(process.versions.node, manifest.engines.node)
   )
-    return false
+    return `Node 版本不兼容：插件要求 ${String(manifest.engines.node)}，当前 ${process.versions.node}。`
   const peers = manifest.peerDependencies ?? {}
-  if (!peers || typeof peers !== 'object' || Array.isArray(peers)) return false
+  if (!peers || typeof peers !== 'object' || Array.isArray(peers))
+    return '插件 peerDependencies 格式无效。'
   for (const [name, range] of Object.entries(peers)) {
     validatePluginSpec(name, '0.0.0')
     let selected = installed.find(
@@ -90,7 +122,8 @@ export async function pluginAvailable(
       }
     }
     if (!selected && manifest.peerDependenciesMeta?.[name]?.optional === true) continue
-    if (!selected || !matches(selected, range)) return false
+    if (!selected || !matches(selected, range))
+      return `依赖不兼容：${name} 要求 ${String(range)}，当前 ${selected ?? '未安装或未启用'}。`
   }
-  return true
+  return undefined
 }

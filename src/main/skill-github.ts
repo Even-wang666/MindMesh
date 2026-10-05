@@ -29,11 +29,13 @@ type GitHubSkillSource = {
 export async function withGitHubSkillBundle<T>(
   input: string,
   onProgress: ((progress: SkillInstallProgress) => void) | undefined,
-  install: (source: string, receipt: GitHubSkillSource) => T
+  install: (source: string, receipt: GitHubSkillSource) => T,
+  signal?: AbortSignal
 ): Promise<T> {
+  signal?.throwIfAborted()
   onProgress?.({ phase: 'resolving' })
   const github = parseGitHubSkillUrl(input)
-  const resolved = await resolveGitHubLocation(github)
+  const resolved = await resolveGitHubLocation(github, signal)
   const commit = resolved.commit
   const temporary = mkdtempSync(join(tmpdir(), 'mindmesh-skill-'))
   const archive = join(temporary, 'repository.tar.gz')
@@ -45,7 +47,8 @@ export async function withGitHubSkillBundle<T>(
       `https://codeload.github.com/${github.repository}/tar.gz/${commit}`,
       archive,
       (receivedBytes, totalBytes) =>
-        onProgress?.({ phase: 'downloading', receivedBytes, totalBytes })
+        onProgress?.({ phase: 'downloading', receivedBytes, totalBytes }),
+      signal
     )
     let files = 0
     let bytes = 0
@@ -59,6 +62,7 @@ export async function withGitHubSkillBundle<T>(
       strip: 1,
       preservePaths: false,
       filter: (path, entry) => {
+        signal?.throwIfAborted()
         archiveEntries += 1
         archiveExpandedBytes += entry.size
         if (
@@ -97,7 +101,8 @@ export async function withGitHubSkillBundle<T>(
     })
     const source = resolved.path ? join(checkout, ...resolved.path.split('/')) : checkout
     onProgress?.({ phase: 'installing' })
-    const installed = install(source, {
+    signal?.throwIfAborted()
+    const installed = await install(source, {
       kind: 'github',
       url: github.url,
       repository: github.repository,
@@ -122,7 +127,8 @@ function parseGitHubSkillUrl(input: string): GitHubSkillLocation {
     url.protocol !== 'https:' ||
     url.hostname.toLowerCase() !== 'github.com' ||
     url.username ||
-    url.password
+    url.password ||
+    url.port
   ) {
     throw new Error('仅支持公开的 GitHub HTTPS URL')
   }
@@ -158,26 +164,27 @@ function parseGitHubSkillUrl(input: string): GitHubSkillLocation {
   return { url: url.toString().replace(/\/$/, ''), repository, ref, path }
 }
 
-async function githubDefaultBranch(repository: string): Promise<string> {
-  const value = await githubJson(`https://api.github.com/repos/${repository}`)
+async function githubDefaultBranch(repository: string, signal?: AbortSignal): Promise<string> {
+  const value = await githubJson(`https://api.github.com/repos/${repository}`, signal)
   if (!isRecord(value) || typeof value.default_branch !== 'string')
     throw new Error('GitHub 仓库未返回默认分支')
   return value.default_branch
 }
 
 async function resolveGitHubLocation(
-  location: GitHubSkillLocation
+  location: GitHubSkillLocation,
+  signal?: AbortSignal
 ): Promise<{ commit: string; path: string }> {
   if (!location.ref) {
-    const reference = await githubDefaultBranch(location.repository)
-    const commit = await githubCommit(location.repository, reference)
+    const reference = await githubDefaultBranch(location.repository, signal)
+    const commit = await githubCommit(location.repository, reference, signal)
     if (!commit) throw new Error('GitHub 默认分支不存在')
     return { commit, path: '' }
   }
   const pathSegments = location.path ? location.path.split('/') : []
   let reference = location.ref
   for (;;) {
-    const commit = await githubCommit(location.repository, reference)
+    const commit = await githubCommit(location.repository, reference, signal)
     if (commit) return { commit, path: pathSegments.join('/') }
     const segment = pathSegments.shift()
     if (!segment) throw new Error('GitHub 分支、标签或 commit 不存在')
@@ -185,12 +192,18 @@ async function resolveGitHubLocation(
   }
 }
 
-async function githubCommit(repository: string, reference: string): Promise<string | undefined> {
+async function githubCommit(
+  repository: string,
+  reference: string,
+  signal?: AbortSignal
+): Promise<string | undefined> {
   const response = await fetch(
     `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(reference)}`,
     {
       headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'MindMesh' },
-      signal: AbortSignal.timeout(15_000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
+        : AbortSignal.timeout(15_000),
     }
   )
   if (response.status === 404) return undefined
@@ -202,10 +215,12 @@ async function githubCommit(repository: string, reference: string): Promise<stri
   return value.sha
 }
 
-async function githubJson(url: string): Promise<unknown> {
+async function githubJson(url: string, signal?: AbortSignal): Promise<unknown> {
   const response = await fetch(url, {
     headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'MindMesh' },
-    signal: AbortSignal.timeout(15_000),
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
+      : AbortSignal.timeout(15_000),
   })
   if (!response.ok) throw new Error(`GitHub 请求失败（${response.status}）`)
   return response.json()
@@ -214,9 +229,14 @@ async function githubJson(url: string): Promise<unknown> {
 export async function downloadFile(
   url: string,
   destination: string,
-  onProgress?: (receivedBytes: number, totalBytes?: number) => void
+  onProgress?: (receivedBytes: number, totalBytes?: number) => void,
+  signal?: AbortSignal
 ): Promise<void> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+  const response = await fetch(url, {
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+      : AbortSignal.timeout(30_000),
+  })
   if (!response.ok || !response.body) throw new Error(`GitHub 下载失败（${response.status}）`)
   const contentLength = response.headers.get('content-length')
   const declaredBytes = contentLength === null ? undefined : Number(contentLength)
@@ -237,7 +257,12 @@ export async function downloadFile(
       callback(null, chunk)
     },
   })
-  await pipeline(Readable.fromWeb(response.body as never), limiter, createWriteStream(destination))
+  await pipeline(
+    Readable.fromWeb(response.body as never),
+    limiter,
+    createWriteStream(destination),
+    { signal }
+  )
   if (bytes !== reportedBytes) onProgress?.(bytes, totalBytes)
 }
 

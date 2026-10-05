@@ -153,6 +153,8 @@ export class MarketplaceCatalogService {
 
   private readCache(kind: MarketplaceKind): MarketplaceCatalog | undefined {
     try {
+      // Release-owned plugins must never fall back to an older upstream catalog cache.
+      if (kind === 'plugins') return undefined
       const providers = this.providers.filter((provider) => provider.kind === kind)
       const raw = JSON.parse(readFileSync(join(this.directory, `${kind}.json`), 'utf8'))
       if (
@@ -160,7 +162,7 @@ export class MarketplaceCatalogService {
         typeof raw.fetchedAt !== 'string' ||
         !Number.isFinite(Date.parse(raw.fetchedAt)) ||
         !Array.isArray(raw.items) ||
-        raw.items.length > (kind === 'plugins' ? 10_000 : 2_000) * providers.length
+        raw.items.length > 2_000 * providers.length
       )
         return undefined
       // Older curated summaries lack member previews; reload the local provider once.

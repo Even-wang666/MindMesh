@@ -37,10 +37,13 @@ describe('preload chat boundary', () => {
     await api.plugins.state()
     await api.plugins.change(request)
     await api.plugins.cancel(request.requestId)
+    const github = { requestId: request.requestId, url: 'https://github.com/acme/plugin' }
+    await api.plugins.importGitHub(github)
     expect(electron.invoke.mock.calls).toEqual([
       ['plugins:state'],
       ['plugins:change', request],
       ['plugins:cancel', request.requestId],
+      ['plugins:importGitHub', github],
     ])
     const listener = vi.fn(),
       unsubscribe = api.plugins.onProgress(listener)

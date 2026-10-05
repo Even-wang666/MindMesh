@@ -1,1 +1,1 @@
-export function startPluginModelFixture(): Promise<{ url: string; requests: any[]; holdNext(): Promise<() => void>; close(): Promise<void> }>
+export function startPluginModelFixture(options?: { toolName?: string; toolArguments?: Record<string, unknown> }): Promise<{ url: string; requests: any[]; holdNext(): Promise<() => void>; close(): Promise<void> }>

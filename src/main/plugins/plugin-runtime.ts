@@ -16,6 +16,7 @@ import { getDshRuntimeInfo } from '../dsh-runtime'
 import type { RuntimeRequest } from '../runtime-revision'
 import { BundledPackageManager, DshCliRunner, stagingEnvironment } from './dsh-cli-runner'
 import { pluginPackageDigests } from './plugin-inventory'
+import { BundledPluginLibrary, packageCacheEnvironment } from './bundled-plugins'
 
 const installFiles = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'cordis.patch.yml']
 
@@ -114,6 +115,10 @@ export async function materializePlugins(
   if (registry !== 'https://registry.npmjs.org/' && !/^http:\/\/127\.0\.0\.1:\d+\/$/.test(registry))
     throw new Error('Invalid validated plugin registry')
   env.npm_config_registry = registry
+  if (registry === 'https://registry.npmjs.org/') {
+    const cache = new BundledPluginLibrary().cache(dataDirectory, expected)
+    if (cache) Object.assign(env, packageCacheEnvironment(cache))
+  }
   const run = (args: string[], name: string, initialize = false) =>
     runner.run({
       args,

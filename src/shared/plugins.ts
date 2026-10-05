@@ -25,6 +25,7 @@ export type PluginRequest = {
   action: PluginAction
   version?: string
 }
+export type GitHubPluginRequest = { requestId: string; url: string }
 export type LocalPluginResult = {
   key: string
   version: string

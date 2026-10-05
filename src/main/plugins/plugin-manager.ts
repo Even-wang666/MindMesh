@@ -19,6 +19,12 @@ import type { PluginPhase } from '../../shared/plugins'
 import { BundledPackageManager, DshCliRunner, stagingEnvironment } from './dsh-cli-runner'
 import { pluginPackageDigests } from './plugin-inventory'
 import { redactPluginDiagnostic } from './plugin-diagnostics'
+import { pluginSourceArchive } from './plugin-sources'
+import {
+  BundledPluginLibrary,
+  packageCacheEnvironment,
+  type PluginPackageCache,
+} from './bundled-plugins'
 import {
   PluginSetManager,
   pluginSetRevision,
@@ -40,8 +46,9 @@ export class PluginStaging {
   private readonly version: string
   constructor(
     private readonly dataDirectory: string,
-    resourcesPath = process.resourcesPath,
-    private readonly fixtureRegistry?: string
+    private readonly resourcesPath = process.resourcesPath,
+    private readonly fixtureRegistry?: string,
+    private readonly packageCache?: PluginPackageCache
   ) {
     if (fixtureRegistry && !/^http:\/\/127\.0\.0\.1:\d+\/$/.test(fixtureRegistry))
       throw new Error('Fixture registry must be loopback')
@@ -107,6 +114,12 @@ export class PluginStaging {
       const enabled = plugins
         .filter((plugin) => plugin.enabled)
         .sort((a, b) => a.packageName.localeCompare(b.packageName))
+      const cache =
+        this.packageCache ??
+        (!this.fixtureRegistry
+          ? new BundledPluginLibrary(this.resourcesPath).cache(this.dataDirectory, enabled)
+          : undefined)
+      if (cache) Object.assign(env, packageCacheEnvironment(cache))
       progress('installing')
       if (enabled.length)
         await run(
@@ -119,7 +132,16 @@ export class PluginStaging {
             '--ignore-scripts',
             '--config.auto-install-peers=false',
             `--registry=${this.fixtureRegistry ?? 'https://registry.npmjs.org/'}`,
-            ...enabled.map((plugin) => `${plugin.packageName}@${plugin.version}`),
+            ...enabled.map((plugin) => {
+              const source = pluginSourceArchive(
+                this.dataDirectory,
+                plugin.packageName,
+                plugin.version
+              )
+              return source
+                ? `${plugin.packageName}@file:${source.replaceAll('\\', '/')}`
+                : `${plugin.packageName}@${plugin.version}`
+            }),
           ],
           'install'
         )

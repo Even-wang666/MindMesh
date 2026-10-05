@@ -24,6 +24,7 @@ import { AgencyProvider, installAgencyAgent } from './agency-provider'
 import { teamProvider, installTeam } from './team-provider'
 import { PluginManager, PluginStaging } from './plugins/plugin-manager'
 import { DshPluginCatalogProvider, PluginMarketplaceService } from './plugins/plugin-marketplace'
+import { BundledPluginLibrary } from './plugins/bundled-plugins'
 
 let mainWindow: BrowserWindow | null = null
 let services: MindMeshServices | null = null
@@ -89,10 +90,11 @@ function registerIpc(
       throw new Error('Marketplace fixture must be loopback')
   }
   const agency = new AgencyProvider(dataDir)
+  const pluginLibrary = fixture.catalogUrl ? undefined : new BundledPluginLibrary()
   const marketplace = new MarketplaceCatalogService(dataDir, [
     agency,
     teamProvider,
-    new DshPluginCatalogProvider(fixture.catalogUrl),
+    pluginLibrary ?? new DshPluginCatalogProvider(fixture.catalogUrl),
   ])
   pluginMarketplace = new PluginMarketplaceService(
     dataDir,
@@ -106,13 +108,17 @@ function registerIpc(
         mainWindow.webContents.send('plugins:progress', operation)
     },
     undefined,
-    fixture.registry
+    fixture.registry,
+    pluginLibrary
   )
   ipcMain.handle('plugins:state', async () => {
     await pluginMarketplace!.prepareCatalog()
     return pluginMarketplace!.state()
   })
   ipcMain.handle('plugins:change', (_event, request) => pluginMarketplace!.change(request))
+  ipcMain.handle('plugins:importGitHub', (_event, request) =>
+    pluginMarketplace!.importGitHub(request)
+  )
   ipcMain.handle('plugins:cancel', (_event, requestId) => pluginMarketplace!.cancel(requestId))
   ipcMain.handle('marketplace:list', async (_event, kind, refresh) => {
     const result = await marketplace.list(kind, refresh)

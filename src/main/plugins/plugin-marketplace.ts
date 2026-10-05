@@ -2,6 +2,8 @@ import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'no
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { pluginAvailable } from './plugin-availability'
+import { BundledPluginLibrary } from './bundled-plugins'
+import { prepareGitHubPlugin } from './plugin-sources'
 import { parseMarketplaceKey } from '../../shared/marketplace'
 import type { MarketplaceItem } from '../../shared/marketplace'
 import type {
@@ -9,6 +11,7 @@ import type {
   PluginOperation,
   PluginRequest,
   PluginState,
+  GitHubPluginRequest,
 } from '../../shared/plugins'
 import { MarketplaceCatalogService, type MarketplaceProvider } from '../marketplace'
 import { getDshRuntimeInfo } from '../dsh-runtime'
@@ -104,12 +107,13 @@ export class PluginMarketplaceService {
   private readonly results = new Map<string, CachedResult>()
   private readonly resultFile: string
   constructor(
-    dataDir: string,
+    private readonly dataDir: string,
     private readonly catalog: MarketplaceCatalogService,
     private readonly manager: PluginManager,
     private readonly notify: (operation: PluginOperation) => void = () => {},
     private readonly runtimeVersion = getDshRuntimeInfo().version,
-    private readonly registry = 'https://registry.npmjs.org/'
+    private readonly registry = 'https://registry.npmjs.org/',
+    private readonly library?: BundledPluginLibrary
   ) {
     this.resultFile = join(dataDir, 'marketplace-cache', 'plugin-compatibility.json')
     try {
@@ -175,12 +179,27 @@ export class PluginMarketplaceService {
     return JSON.stringify([
       this.runtimeVersion,
       RUNTIME_SCHEMA_VERSION,
-      2,
+      this.library ? 3 : 2,
       process.platform,
       process.arch,
       process.versions.node,
       this.manager.snapshot().revision,
     ])
+  }
+  private async eligible(
+    packageName: string,
+    version: string,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    return this.library
+      ? this.library.available(packageName, version, this.manager.snapshot().plugins)
+      : pluginAvailable(
+          packageName,
+          version,
+          this.manager.snapshot().plugins,
+          signal,
+          this.registry
+        )
   }
   state(): PluginState {
     const context = this.context()
@@ -275,12 +294,10 @@ export class PluginMarketplaceService {
           )
             continue
           try {
-            const allowed = await pluginAvailable(
+            const allowed = await this.eligible(
               item.plugin!.packageName!,
               version,
-              this.manager.snapshot().plugins,
-              this.preparationController.signal,
-              this.registry
+              this.preparationController.signal
             )
             this.available.set(item.key, { version, context, allowed, checkedAt: Date.now() })
             if (this.available.size > 10_000)
@@ -343,6 +360,80 @@ export class PluginMarketplaceService {
     this.task = this.run(request, identity.sourceId, this.controller.signal)
     return this.task
   }
+  importGitHub(input: unknown): Promise<PluginOperation> {
+    if (this.closing || (this.operation && !terminal.has(this.operation.phase)))
+      throw new Error('插件操作正在进行，请稍后重试。')
+    const row = input as GitHubPluginRequest
+    if (
+      !row ||
+      typeof row !== 'object' ||
+      typeof row.requestId !== 'string' ||
+      !/^[a-f0-9-]{36}$/.test(row.requestId) ||
+      typeof row.url !== 'string' ||
+      row.url.length > 2048
+    )
+      throw new Error('GitHub 插件参数无效。')
+    const request = { requestId: row.requestId, url: row.url }
+    this.controller = new AbortController()
+    this.report({
+      requestId: row.requestId,
+      key: '["plugins","dsh","github"]',
+      action: 'install',
+      phase: 'queued',
+      message: '正在下载并验证 GitHub 插件…',
+    })
+    this.task = this.runGitHub(request, this.controller.signal)
+    return this.task
+  }
+  private async runGitHub(
+    request: GitHubPluginRequest,
+    signal: AbortSignal
+  ): Promise<PluginOperation> {
+    let key = '["plugins","dsh","github"]'
+    try {
+      const plugin = await prepareGitHubPlugin(
+        request.url,
+        this.dataDir,
+        this.manager.snapshot().plugins,
+        signal
+      )
+      key = JSON.stringify(['plugins', 'dsh', plugin.packageName])
+      const installed = this.manager
+        .snapshot()
+        .plugins.find((row) => row.packageName === plugin.packageName)
+      const kind = installed ? 'update' : 'install'
+      const options = {
+        progress: (phase: PluginOperation['phase']) =>
+          this.report({ requestId: request.requestId, key, action: kind, phase }),
+      }
+      if (installed && !installed.enabled)
+        await this.manager.change({ kind, ...plugin }, signal, { ...options, validateOnly: true })
+      await this.manager.change({ kind, ...plugin }, signal, options)
+      this.report({
+        requestId: request.requestId,
+        key,
+        action: kind,
+        phase: 'succeeded',
+        message: `GitHub 插件「${plugin.packageName}」验证通过，安装完成。`,
+      })
+    } catch (error) {
+      const diagnostics = redactPluginDiagnostic(error)
+        .replaceAll('skill', 'plugin')
+        .replaceAll('技能', '插件')
+        .slice(-4096)
+      this.report({
+        requestId: request.requestId,
+        key,
+        action: 'install',
+        phase: signal.aborted ? 'cancelled' : 'failed',
+        message: signal.aborted
+          ? '导入已取消，已安装插件保持不变。'
+          : `GitHub 插件验证失败，已终止安装：${diagnostics}`,
+        diagnostics,
+      })
+    }
+    return this.operation!
+  }
   private async run(
     request: PluginRequest,
     packageName: string,
@@ -365,13 +456,7 @@ export class PluginMarketplaceService {
           throw new Error('目录版本已改变，请刷新后重试。')
         if (
           request.action !== 'check' &&
-          !(await pluginAvailable(
-            packageName,
-            targetVersion!,
-            before.plugins,
-            signal,
-            this.registry
-          ))
+          !(await this.eligible(packageName, targetVersion!, signal))
         )
           throw new Error('该插件当前无法安装。')
         change = {

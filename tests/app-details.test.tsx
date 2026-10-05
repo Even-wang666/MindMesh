@@ -55,6 +55,7 @@ function mockApi(): MindMeshApi {
     plugins: {
       state: vi.fn(async () => ({ installed: [], results: [], operation: null })),
       change: vi.fn(),
+      importGitHub: vi.fn(),
       cancel: vi.fn(),
       onProgress: vi.fn(() => () => {}),
     },

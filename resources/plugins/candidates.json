@@ -1,0 +1,10 @@
+[
+  {
+    "packageName": "dsh-http-tools",
+    "version": "0.1.5",
+    "name": "HTTP 请求工具",
+    "description": "为 Agent 提供 HTTP 请求、curl 命令解析和请求历史工具。",
+    "license": "MIT",
+    "integrity": "sha512-+65vtdWJx2vQo+siEuNe3zL5nkl7tQ+yi/utMrtngKnB/5WBcKqSH3yP5t8EEo17SALzJX5EUSQUMxdnD1mrqg=="
+  }
+]

@@ -6,6 +6,7 @@ import { PluginManager, PluginStaging, type PluginChange } from './plugin-manage
 import { DeepSeekHarnessAdapter } from '../harness-adapter'
 import type { ModelProviderRuntimeConfig } from '../model-provider-settings'
 import { redactPluginDiagnostic } from './plugin-diagnostics'
+import { getDshRuntimeInfo } from '../dsh-runtime'
 
 /** Explicit developer CLI only; there is no renderer IPC for plugin mutation in PR4. */
 export async function runPluginDeveloperRequest(file: string, signal: AbortSignal): Promise<void> {
@@ -32,6 +33,13 @@ export async function runPluginDeveloperRequest(file: string, signal: AbortSigna
   if (request.fixtureRegistry !== undefined && typeof request.fixtureRegistry !== 'string')
     throw new Error('Invalid fixture registry')
   if (
+    request.packageCache &&
+    (typeof request.packageCache.directory !== 'string' ||
+      !isAbsolute(request.packageCache.directory) ||
+      typeof request.packageCache.offline !== 'boolean')
+  )
+    throw new Error('Invalid developer package cache')
+  if (
     request.runtime &&
     (!['chat', 'workspace', 'full'].includes(request.runtime.permission) ||
       typeof request.runtime.baseUrl !== 'string' ||
@@ -43,7 +51,12 @@ export async function runPluginDeveloperRequest(file: string, signal: AbortSigna
     const set = new PluginSetManager(db)
     const manager = new PluginManager(
       set,
-      new PluginStaging(request.dataDirectory, process.resourcesPath, request.fixtureRegistry)
+      new PluginStaging(
+        request.dataDirectory,
+        process.resourcesPath,
+        request.fixtureRegistry,
+        request.packageCache
+      )
     )
     const result = change
       ? await manager.change(change as PluginChange, signal)
@@ -98,7 +111,17 @@ export async function runPluginDeveloperRequest(file: string, signal: AbortSigna
     }
     writeFileSync(
       request.resultFile,
-      JSON.stringify({ ok: true, ...result, ...(runtime ? { runtime } : {}) }, null, 2)
+      JSON.stringify(
+        {
+          ok: true,
+          nodeVersion: process.versions.node,
+          runtimeVersion: getDshRuntimeInfo().version,
+          ...result,
+          ...(runtime ? { runtime } : {}),
+        },
+        null,
+        2
+      )
     )
   } catch (error) {
     const message = redactPluginDiagnostic(

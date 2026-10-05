@@ -152,6 +152,7 @@ export type MindMeshApi = {
   plugins: {
     state(): Promise<PluginState>
     change(request: PluginRequest): Promise<PluginOperation>
+    importGitHub(request: { requestId: string; url: string }): Promise<PluginOperation>
     cancel(requestId: string): Promise<boolean>
     onProgress(listener: (operation: PluginOperation) => void): () => void
   }

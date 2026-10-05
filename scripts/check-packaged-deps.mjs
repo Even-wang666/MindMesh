@@ -19,6 +19,9 @@ const project = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const roots = []
 const installedRoots = []
 const failures = []
+for (const file of ['catalog.json', 'store', 'cache', 'licenses'])
+  if (!existsSync(join(root, 'release', 'win-unpacked', 'resources', 'verified-plugins', file)))
+    failures.push(`Verified offline plugin bundle missing: ${file}`)
 const pnpmRoot = join(root, 'release', 'win-unpacked', 'resources', 'package-manager', 'pnpm')
 if (!existsSync(join(root, 'release', 'win-unpacked', 'resources', 'plugin-resolution-probe.mjs')))
   failures.push('Bundled plugin resolution probe missing')

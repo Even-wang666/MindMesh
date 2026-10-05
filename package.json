@@ -21,11 +21,12 @@
     "smoke:plugins": "node scripts/plugin-smoke.mjs",
     "smoke:security": "pnpm build && node scripts/electron-e2e-smoke.mjs --security-only",
     "check:package-deps": "node scripts/check-packaged-deps.mjs",
+    "prepare:plugins": "pnpm build && node scripts/prepare-plugin-bundle.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "package:dir": "pnpm build && electron-builder --dir --config.electronDist=node_modules/electron/dist",
-    "package:win": "pnpm build && electron-builder --win nsis --config.electronDist=node_modules/electron/dist",
+    "package:dir": "pnpm prepare:plugins && electron-builder --dir --config.electronDist=node_modules/electron/dist",
+    "package:win": "pnpm prepare:plugins && electron-builder --win nsis --config.electronDist=node_modules/electron/dist",
     "check:dsh-deps": "node scripts/check-dsh-dependency-matrix.mjs",
     "format": "biome format --write .",
     "format:check": "biome format .",
@@ -99,6 +100,7 @@
     "vitest": "^3.0.5"
   },
   "build": {
+    "beforePack": "scripts/check-plugin-bundle.cjs",
     "appId": "com.mindmesh.desktop",
     "productName": "MindMesh",
     "directories": {
@@ -110,6 +112,10 @@
       "THIRD_PARTY_NOTICES.md"
     ],
     "extraResources": [
+      {
+        "from": ".runtime/verified-plugins",
+        "to": "verified-plugins"
+      },
       {
         "from": "scripts/plugin-resolution-probe.mjs",
         "to": "plugin-resolution-probe.mjs"

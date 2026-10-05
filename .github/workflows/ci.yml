@@ -44,6 +44,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm exec install-electron
+      - run: pnpm prepare:plugins
       - run: pnpm exec electron-builder --win --dir --config.electronDist=node_modules/electron/dist --publish never
       - run: pnpm check:package-deps
       - name: Smoke-test plugins without external pnpm
@@ -51,6 +52,8 @@ jobs:
         run: |
           $env:MINDMESH_PLUGIN_SMOKE_EXE = Join-Path $PWD 'release\win-unpacked\MindMesh.exe'
           node scripts/plugin-smoke.mjs
+          node scripts/bundled-plugin-smoke.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled offline plugin smoke failed' }
       - name: Smoke-test the packaged security boundary
         shell: pwsh
         run: |
@@ -87,7 +90,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path smoke/scripts | Out-Null
-          Copy-Item scripts/electron-e2e-smoke.mjs,scripts/plugin-smoke.mjs,scripts/plugin-fixture-registry.mjs,scripts/plugin-model-fixture.mjs smoke/scripts
+          Copy-Item scripts/electron-e2e-smoke.mjs,scripts/plugin-smoke.mjs,scripts/bundled-plugin-smoke.mjs,scripts/plugin-fixture-registry.mjs,scripts/plugin-model-fixture.mjs smoke/scripts
           npm install --prefix smoke --no-package-lock --ignore-scripts --no-audit --no-fund tar@7.5.22
           if ($LASTEXITCODE -ne 0) { throw 'Smoke harness install failed' }
           foreach ($name in @('electron', 'pnpm', '@deepseek-ai')) {
@@ -118,6 +121,8 @@ jobs:
           }
           & $node smoke/scripts/plugin-smoke.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Installed core/full permission smoke failed' }
+          & $node smoke/scripts/bundled-plugin-smoke.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Installed bundled offline plugin smoke failed' }
           'Clean Windows installation, Agent/Team/Plugin UI, restart, Full Access and core isolation passed.' | Add-Content $env:GITHUB_STEP_SUMMARY
       - name: Uninstall isolated test installation
         if: always()

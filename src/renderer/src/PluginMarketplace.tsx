@@ -3,13 +3,13 @@ import { marketplaceKey, type MarketplaceItem } from '../../shared/marketplace'
 import type { PluginAction, PluginPhase, PluginState } from '../../shared/plugins'
 
 const phases: Record<PluginPhase, string> = {
-  queued: '等待验证',
-  preparing: '准备隔离验证环境',
-  installing: '安装完整候选集合',
-  checking: '检查依赖与插件配置',
-  booting: '启动 SDK 兼容验证',
-  sealing: '保存验证结果',
-  committing: '提交插件状态',
+  queued: '等待处理',
+  preparing: '准备安装',
+  installing: '安装插件',
+  checking: '整理插件依赖',
+  booting: '加载插件',
+  sealing: '保存安装信息',
+  committing: '完成安装',
   succeeded: '操作完成',
   failed: '操作失败',
   cancelled: '已取消',
@@ -21,6 +21,8 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+  const [githubDialogOpen, setGithubDialogOpen] = useState(false)
+  const [githubUrl, setGithubUrl] = useState('')
   const [limit, setLimit] = useState(60)
   const active = useRef(true)
   const readRevision = useRef(0)
@@ -87,6 +89,31 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
       if (active.current) setError('取消操作失败，请重试。')
     }
   }
+  async function importGitHub(): Promise<void> {
+    const request = { requestId: crypto.randomUUID(), url: githubUrl.trim() }
+    setGithubDialogOpen(false)
+    ++readRevision.current
+    setState((current) => ({
+      ...current,
+      operation: {
+        requestId: request.requestId,
+        key: '["plugins","dsh","github"]',
+        action: 'install',
+        phase: 'queued',
+        message: '正在下载并验证 GitHub 插件…',
+      },
+    }))
+    setError('')
+    try {
+      await window.mindmesh.plugins.importGitHub(request)
+      if (active.current) await readState()
+    } catch (caught) {
+      if (active.current) {
+        await readState()
+        setError(caught instanceof Error ? caught.message : 'GitHub 插件导入失败。')
+      }
+    }
+  }
   const allItems = [...items]
   for (const installed of state.installed) {
     if (allItems.some((item) => item.sourceId === installed.packageName && item.source === 'dsh'))
@@ -127,6 +154,53 @@ export function PluginMarketplace({ items }: { items: MarketplaceItem[] }): Reac
           }}
         />
       </label>
+      <button
+        className="secondary-button compact"
+        disabled={!ready || busy}
+        onClick={() => setGithubDialogOpen(true)}
+      >
+        GitHub 导入
+      </button>
+      {githubDialogOpen && (
+        <div className="modal-backdrop confirm-backdrop">
+          <form
+            className="confirm-dialog github-import-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="github-plugin-title"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void importGitHub()
+            }}
+          >
+            <h2 id="github-plugin-title">从 GitHub 导入插件</h2>
+            <p>粘贴公开仓库或插件目录地址，系统验证通过后自动安装。</p>
+            <label className="field">
+              <span>GitHub 插件地址</span>
+              <input
+                type="url"
+                autoFocus
+                value={githubUrl}
+                onChange={(event) => setGithubUrl(event.target.value)}
+                placeholder="https://github.com/owner/repo"
+                required
+              />
+            </label>
+            <footer>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setGithubDialogOpen(false)}
+              >
+                取消
+              </button>
+              <button type="submit" className="primary-button" disabled={!githubUrl.trim()}>
+                验证并安装
+              </button>
+            </footer>
+          </form>
+        </div>
+      )}
       {error && (
         <p className="form-error" role="alert">
           {error}{' '}

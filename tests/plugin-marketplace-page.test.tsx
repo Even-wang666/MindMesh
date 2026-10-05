@@ -48,6 +48,18 @@ function setup(
     return current.operation!
   })
   const cancel = vi.fn(async () => true)
+  const importGitHub = vi.fn(async (request: { requestId: string; url: string }) => {
+    const operation: PluginOperation = {
+      requestId: request.requestId,
+      key: item.key,
+      action: 'install',
+      phase: 'succeeded',
+      message: 'GitHub 插件验证通过，安装完成。',
+    }
+    current = { ...current, operation }
+    progress(operation)
+    return operation
+  })
   Object.defineProperty(window, 'mindmesh', {
     configurable: true,
     value: {
@@ -55,6 +67,7 @@ function setup(
         state,
         change,
         cancel,
+        importGitHub,
         onProgress: vi.fn((listener) => {
           progress = listener
           return unsubscribe
@@ -66,6 +79,7 @@ function setup(
     state,
     change,
     cancel,
+    importGitHub,
     unsubscribe,
     update: (next: PluginState) => {
       current = next
@@ -74,6 +88,38 @@ function setup(
   }
 }
 describe('plugin Marketplace UI', () => {
+  it('imports one GitHub URL and shows success or a concrete validation failure', async () => {
+    const { importGitHub, update } = setup()
+    render(<PluginMarketplace items={[item]} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'GitHub 导入' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'GitHub 导入' }))
+    expect(screen.getByRole('dialog', { name: '从 GitHub 导入插件' })).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox', { name: 'GitHub 插件地址' }), {
+      target: { value: 'https://github.com/acme/plugin' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '验证并安装' }))
+    expect(await screen.findByText('GitHub 插件验证通过，安装完成。')).toBeInTheDocument()
+    expect(importGitHub).toHaveBeenCalledWith({
+      requestId: expect.any(String),
+      url: 'https://github.com/acme/plugin',
+    })
+    await act(async () =>
+      update({
+        installed: [],
+        results: [],
+        operation: {
+          requestId: 'owned',
+          key: item.key,
+          action: 'install',
+          phase: 'failed',
+          message: 'GitHub 插件验证失败，已终止安装：@deepseek-ai/dsh 要求 0.1.5，当前 0.2.0。',
+        },
+      })
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '已终止安装：@deepseek-ai/dsh 要求 0.1.5'
+    )
+  })
   it('hides unprepared and incompatible entries while showing preparation status', async () => {
     setup({
       installed: [],

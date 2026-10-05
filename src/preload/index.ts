@@ -12,6 +12,7 @@ const api: MindMeshApi = {
   plugins: {
     state: () => ipcRenderer.invoke('plugins:state'),
     change: (request) => ipcRenderer.invoke('plugins:change', request),
+    importGitHub: (request) => ipcRenderer.invoke('plugins:importGitHub', request),
     cancel: (requestId) => ipcRenderer.invoke('plugins:cancel', requestId),
     onProgress: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: PluginOperation): void =>
