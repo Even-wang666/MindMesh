@@ -81,7 +81,11 @@ export async function prepareGitHubPlugin(
           throw new Error(`插件缺少 ${name}：${value}。请使用包含构建产物的仓库或目录。`)
       }
       // The commit suffix prevents equal upstream version numbers from replacing different source code.
-      const version = `${manifest.version.split('+')[0]}+github.${receipt.commit}`
+      const location = createHash('sha256')
+        .update(JSON.stringify([receipt.repository, receipt.path]))
+        .digest('hex')
+        .slice(0, 12)
+      const version = `${manifest.version.split('+')[0]}+github.${receipt.commit}.${location}`
       validatePluginSpec(manifest.name, version)
       const directory = sourceDirectory(dataDirectory, manifest.name, version)
       if (!pluginSourceArchive(dataDirectory, manifest.name, version)) {

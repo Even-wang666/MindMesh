@@ -10,6 +10,61 @@ import { PluginSetManager } from '../src/main/plugins/plugin-set'
 import { PluginManager, PluginStaging } from '../src/main/plugins/plugin-manager'
 import { PluginMarketplaceService } from '../src/main/plugins/plugin-marketplace'
 import { pluginSourceArchive } from '../src/main/plugins/plugin-sources'
+import { prepareGitHubPlugin } from '../src/main/plugins/plugin-sources'
+
+test('same commit with same package/version in different GitHub directories keeps distinct source archives', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mindmesh-plugin-source-identity-'))
+  const commit = 'd'.repeat(40)
+  const checkout = join(root, 'checkout')
+  for (const name of ['a', 'b']) {
+    const source = join(checkout, name)
+    mkdirSync(source, { recursive: true })
+    writeFileSync(
+      join(source, 'package.json'),
+      JSON.stringify({
+        name: 'same-plugin',
+        version: '1.0.0',
+        main: 'index.cjs',
+        dsh: { bundle: { patch: './patch.yml' } },
+      })
+    )
+    writeFileSync(join(source, 'index.cjs'), `exports.name = '${name}'`)
+    writeFileSync(join(source, 'patch.yml'), '- insert: []')
+  }
+  const archive = join(root, 'repo.tgz')
+  await create({ file: archive, gzip: true, cwd: checkout, prefix: 'repo' }, ['a', 'b'])
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) =>
+      url.startsWith('https://api.github.com/')
+        ? new Response(JSON.stringify({ sha: commit }))
+        : new Response(readFileSync(archive))
+    )
+  )
+  try {
+    const signal = new AbortController().signal
+    const a = await prepareGitHubPlugin(
+      'https://github.com/acme/plugin/tree/main/a',
+      root,
+      [],
+      signal
+    )
+    const b = await prepareGitHubPlugin(
+      'https://github.com/acme/plugin/tree/main/b',
+      root,
+      [],
+      signal
+    )
+    expect(a.version).not.toBe(b.version)
+    const aFile = pluginSourceArchive(root, a.packageName, a.version)!
+    const bFile = pluginSourceArchive(root, b.packageName, b.version)!
+    expect(aFile).not.toBe(bFile)
+    expect(readFileSync(aFile).equals(readFileSync(bFile))).toBe(false)
+  } finally {
+    vi.unstubAllGlobals()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test('GitHub source at exact commit installs only after real SDK boot; rejected imports leave the old set untouched', async () => {
   const root = mkdtempSync(join(tmpdir(), 'mindmesh-plugin-github-'))
@@ -67,7 +122,9 @@ test('GitHub source at exact commit installs only after real SDK boot; rejected 
     expect(result.phase, result.diagnostics).toBe('succeeded')
     expect(result.message).toContain('验证通过，安装完成')
     let installed = manager.snapshot()
-    expect(installed.plugins[0].version).toBe(`1.0.0+github.${commit}`)
+    expect(installed.plugins[0].version).toMatch(
+      new RegExp(`^1\\.0\\.0\\+github\\.${commit}\\.[a-f0-9]{12}$`)
+    )
     expect(
       pluginSourceArchive(data, 'github-test-plugin', installed.plugins[0].version)
     ).toBeTruthy()

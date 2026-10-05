@@ -52,6 +52,7 @@ jobs:
         run: |
           $env:MINDMESH_PLUGIN_SMOKE_EXE = Join-Path $PWD 'release\win-unpacked\MindMesh.exe'
           node scripts/plugin-smoke.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Plugin core/full smoke failed' }
           node scripts/bundled-plugin-smoke.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Bundled offline plugin smoke failed' }
       - name: Smoke-test the packaged security boundary
@@ -65,6 +66,9 @@ jobs:
           $env:MINDMESH_E2E_EXE = Join-Path $PWD 'release\win-unpacked\MindMesh.exe'
           $env:MINDMESH_E2E_RESTART = '1'
           node scripts/electron-e2e-smoke.mjs --plugin-marketplace
+          if ($LASTEXITCODE -ne 0) { throw 'Plugin marketplace smoke failed' }
+          node scripts/electron-e2e-smoke.mjs --bundled-plugins
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled marketplace smoke failed' }
       - run: pnpm exec electron-builder --win nsis --config.electronDist=node_modules/electron/dist --publish never
       - uses: actions/upload-artifact@v4
         with:
@@ -115,7 +119,7 @@ jobs:
           $env:PATH = Join-Path $env:SystemRoot 'System32'
           & (Join-Path $env:SystemRoot 'System32/where.exe') pnpm 2>$null
           if ($LASTEXITCODE -eq 0) { throw 'External pnpm must be unavailable' }
-          foreach ($mode in @('--agency-agents', '--teams', '--plugin-marketplace')) {
+          foreach ($mode in @('--agency-agents', '--teams', '--plugin-marketplace', '--bundled-plugins')) {
             & $node smoke/scripts/electron-e2e-smoke.mjs $mode
             if ($LASTEXITCODE -ne 0) { throw "Installed UI smoke failed: $mode" }
           }

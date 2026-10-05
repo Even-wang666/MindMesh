@@ -14,12 +14,14 @@ const executable = process.env.MINDMESH_E2E_EXE ?? (await import('electron')).de
 const agencyOnly = process.argv.includes('--agency-agents')
 const teamsOnly = process.argv.includes('--teams')
 const pluginUi = process.argv.includes('--plugin-marketplace')
+const bundledPluginUi = process.argv.includes('--bundled-plugins')
 const pluginCatalogOnly = process.argv.includes('--plugin-catalog')
 const securityOnly =
   process.argv.includes('--security-only') ||
   agencyOnly ||
   teamsOnly ||
   pluginUi ||
+  bundledPluginUi ||
   pluginCatalogOnly
 const keepUserData = process.env.MINDMESH_E2E_KEEP_USER_DATA === '1'
 const key = process.env.DEEPSEEK_API_KEY
@@ -86,7 +88,7 @@ async function runRound(round) {
   const port = await freePort()
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
-  if (pluginUi || process.env.MINDMESH_E2E_NO_EXTERNAL_PNPM === '1')
+  if (pluginUi || bundledPluginUi || process.env.MINDMESH_E2E_NO_EXTERNAL_PNPM === '1')
     env.PATH = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
   const args = [`--remote-debugging-port=${port}`, `--user-data-dir=${userData}`]
   if (pluginUi) args.push(`--plugin-market-fixture=${join(userData, 'plugin-market-fixture.json')}`)
@@ -196,6 +198,80 @@ async function runRound(round) {
         assert.ok(catalog.items.length > 0)
         assert.ok(catalog.items.some((item) => item.plugin?.packageName && item.plugin.version))
         console.log(`Electron real community plugin catalog (${catalog.items.length} entries): OK`)
+      }
+      if (bundledPluginUi) {
+        const catalog = await evaluate(`window.mindmesh.marketplace.list('plugins')`)
+        assert.deepEqual(
+          catalog.items.map((item) => item.sourceId),
+          ['dsh-http-tools']
+        )
+        const card = `Array.from(document.querySelectorAll('[data-plugin-key]')).find(card => card.dataset.pluginKey === '["plugins","dsh","dsh-http-tools"]')`
+        const readState = () => evaluate('window.mindmesh.plugins.state()')
+        await until(() => evaluate(`Boolean(${card})`))
+        assert.equal(
+          await evaluate(
+            `Array.from(document.querySelectorAll('button')).some(button => button.textContent === '检查兼容性')`
+          ),
+          false
+        )
+        if (round === 1) {
+          await until(() =>
+            evaluate(
+              `Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'GitHub 导入')?.disabled === false`
+            )
+          )
+          await evaluate(
+            `Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'GitHub 导入').click()`
+          )
+          await until(() =>
+            evaluate(`Boolean(document.querySelector('[aria-labelledby="github-plugin-title"]'))`)
+          )
+          assert.equal(
+            await evaluate(
+              `(() => { const rect = document.querySelector('[aria-labelledby="github-plugin-title"]').getBoundingClientRect(); return rect.width > 400 && rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight })()`
+            ),
+            true
+          )
+          await evaluate(
+            `(() => { const input = document.querySelector('[aria-labelledby="github-plugin-title"] input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'http://127.0.0.1/plugin'); input.dispatchEvent(new Event('input', { bubbles: true })); })()`
+          )
+          await until(() =>
+            evaluate(
+              `document.querySelector('[aria-labelledby="github-plugin-title"] button[type="submit"]?.disabled === false`
+            )
+          )
+          await evaluate(
+            `document.querySelector('[aria-labelledby="github-plugin-title"] button[type="submit"]').click()`
+          )
+          const failure = await until(async () => {
+            const state = await readState()
+            return state.operation?.phase === 'failed' ? state : null
+          })
+          assert.match(failure.operation.message, /GitHub HTTPS/)
+          assert.deepEqual(failure.installed, [])
+        } else assert.equal((await readState()).installed[0]?.packageName, 'dsh-http-tools')
+        const label = round === 1 ? '安装插件' : '移除插件'
+        const before = (await readState()).operation?.requestId
+        await until(() =>
+          evaluate(
+            `Array.from((${card}).querySelectorAll('button')).find(button => button.textContent === '${label}')?.disabled === false`
+          )
+        )
+        await evaluate(
+          `Array.from((${card}).querySelectorAll('button')).find(button => button.textContent === '${label}').click()`
+        )
+        const result = await until(async () => {
+          const state = await readState()
+          return state.operation?.requestId !== before &&
+            ['succeeded', 'failed'].includes(state.operation?.phase)
+            ? state
+            : null
+        }, 180_000)
+        assert.equal(result.operation.phase, 'succeeded', result.operation.diagnostics)
+        assert.equal(result.installed.length, round === 1 ? 1 : 0)
+        console.log(
+          `Bundled plugin UI round ${round}, GitHub error feedback, dialog and offline installation: OK`
+        )
       }
       if (pluginUi) {
         const mainKey = JSON.stringify(['plugins', 'dsh', 'mindmesh-fixture-plugin'])
