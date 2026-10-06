@@ -142,4 +142,72 @@ describe('execution-history persistence', () => {
       cleanup()
     }
   })
+
+  it('attaches the persisted tool trail to the reply message it belongs to', () => {
+    const db = fixture()
+    try {
+      const agent = db.listAgents()[0]
+      const conversationId = db.conversationIdFor('private', agent.id)
+      const trigger = db.addMessage({
+        scope: 'private',
+        scopeId: agent.id,
+        authorType: 'user',
+        authorName: '你',
+        content: '请分析',
+      })
+      db.createExecution({ id: 'e1', conversationId, triggerMessageId: trigger.id })
+      db.createRun({
+        id: 'r1',
+        executionId: 'e1',
+        conversationId,
+        triggerMessageId: trigger.id,
+        agentId: agent.id,
+        provider: agent.provider,
+        model: agent.model,
+        permission: 'chat',
+      })
+      db.addToolCall({ id: 'c1', runId: 'r1', toolName: 'read', displayName: '读取文件' })
+      db.finishToolCall({ id: 'c1', status: 'ok', outputPreview: '文件内容' })
+      db.addToolCall({ id: 'c2', runId: 'r1', toolName: 'write', displayName: '写入文件' })
+      db.finishToolCall({ id: 'c2', status: 'error', errorPreview: '写入失败' })
+      const reply = db.addMessage({
+        scope: 'private',
+        scopeId: agent.id,
+        authorType: 'agent',
+        authorId: agent.id,
+        authorName: agent.name,
+        content: '分析结果',
+      })
+      db.finishRun('r1', 'completed', reply.id)
+      db.finishExecution('e1', 'completed')
+
+      // Reopening the history returns the reply with its tool trail attached.
+      const history = db.listMessages(conversationId)
+      const replyMessage = history.find((message) => message.id === reply.id)
+      expect(replyMessage?.toolCalls).toEqual([
+        {
+          id: 'c1',
+          toolName: 'read',
+          displayName: '读取文件',
+          status: 'ok',
+          output: '文件内容',
+          isError: false,
+        },
+        {
+          id: 'c2',
+          toolName: 'write',
+          displayName: '写入文件',
+          status: 'error',
+          output: '写入失败',
+          isError: true,
+        },
+      ])
+      // The user message has no tool trail.
+      const userMessage = history.find((message) => message.id === trigger.id)
+      expect(userMessage?.toolCalls ?? []).toEqual([])
+    } finally {
+      db.close()
+      cleanup()
+    }
+  })
 })

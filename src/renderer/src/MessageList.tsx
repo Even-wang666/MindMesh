@@ -82,6 +82,17 @@ export function MessageList({
                 initiallyOpen={liveReplyIds.has(message.id)}
               />
             )}
+            {!!message.toolCalls?.length && (
+              <ToolCards
+                calls={message.toolCalls.map((call) => ({
+                  id: call.id,
+                  displayName: call.displayName,
+                  status: call.status,
+                  output: call.output,
+                  truncated: false,
+                }))}
+              />
+            )}
             {!!message.attachments?.length && (
               <div className="message-attachments">
                 {message.attachments.map((attachment, index) => (
@@ -107,7 +118,17 @@ export function MessageList({
               <strong>{progress ?? '智能体'}</strong>
             </header>
             {streamingReasoning && <ReasoningDetails content={streamingReasoning} initiallyOpen />}
-            {toolCalls.length > 0 && <ToolCards calls={toolCalls} />}
+            {toolCalls.length > 0 && (
+              <ToolCards
+                calls={toolCalls.map((call) => ({
+                  id: call.callId,
+                  displayName: call.displayName,
+                  status: call.status,
+                  output: call.output,
+                  truncated: call.truncated,
+                }))}
+              />
+            )}
             {streamingText ? (
               <MessageBody content={streamingText} />
             ) : (
@@ -133,11 +154,20 @@ const TOOL_STATUS_LABEL: Record<ToolCallState['status'], string> = {
   aborted: '已中止',
 }
 
-function ToolCards({ calls }: { calls: ToolCallState[] }): React.JSX.Element {
+/** A tool call shaped for rendering, from either a live event or a stored row. */
+type ToolCardItem = {
+  id: string
+  displayName: string
+  status: ToolCallState['status']
+  output: string
+  truncated: boolean
+}
+
+function ToolCards({ calls }: { calls: ToolCardItem[] }): React.JSX.Element {
   return (
     <div className="tool-cards">
       {calls.map((call) => (
-        <details key={call.callId} className={`tool-card ${call.status}`}>
+        <details key={call.id} className={`tool-card ${call.status}`}>
           <summary>
             <span className="tool-card-status" aria-hidden>
               {call.status === 'running'

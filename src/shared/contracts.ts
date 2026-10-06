@@ -88,6 +88,17 @@ export type Message = {
   stopped?: boolean
   sequence: number
   createdAt: string
+  toolCalls?: ToolCallRecord[]
+}
+
+/** A persisted tool call, attached to its reply message for the audit trail. */
+export type ToolCallRecord = {
+  id: string
+  toolName: string
+  displayName: string
+  status: ToolCallStatus
+  output: string
+  isError: boolean
 }
 
 export type RuntimeStatus = {

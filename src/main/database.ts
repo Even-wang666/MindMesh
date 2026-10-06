@@ -12,6 +12,7 @@ import type {
   Message,
   RunStatus,
   Space,
+  ToolCallRecord,
   ToolCallStatus,
   UserProfile,
 } from '../shared/contracts'
@@ -1422,6 +1423,15 @@ export class MindMeshDatabase {
       .map((row) => this.hydrateMessageRow(row as Record<string, unknown>))
   }
 
+  /** Attach each reply message's persisted tool calls for the audit trail. */
+  private attachToolCalls(messages: Message[]): Message[] {
+    return messages.map((message) =>
+      message.authorType === 'agent'
+        ? { ...message, toolCalls: this.listToolCallsForResponse(message.id) }
+        : message
+    )
+  }
+
   /**
    * History reads are conversation-scoped, matching the storage layout and the
    * consumption cursor in {@link lastAgentMessageSequence}.
@@ -1433,17 +1443,18 @@ export class MindMeshDatabase {
    * know a scope must resolve a conversation id first.
    */
   listMessages(conversationId: string): Message[] {
-    return this.listMessageRows(
-      'WHERE m.conversationId = ? ORDER BY m.sequence ASC',
-      conversationId
+    return this.attachToolCalls(
+      this.listMessageRows('WHERE m.conversationId = ? ORDER BY m.sequence ASC', conversationId)
     )
   }
 
   listMessagesSince(conversationId: string, sequence: number): Message[] {
-    return this.listMessageRows(
-      'WHERE m.conversationId = ? AND m.sequence > ? ORDER BY m.sequence ASC',
-      conversationId,
-      sequence
+    return this.attachToolCalls(
+      this.listMessageRows(
+        'WHERE m.conversationId = ? AND m.sequence > ? ORDER BY m.sequence ASC',
+        conversationId,
+        sequence
+      )
     )
   }
 
@@ -1858,6 +1869,32 @@ export class MindMeshDatabase {
            AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.executionId = executions.id AND runs.status = 'running')`
       )
       .run(now)
+  }
+
+  /**
+   * The audit trail for one reply message: its run's tool calls, in order.
+   * A reply is linked to a run by `runs.responseMessageId`.
+   */
+  listToolCallsForResponse(responseMessageId: string): ToolCallRecord[] {
+    return this.db
+      .prepare(`
+      SELECT tc.id, tc.toolName, tc.displayName, tc.status, tc.outputPreview, tc.errorPreview
+      FROM tool_calls tc JOIN runs r ON r.id = tc.runId
+      WHERE r.responseMessageId = ?
+      ORDER BY tc.sequence ASC
+    `)
+      .all(responseMessageId)
+      .map((row) => {
+        const stored = row as Record<string, unknown>
+        return {
+          id: String(stored.id),
+          toolName: String(stored.toolName),
+          displayName: String(stored.displayName ?? stored.toolName),
+          status: stored.status as ToolCallStatus,
+          output: String(stored.errorPreview ?? stored.outputPreview ?? ''),
+          isError: stored.status === 'error',
+        }
+      })
   }
 }
 
