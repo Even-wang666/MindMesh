@@ -828,6 +828,7 @@ describe('agent deletion', () => {
 describe('space background', () => {
   it('confirms Space deletion in an app dialog and shows an empty state after the last Space is removed', async () => {
     const space: Space = {
+      executionMode: 'sequential',
       id: 'space',
       name: '临时空间',
       description: '',
@@ -864,6 +865,7 @@ describe('space background', () => {
 
   it('shows one working edit action and refreshes the saved background', async () => {
     let space: Space = {
+      executionMode: 'sequential',
       id: 'space',
       name: 'AI Product Research',
       description: '产品研究',
@@ -902,6 +904,7 @@ describe('space background', () => {
 
   it('shows the background before members without a framing card', async () => {
     const space: Space = {
+      executionMode: 'sequential',
       id: 'space',
       name: 'AI Product Research',
       description: '产品研究',
@@ -932,6 +935,7 @@ describe('space background', () => {
   it('adjusts a member reasoning effort from the space drawer', async () => {
     let current: Agent = { ...agent }
     const space: Space = {
+      executionMode: 'sequential',
       id: 'space',
       name: 'AI Product Research',
       description: '产品研究',
@@ -971,6 +975,7 @@ describe('space background', () => {
   it('edits space details and removes and adds members', async () => {
     const second = { ...agent, id: 'developer', name: 'Developer' }
     let space: Space = {
+      executionMode: 'sequential',
       id: 'space',
       name: '原空间',
       description: '原简介',
@@ -1012,6 +1017,7 @@ describe('space background', () => {
 
   it('keeps space editing available beside delete while a reply is running', async () => {
     const space: Space = {
+      executionMode: 'sequential',
       id: 'space',
       name: '协作',
       description: '',
@@ -1032,7 +1038,7 @@ describe('space background', () => {
     render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
-    const input = await screen.findByPlaceholderText('@智能体 输入消息…')
+    const input = await screen.findByPlaceholderText('输入任务；可用 @ 选择部分成员…')
     fireEvent.change(input, { target: { value: '继续执行' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(api.chat.sendSpace).toHaveBeenCalledOnce())
@@ -1049,6 +1055,57 @@ describe('space background', () => {
 })
 
 describe('chat flow', () => {
+  it('shows workflow order and freezes the chosen subset while Space edits are saved', async () => {
+    const developer: Agent = { ...agent, id: 'developer', name: 'Developer' }
+    let space: Space = {
+      id: 'space',
+      name: 'Workflow',
+      description: '',
+      context: '',
+      executionMode: 'sequential',
+      memberIds: [developer.id, agent.id],
+      createdAt: '',
+    }
+    const api = mockApi()
+    let finish!: (messages: Message[]) => void
+    api.agents.list = vi.fn(async () => [agent, developer])
+    api.spaces.list = vi.fn(async () => [space])
+    api.spaces.update = vi.fn(async (_id, input) => {
+      space = { ...space, ...input }
+      return space
+    })
+    api.chat.sendSpace = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          finish = resolve
+        })
+    )
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
+    const input = await screen.findByPlaceholderText('输入任务；可用 @ 选择部分成员…')
+    const indicator = screen.getByLabelText('本次执行顺序')
+    expect(indicator).toHaveTextContent('Developer → Researcher')
+    fireEvent.change(input, { target: { value: '@Researcher @Developer review' } })
+    expect(indicator).toHaveTextContent('Developer → Researcher')
+    fireEvent.change(input, { target: { value: '@Researcher review' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(api.chat.sendSpace).toHaveBeenCalledOnce())
+    expect(indicator).toHaveTextContent('当前执行 · 顺序执行Researcher')
+    expect(indicator).not.toHaveTextContent('Developer')
+    fireEvent.change(input, { target: { value: '@Developer next' } })
+    fireEvent.click(screen.getByRole('button', { name: '编辑空间' }))
+    fireEvent.click(screen.getByRole('button', { name: '编辑空间信息' }))
+    fireEvent.click(await screen.findByRole('button', { name: '上移 Researcher' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(api.spaces.update).toHaveBeenCalled())
+    expect(space.memberIds).toEqual([agent.id, developer.id])
+    expect(indicator).not.toHaveTextContent('Developer')
+    await act(async () => finish([]))
+    await waitFor(() => expect(indicator).toHaveTextContent('本次参与 · 顺序执行Developer'))
+    fireEvent.change(input, { target: { value: '' } })
+    expect(indicator).toHaveTextContent('Researcher → Developer')
+  })
   it('opens existing conversations at the bottom without scrolling through history', async () => {
     const api = mockApi()
     let notify!: (event: RuntimeEvent) => void
@@ -1664,6 +1721,7 @@ describe('chat flow', () => {
   it('completes a Chinese agent mention in a space message', async () => {
     const chineseAgent = { ...agent, id: 'analyst', name: '数据分析师' }
     const space: Space = {
+      executionMode: 'sequential',
       id: 'space',
       name: '协作',
       description: '',
@@ -1678,7 +1736,7 @@ describe('chat flow', () => {
     render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
-    const input = await screen.findByPlaceholderText('@智能体 输入消息…')
+    const input = await screen.findByPlaceholderText('输入任务；可用 @ 选择部分成员…')
     fireEvent.change(input, { target: { value: '你好 @数据' } })
     fireEvent.click(screen.getByRole('button', { name: /数据分析师/ }))
     expect(input).toHaveValue('你好 @数据分析师 ')
@@ -2063,6 +2121,7 @@ describe('chat flow', () => {
   it('keeps the first space reply visible while the next agent thinks', async () => {
     const second = { ...agent, id: 'developer', name: 'Developer' }
     const space: Space = {
+      executionMode: 'sequential',
       id: 'space',
       name: '协作',
       description: '',

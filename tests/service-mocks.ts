@@ -71,6 +71,7 @@ export function mockHarness(overrides: Partial<Harness> = {}): Harness {
  * execution tables dropped along with their rows.
  */
 export function downgradeToSchema2(db: DatabaseSync): void {
+  db.exec('ALTER TABLE spaces DROP COLUMN executionMode')
   db.exec('DROP TABLE IF EXISTS tool_calls')
   db.exec('DROP TABLE IF EXISTS runs')
   db.exec('DROP TABLE IF EXISTS executions')

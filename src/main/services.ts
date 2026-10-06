@@ -16,7 +16,7 @@ import type {
   SaveModelProviderInput,
   UserProfile,
 } from '../shared/contracts'
-import { buildPrivatePrompt, buildSpacePrompt, parseMentions } from '../shared/domain'
+import { buildPrivatePrompt, buildSpacePrompt, selectSpaceParticipants } from '../shared/domain'
 import { getModelContextWindow, MODEL_CATALOG, supportsImageInput } from '../shared/model-providers'
 import { validateChatContent } from '../shared/chat-content'
 import { toolCallKey } from '../shared/tool-display'
@@ -478,20 +478,18 @@ export class MindMeshServices {
     validateChatContent(content)
     const space = this.db.getSpace(spaceId)
     if (!space) throw new Error('协作空间不存在')
+    if (space.executionMode !== 'sequential') throw new Error('并行执行暂未开放')
     // The consumption cursor is per conversation, so visible history must be read
     // from that same conversation or an agent would skip messages it never saw.
     const spaceConversation = this.db.conversationIdFor('space', spaceId)
     const members = space.memberIds
       .map((id) => this.db.getAgent(id))
       .filter((agent) => agent !== undefined)
-    const mentioned = parseMentions(content, members)
-    const runAgents = mentioned.map((agent) =>
+    const selected = selectSpaceParticipants(content, members)
+    const runAgents = selected.map((agent) =>
       resolveRunAgent(agent, options, this.deepSeekModelIds)
     )
-    const attachmentRoutes =
-      runAgents.length > 0
-        ? runAgents
-        : members.filter((agent) => supportsImageInput(agent.provider, agent.model)).slice(0, 1)
+    const attachmentRoutes = runAgents
     const images =
       attachmentRoutes.length > 0
         ? attachmentRoutes.reduce(
@@ -507,24 +505,29 @@ export class MindMeshServices {
       content,
       attachments: images,
     })
-    // One execution fans out to one run per mentioned agent; all share the
+    // One execution fans out to one run per selected agent; all share the
     // trigger message and execution id.
     const executionId = crypto.randomUUID()
-    if (mentioned.length === 0) {
+    this.db.createExecution({
+      id: executionId,
+      conversationId: spaceConversation,
+      triggerMessageId: triggerMessage.id,
+      workflowSnapshot: {
+        mode: space.executionMode,
+        spaceId: space.id,
+        orderedAgentIds: [...space.memberIds],
+        selectedAgentIds: selected.map((agent) => agent.id),
+      },
+    })
+    if (!runAgents.length) {
       this.db.addMessage({
         scope: 'space',
         scopeId: spaceId,
         authorType: 'system',
         authorName: 'MindMesh',
-        content: '请使用 @智能体 指定参与本次讨论的成员。',
+        content: '空间没有可执行的智能体，请先添加成员。',
       })
-      return this.db.listMessages(spaceConversation)
     }
-    this.db.createExecution({
-      id: executionId,
-      conversationId: spaceConversation,
-      triggerMessageId: triggerMessage.id,
-    })
     for (const runAgent of runAgents) {
       if (this.shuttingDown || !this.db.getSpace(spaceId)) break
       if (!this.db.getAgent(runAgent.id)) continue

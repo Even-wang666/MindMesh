@@ -35,7 +35,7 @@ import type {
   UserProfile,
 } from '../../shared/contracts'
 import { reasoningEffortOptions, supportsImageInput } from '../../shared/model-providers'
-import { parseMentions } from '../../shared/domain'
+import { selectSpaceParticipants } from '../../shared/domain'
 import { parseSkillReference, skillDisplayName } from '../../shared/skill-reference'
 import { BrandLogo } from './BrandLogo'
 import { PaneResizer, usePaneShares } from './PaneLayout'
@@ -723,7 +723,10 @@ function SpacePanel({
   onUpdateAgent: (agent: Agent) => Promise<void>
 }): React.JSX.Element {
   const confirm = useConfirm()
-  const members = agents.filter((agent) => space.memberIds.includes(agent.id))
+  const members = space.memberIds
+    .map((id) => agents.find((agent) => agent.id === id))
+    .filter((agent) => agent !== undefined)
+  const [executingMembers, setExecutingMembers] = useState<Agent[] | null>(null)
   const [draft, setDraft] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [editingContext, setEditingContext] = useState(false)
@@ -732,8 +735,7 @@ function SpacePanel({
   const [contextError, setContextError] = useState('')
   const [effortSavingId, setEffortSavingId] = useState<string | null>(null)
   const [effortError, setEffortError] = useState('')
-  const attachmentTargets = parseMentions(draft, members)
-  const routeTargets = attachmentTargets.length > 0 ? attachmentTargets : members.slice(0, 1)
+  const routeTargets = selectSpaceParticipants(draft, members)
   const routeAgent = routeTargets[0]
   const [model, setModel] = useState(routeAgent?.model ?? '')
   useEffect(() => {
@@ -743,11 +745,22 @@ function SpacePanel({
     routeTargets.length > 0 && routeTargets.every((agent) => agent.provider === 'deepseek-official')
   const availableModels = modelsForProvider(routeAgent?.provider, model, routeAgent?.model, models)
   const canAttach =
-    attachmentTargets.length > 0
-      ? attachmentTargets.every((agent) =>
-          supportsImageInput(agent.provider, canSelectModel ? model : agent.model)
-        )
-      : members.some((agent) => supportsImageInput(agent.provider, agent.model))
+    routeTargets.length > 0 &&
+    routeTargets.every((agent) =>
+      supportsImageInput(agent.provider, canSelectModel ? model : agent.model)
+    )
+  async function sendWorkflow(
+    content: string,
+    attachments?: ChatImageAttachment[],
+    options?: ChatRunOptions
+  ): Promise<boolean> {
+    setExecutingMembers(selectSpaceParticipants(content, members).map((agent) => ({ ...agent })))
+    try {
+      return await onSend(content, attachments, options)
+    } finally {
+      setExecutingMembers(null)
+    }
+  }
   function requestRemove(): void {
     confirm({
       title: `确定删除协作空间「${space.name}」吗？`,
@@ -802,10 +815,17 @@ function SpacePanel({
       </header>
       <div className="space-layout">
         <div className="space-chat">
+          <div className="execution-indicator" aria-label="本次执行顺序">
+            <span>{executingMembers ? '当前执行' : '本次参与'} · 顺序执行</span>
+            <p>
+              {(executingMembers ?? routeTargets).map((agent) => agent.name).join(' → ') ||
+                '暂无成员'}
+            </p>
+          </div>
           <MessageList
             messages={messages}
             profile={profile}
-            emptyText="使用 @智能体 开始协作"
+            emptyText="提交任务，成员将按顺序协作"
             progress={progress}
             streamingText={streamingText}
             streamingReasoning={streamingReasoning}
@@ -817,11 +837,11 @@ function SpacePanel({
           <Composer
             busy={busy}
             canAttach={canAttach}
-            placeholder="@智能体 输入消息…"
+            placeholder="输入任务；可用 @ 选择部分成员…"
             members={members}
             value={draft}
             onChange={setDraft}
-            onSend={onSend}
+            onSend={sendWorkflow}
             onStop={onStop}
             messages={messages}
             provider={routeAgent?.provider}

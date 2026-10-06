@@ -3420,3 +3420,78 @@ em,
 /* 窗口最小尺寸是 1200×720（src/main/index.ts），没有更窄的档位需要处理。
    ⚠️ 若将来下调 minWidth，必须回来补：① 三栏在 < 1200 会挤
    （导航 ~215px / 列表 ~348px / 内容 ~537px），② 复检折叠态那两条兄弟选择器。 */
+.workflow-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid var(--mm-color-border);
+  border-radius: var(--r-control);
+}
+.workflow-mode label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workflow-mode input[type="radio"] {
+  width: auto;
+  margin: 0;
+}
+.workflow-order h3 {
+  font-size: 14px;
+}
+.workflow-order p {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.workflow-order ol {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.workflow-order li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--mm-color-border);
+  border-radius: var(--r-control);
+}
+.workflow-member-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workflow-order button {
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid var(--mm-color-border);
+  border-radius: var(--r-control);
+  background: transparent;
+}
+.workflow-handle {
+  cursor: grab;
+}
+.workflow-handle:active {
+  cursor: grabbing;
+}
+.workflow-order button:focus-visible {
+  outline: 2px solid var(--mm-color-iris);
+  outline-offset: 2px;
+}
+.execution-indicator {
+  flex: 0 0 auto;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--mm-color-border);
+}
+.execution-indicator span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.execution-indicator p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}

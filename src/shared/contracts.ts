@@ -32,6 +32,7 @@ export type Space = {
   description: string
   context: string
   memberIds: string[]
+  executionMode: 'sequential'
   createdAt: string
   source?: { source: string; sourceId: string; revision: string; manifest: string }
 }
@@ -146,7 +147,16 @@ export type SaveModelProviderInput = {
 }
 
 export type CreateAgentInput = Omit<Agent, 'id' | 'createdAt' | 'source'>
-export type CreateSpaceInput = Omit<Space, 'id' | 'createdAt' | 'source'>
+export type CreateSpaceInput = Omit<Space, 'id' | 'createdAt' | 'source' | 'executionMode'> & {
+  executionMode?: 'sequential'
+}
+
+export type SpaceWorkflowSnapshot = {
+  mode: 'sequential'
+  spaceId: string
+  orderedAgentIds: string[]
+  selectedAgentIds: string[]
+}
 
 export type ChatProgress = Pick<Message, 'scope' | 'scopeId'> & { agentName: string }
 

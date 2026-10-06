@@ -23,6 +23,12 @@ export function parseMentions(content: string, members: Agent[]): Agent[] {
   return positions.map((item) => item.agent)
 }
 
+/** Mentions select participants; the supplied member order remains authoritative. */
+export function selectSpaceParticipants(content: string, orderedMembers: Agent[]): Agent[] {
+  const mentioned = new Set(parseMentions(content, orderedMembers).map((agent) => agent.id))
+  return orderedMembers.filter((agent) => mentioned.size === 0 || mentioned.has(agent.id))
+}
+
 export function buildPrivatePrompt(
   agent: Agent,
   content: string,

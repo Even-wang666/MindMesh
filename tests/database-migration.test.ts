@@ -272,16 +272,11 @@ describe('schema migration to conversations and executions', () => {
     // §4.6: runs hold the authoritative per-agent usage, executions the summary.
     const runUsageColumns = columnsOf(raw, 'runs')
     expect([...runUsageColumns]).toEqual(
-      expect.arrayContaining([
-        'inputTokens',
-        'outputTokens',
-        'cacheReadTokens',
-        'cacheWriteTokens',
-      ])
+      expect.arrayContaining(['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'])
     )
 
     const version = raw.prepare("SELECT value FROM app_meta WHERE key='schema_version'").get()
-    expect(version?.value).toBe('9')
+    expect(version?.value).toBe('10')
 
     raw.close()
     db.close()

@@ -104,9 +104,10 @@ function runtimeKeys(db: MindMeshDatabase): string[] {
 /** Every conversation with its title, so default-row bookkeeping can be asserted. */
 function conversationTitles(db: MindMeshDatabase): Array<{ id: string; title: string }> {
   const raw = (db as unknown as { db: DatabaseSync }).db
-  return raw
-    .prepare('SELECT id, title FROM conversations ORDER BY id')
-    .all() as Array<{ id: string; title: string }>
+  return raw.prepare('SELECT id, title FROM conversations ORDER BY id').all() as Array<{
+    id: string
+    title: string
+  }>
 }
 
 describe('every scope owns its default conversation', () => {
@@ -128,6 +129,7 @@ describe('every scope owns its default conversation', () => {
         const retainedId = legacy.conversationIdFor('private', legacy.listAgents()[0].id)
         legacy.close()
         const raw = new DatabaseSync(path)
+        raw.exec('ALTER TABLE spaces DROP COLUMN executionMode')
         raw.prepare('DELETE FROM conversations WHERE id IN (?, ?)').run(privateId, spaceId)
         raw
           .prepare('UPDATE conversations SET title = ?, archivedAt = ? WHERE id = ?')
@@ -141,7 +143,10 @@ describe('every scope owns its default conversation', () => {
         for (let reopen = 0; reopen < 2; reopen++) {
           const upgraded = new MindMeshDatabase(path)
           try {
-            expect(conversationTitles(upgraded)).toContainEqual({ id: privateId, title: agent.name })
+            expect(conversationTitles(upgraded)).toContainEqual({
+              id: privateId,
+              title: agent.name,
+            })
             expect(conversationTitles(upgraded)).toContainEqual({ id: spaceId, title: space.name })
             const current = (upgraded as unknown as { db: DatabaseSync }).db
             expect(
@@ -472,6 +477,7 @@ describe('runs carry authoritative usage columns', () => {
         agentSnapshot TEXT
       )`)
       raw.exec('DROP TABLE runs')
+      raw.exec('ALTER TABLE spaces DROP COLUMN executionMode')
       raw.exec('ALTER TABLE runs_v7 RENAME TO runs')
       raw.exec(
         `INSERT INTO app_meta(key, value) VALUES ('schema_version', '7')

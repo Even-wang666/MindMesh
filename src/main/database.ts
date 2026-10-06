@@ -12,6 +12,7 @@ import type {
   Message,
   RunStatus,
   Space,
+  SpaceWorkflowSnapshot,
   ToolCallRecord,
   ToolCallStatus,
   UserProfile,
@@ -58,7 +59,7 @@ const RUN_USAGE_COLUMNS = [
  * Bump when adding a migration step below. The migrator refuses to run against a
  * database written by a newer build, so this must never be lowered.
  */
-const SCHEMA_VERSION = 9
+const SCHEMA_VERSION = 10
 
 function validateFieldLength(value: string, label: string, limit: number): void {
   if (value.length > limit)
@@ -192,7 +193,9 @@ function normalizeReasoningEffort(value: string | undefined): string | undefined
   return effort
 }
 
-function normalizeSpaceInput(input: CreateSpaceInput): CreateSpaceInput {
+function normalizeSpaceInput(
+  input: CreateSpaceInput
+): CreateSpaceInput & { executionMode: 'sequential' } {
   if (
     !input ||
     typeof input !== 'object' ||
@@ -207,11 +210,16 @@ function normalizeSpaceInput(input: CreateSpaceInput): CreateSpaceInput {
   validateFieldLength(input.name, '空间名称', 100)
   validateFieldLength(input.description, '空间简介', 10_000)
   validateStringList(input.memberIds, '空间成员', 256)
+  if (input.executionMode !== undefined && input.executionMode !== 'sequential') {
+    if ((input.executionMode as string) === 'parallel') throw new Error('并行执行暂未开放')
+    throw new Error('协作方式无效')
+  }
   const normalized = {
     name: input.name.trim(),
     description: input.description.trim(),
     context: input.context.trim(),
     memberIds: [...input.memberIds],
+    executionMode: 'sequential' as const,
   }
   if (!normalized.name) throw new Error('空间名称不能为空')
   if (new Set(normalized.memberIds).size !== normalized.memberIds.length)
@@ -330,6 +338,9 @@ export class MindMeshDatabase {
       if (version < 7) this.migrateRuntimeSessionKeys()
       if (version < 8) this.addRunUsageColumns()
       if (version < 9) this.backfillDefaultConversations()
+      if (version < 10)
+        this.db.exec(`ALTER TABLE spaces ADD COLUMN executionMode
+        TEXT NOT NULL DEFAULT 'sequential' CHECK(executionMode IN ('sequential', 'parallel'))`)
       this.db
         .prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)')
         .run('schema_version', String(SCHEMA_VERSION))
@@ -1305,9 +1316,16 @@ export class MindMeshDatabase {
   private insertSpaceRows(space: Space): void {
     this.db
       .prepare(
-        'INSERT INTO spaces (id, name, description, context, createdAt) VALUES (?, ?, ?, ?, ?)'
+        'INSERT INTO spaces (id, name, description, context, createdAt, executionMode) VALUES (?, ?, ?, ?, ?, ?)'
       )
-      .run(space.id, space.name, space.description, space.context, space.createdAt)
+      .run(
+        space.id,
+        space.name,
+        space.description,
+        space.context,
+        space.createdAt,
+        space.executionMode
+      )
     const addMember = this.db.prepare(
       'INSERT INTO space_members (spaceId, agentId, position) VALUES (?, ?, ?)'
     )
@@ -1328,8 +1346,16 @@ export class MindMeshDatabase {
     this.db.exec('BEGIN')
     try {
       this.db
-        .prepare('UPDATE spaces SET name = ?, description = ?, context = ? WHERE id = ?')
-        .run(normalized.name, normalized.description, normalized.context, id)
+        .prepare(
+          'UPDATE spaces SET name = ?, description = ?, context = ?, executionMode = ? WHERE id = ?'
+        )
+        .run(
+          normalized.name,
+          normalized.description,
+          normalized.context,
+          normalized.executionMode,
+          id
+        )
       this.db.prepare('DELETE FROM space_members WHERE spaceId = ?').run(id)
       const addMember = this.db.prepare(
         'INSERT INTO space_members (spaceId, agentId, position) VALUES (?, ?, ?)'
@@ -1688,7 +1714,7 @@ export class MindMeshDatabase {
     id: string
     conversationId: string
     triggerMessageId: string
-    workflowSnapshot?: string
+    workflowSnapshot?: SpaceWorkflowSnapshot
   }): void {
     this.db
       .prepare(`
@@ -1699,9 +1725,19 @@ export class MindMeshDatabase {
         input.id,
         input.conversationId,
         input.triggerMessageId,
-        input.workflowSnapshot ?? null,
+        input.workflowSnapshot ? JSON.stringify(input.workflowSnapshot) : null,
         new Date().toISOString()
       )
+  }
+
+  /** Read the immutable stored workflow for history and later Regenerate. */
+  getExecutionWorkflowSnapshot(id: string): SpaceWorkflowSnapshot | undefined {
+    const row = this.db.prepare('SELECT workflowSnapshot FROM executions WHERE id = ?').get(id) as
+      | { workflowSnapshot: string | null }
+      | undefined
+    return row?.workflowSnapshot
+      ? (JSON.parse(row.workflowSnapshot) as SpaceWorkflowSnapshot)
+      : undefined
   }
 
   /**

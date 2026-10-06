@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronRight, CircleHelp, X } from 'lucide-react'
 import type {
   Agent,
@@ -264,13 +264,40 @@ export function SpaceWizard({
   const [description, setDescription] = useState(initialSpace?.description ?? '')
   const [context, setContext] = useState(initialSpace?.context ?? '')
   const [members, setMembers] = useState<string[]>(initialSpace?.memberIds ?? [])
+  const draggedMember = useRef<string | null>(null)
+  const restoreFocus = useRef<string | null>(null)
+  const handles = useRef(new Map<string, HTMLButtonElement>())
+  const [orderAnnouncement, setOrderAnnouncement] = useState('')
+  useEffect(() => {
+    if (restoreFocus.current) handles.current.get(restoreFocus.current)?.focus()
+    restoreFocus.current = null
+  }, [members])
+  function moveMember(id: string, destination: number): void {
+    const index = members.indexOf(id)
+    if (index < 0 || destination < 0 || destination >= members.length || index === destination)
+      return
+    const next = [...members]
+    next.splice(index, 1)
+    next.splice(destination, 0, id)
+    restoreFocus.current = id
+    setMembers(next)
+    setOrderAnnouncement(
+      `${agents.find((agent) => agent.id === id)?.name ?? id} 已移到第 ${destination + 1} 位`
+    )
+  }
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   async function save(): Promise<void> {
     setSaving(true)
     setError('')
     try {
-      const input = { name, description, context, memberIds: members }
+      const input = {
+        name,
+        description,
+        context,
+        memberIds: members,
+        executionMode: 'sequential' as const,
+      }
       if (initialSpace) await window.mindmesh.spaces.update(initialSpace.id, input)
       else await window.mindmesh.spaces.create(input)
       await onSaved()
@@ -340,6 +367,92 @@ export function SpaceWizard({
               ))}
             </div>
           </label>
+          <fieldset className="workflow-mode" disabled={saving}>
+            <legend>协作方式</legend>
+            <label>
+              <input type="radio" name="executionMode" checked readOnly />
+              顺序执行
+            </label>
+            <label>
+              <input type="radio" name="executionMode" disabled />
+              并行执行（暂未开放）
+            </label>
+          </fieldset>
+          <section className="workflow-order">
+            <h3>成员执行顺序</h3>
+            <p id="workflow-order-help">拖动调整顺序，也可使用上下方向键或移动按钮。</p>
+            <ol aria-label="成员执行顺序">
+              {members.map((id, index) => {
+                const agent = agents.find((item) => item.id === id)
+                if (!agent) return null
+                return (
+                  <li
+                    key={id}
+                    data-member-id={id}
+                    onDragOver={(event) => {
+                      if (draggedMember.current && !saving) event.preventDefault()
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault()
+                      if (draggedMember.current && !saving) moveMember(draggedMember.current, index)
+                      draggedMember.current = null
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="workflow-handle"
+                      draggable={!saving}
+                      disabled={saving}
+                      aria-label={`调整 ${agent.name} 的执行顺序`}
+                      aria-describedby="workflow-order-help"
+                      ref={(node) => {
+                        if (node) handles.current.set(id, node)
+                        else handles.current.delete(id)
+                      }}
+                      onDragStart={(event) => {
+                        draggedMember.current = id
+                        event.dataTransfer.setData('text/plain', id)
+                        event.dataTransfer.effectAllowed = 'move'
+                      }}
+                      onDragEnd={() => {
+                        draggedMember.current = null
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                          event.preventDefault()
+                          moveMember(id, index + (event.key === 'ArrowUp' ? -1 : 1))
+                        }
+                      }}
+                    >
+                      ≡
+                    </button>
+                    <span className="workflow-member-name">
+                      {index + 1}. {agent.name}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={saving || index === 0}
+                      aria-label={`上移 ${agent.name}`}
+                      onClick={() => moveMember(id, index - 1)}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving || index === members.length - 1}
+                      aria-label={`下移 ${agent.name}`}
+                      onClick={() => moveMember(id, index + 1)}
+                    >
+                      ↓
+                    </button>
+                  </li>
+                )
+              })}
+            </ol>
+            <span className="visually-hidden" role="status">
+              {orderAnnouncement}
+            </span>
+          </section>
         </div>
         <footer>
           {error && (
