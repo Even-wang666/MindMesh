@@ -40,7 +40,13 @@ const api: MindMeshApi = {
     updateContext: (id, context) => ipcRenderer.invoke('spaces:updateContext', id, context),
   },
   chat: {
-    messages: (scope, scopeId) => ipcRenderer.invoke('chat:messages', scope, scopeId),
+    conversations: (scope, id) => ipcRenderer.invoke('chat:conversations', scope, id),
+    createConversation: (scope, id) => ipcRenderer.invoke('chat:createConversation', scope, id),
+    renameConversation: (id, title) => ipcRenderer.invoke('chat:renameConversation', id, title),
+    archiveConversation: (id) => ipcRenderer.invoke('chat:archiveConversation', id),
+    executions: (id) => ipcRenderer.invoke('chat:executions', id),
+    regenerate: (id) => ipcRenderer.invoke('chat:regenerate', id),
+    messages: (scope, scopeId, id) => ipcRenderer.invoke('chat:messages', scope, scopeId, id),
     sendPrivate: (agentId, content, attachments, options) => {
       validateChatContent(content)
       return ipcRenderer.invoke('chat:sendPrivate', agentId, content, attachments, options)
@@ -49,7 +55,7 @@ const api: MindMeshApi = {
       validateChatContent(content)
       return ipcRenderer.invoke('chat:sendSpace', spaceId, content, attachments, options)
     },
-    stop: (scope, scopeId) => ipcRenderer.invoke('chat:stop', scope, scopeId),
+    stop: (scope, scopeId, id) => ipcRenderer.invoke('chat:stop', scope, scopeId, id),
     onProgress: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: ChatProgress): void =>
         listener(payload)
@@ -57,10 +63,7 @@ const api: MindMeshApi = {
       return () => ipcRenderer.removeListener('chat:progress', handler)
     },
     onRuntimeEvent: (listener) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        payload: RuntimeEvent[]
-      ): void => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: RuntimeEvent[]): void => {
         for (const event of payload) listener(event)
       }
       ipcRenderer.on('chat:runtimeEvent', handler)

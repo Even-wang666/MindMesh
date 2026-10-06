@@ -3495,3 +3495,33 @@ em,
   font-size: 13px;
   overflow-wrap: anywhere;
 }
+/* Conversation controls share the existing chat surface. */
+.conversation-controls {
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--mm-color-border);
+}
+.conversation-actions,
+.generation-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.conversation-actions select,
+.conversation-actions input {
+  max-width: 260px;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+.generation-controls {
+  font-size: 13px;
+}
+.conversation-controls {
+  flex: 0 0 auto;
+  max-height: 30%;
+  overflow-y: auto;
+}
+.conversation-controls + .page {
+  flex: 1 1 0;
+  height: auto;
+}

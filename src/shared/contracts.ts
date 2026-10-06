@@ -50,6 +50,7 @@ export type ChatImageAttachment = {
 export type ChatPermission = 'chat' | 'workspace' | 'full'
 
 export type ChatRunOptions = {
+  conversationId?: string
   model?: string
   permission?: ChatPermission
 }
@@ -76,7 +77,28 @@ export type SkillInstallProgress = {
   totalBytes?: number
 }
 
+export type Conversation = {
+  id: string
+  scope: Message['scope']
+  scopeId: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  archivedAt: string | null
+}
+
+export type Execution = {
+  id: string
+  conversationId: string
+  triggerMessageId: string
+  status: ExecutionStatus
+  generationIndex: number
+  regeneratedFromExecutionId: string | null
+}
+
 export type Message = {
+  conversationId?: string
+  executionId?: string
   id: string
   scope: 'private' | 'space'
   scopeId: string
@@ -158,7 +180,10 @@ export type SpaceWorkflowSnapshot = {
   selectedAgentIds: string[]
 }
 
-export type ChatProgress = Pick<Message, 'scope' | 'scopeId'> & { agentName: string }
+export type ChatProgress = Pick<Message, 'scope' | 'scopeId'> & {
+  agentName: string
+  conversationId?: string
+}
 
 /**
  * Why a run reached its terminal state.
@@ -334,7 +359,13 @@ export type MindMeshApi = {
     updateContext(id: string, context: string): Promise<Space>
   }
   chat: {
-    messages(scope: Message['scope'], scopeId: string): Promise<Message[]>
+    conversations(scope: Message['scope'], scopeId: string): Promise<Conversation[]>
+    createConversation(scope: Message['scope'], scopeId: string): Promise<Conversation>
+    renameConversation(id: string, title: string): Promise<Conversation>
+    archiveConversation(id: string): Promise<void>
+    executions(conversationId: string): Promise<Execution[]>
+    regenerate(conversationId: string): Promise<Message[]>
+    messages(scope: Message['scope'], scopeId: string, conversationId?: string): Promise<Message[]>
     sendPrivate(
       agentId: string,
       content: string,
@@ -347,7 +378,7 @@ export type MindMeshApi = {
       attachments?: ChatImageAttachment[],
       options?: ChatRunOptions
     ): Promise<Message[]>
-    stop(scope: Message['scope'], scopeId: string): Promise<boolean>
+    stop(scope: Message['scope'], scopeId: string, conversationId?: string): Promise<boolean>
     onProgress(listener: (event: ChatProgress) => void): () => void
     onRuntimeEvent(listener: (event: RuntimeEvent) => void): () => void
   }

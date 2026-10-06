@@ -154,14 +154,26 @@ function registerIpc(
   ipcMain.handle('spaces:updateContext', (_event, id, context) =>
     current.updateSpaceContext(id, context)
   )
-  ipcMain.handle('chat:messages', (_event, scope, scopeId) => current.messages(scope, scopeId))
+  ipcMain.handle('chat:conversations', (_event, scope, id) => current.conversations(scope, id))
+  ipcMain.handle('chat:createConversation', (_event, scope, id) =>
+    current.createConversation(scope, id)
+  )
+  ipcMain.handle('chat:renameConversation', (_event, id, title) =>
+    current.renameConversation(id, title)
+  )
+  ipcMain.handle('chat:archiveConversation', (_event, id) => current.archiveConversation(id))
+  ipcMain.handle('chat:executions', (_event, id) => current.executions(id))
+  ipcMain.handle('chat:regenerate', (_event, id) => current.regenerate(id))
+  ipcMain.handle('chat:messages', (_event, scope, scopeId, id) =>
+    current.messages(scope, scopeId, id)
+  )
   ipcMain.handle('chat:sendPrivate', (_event, agentId, content, attachments, options) =>
     current.sendPrivate(agentId, content, attachments, options)
   )
   ipcMain.handle('chat:sendSpace', (_event, spaceId, content, attachments, options) =>
     current.sendSpace(spaceId, content, attachments, options)
   )
-  ipcMain.handle('chat:stop', (_event, scope, scopeId) => current.stop(scope, scopeId))
+  ipcMain.handle('chat:stop', (_event, scope, scopeId, id) => current.stop(scope, scopeId, id))
   ipcMain.handle('runtime:status', () => current.runtimeStatus())
   ipcMain.handle('settings:modelProviders', () => current.refreshModelProviders())
   ipcMain.handle('settings:workspace', () => current.harness.workspacePath)

@@ -256,6 +256,7 @@ describe('chat failures', () => {
       expect(messages[1].content).not.toContain('secret token')
       expect(db.listMessages(db.conversationIdFor('private', agent.id))).toEqual(messages)
       expect(send).toHaveBeenCalledWith('chat:progress', {
+        conversationId: db.conversationIdFor('private', agent.id),
         scope: 'private',
         scopeId: agent.id,
         agentName: agent.name,

@@ -14,6 +14,8 @@ describe('message announcements', () => {
       configurable: true,
       value: {
         chat: {
+          conversations: async () => [{ id: 'private:a', archivedAt: null }],
+          executions: async () => [],
           messages: async () => [],
           onProgress: () => () => {},
           onRuntimeEvent: (listener: typeof notify) => {

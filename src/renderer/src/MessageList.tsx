@@ -33,6 +33,7 @@ export function MessageList({
   const end = useRef<HTMLDivElement>(null)
   const hasScrolled = useRef(false)
   const [announcement, setAnnouncement] = useState('')
+  const [copyStatus, setCopyStatus] = useState('')
   const previous = useRef({
     ids: new Set<string>(),
     tools: new Map<string, ToolCallState['status']>(),
@@ -141,6 +142,20 @@ export function MessageList({
             {message.content && (
               <MessageBody content={message.content} animated={liveReplyIds.has(message.id)} />
             )}
+            {message.authorType === 'agent' && message.content && (
+              <button
+                className="ghost-button compact"
+                aria-label={`复制 ${message.authorName} 的回复`}
+                onClick={() => {
+                  void navigator.clipboard.writeText(message.content).then(
+                    () => setCopyStatus('已复制回复'),
+                    () => setCopyStatus('复制失败，请重试。')
+                  )
+                }}
+              >
+                复制
+              </button>
+            )}
           </div>
         </article>
       ))}
@@ -177,6 +192,7 @@ export function MessageList({
         </article>
       )}
       <div ref={end} />
+      {copyStatus && <span role="status">{copyStatus}</span>}
     </div>
   )
 }

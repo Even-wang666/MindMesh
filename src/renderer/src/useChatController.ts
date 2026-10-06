@@ -5,6 +5,8 @@ import type {
   ChatImageAttachment,
   ChatProgress,
   ChatRunOptions,
+  Conversation,
+  Execution,
   Message,
   RuntimeStatus,
 } from '../../shared/contracts'
@@ -31,6 +33,16 @@ export function useChatController(
   onRuntime: (runtime: RuntimeStatus) => void
 ): {
   messages: Message[]
+  conversations: Conversation[]
+  conversationId: string
+  conversationReady: boolean
+  conversationError: string
+  executions: Execution[]
+  selectConversation: (id: string) => void
+  createConversation: () => Promise<void>
+  renameConversation: (title: string) => Promise<void>
+  archiveConversation: () => Promise<void>
+  regenerate: () => Promise<void>
   busy: boolean
   progress: ChatProgress | null
   streamingText: string
@@ -44,6 +56,10 @@ export function useChatController(
   ) => Promise<boolean>
   stop: () => Promise<boolean>
 } {
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [selection, setSelection] = useState({ owner: '', id: '' })
+  const [conversationError, setConversationError] = useState('')
+  const [executions, setExecutions] = useState<Execution[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<ChatProgress | null>(null)
@@ -52,11 +68,17 @@ export function useChatController(
   const [toolCalls, setToolCalls] = useState<ToolCallState[]>([])
   const toolCallKeys = useRef(new Map<string, string>())
   const liveReplyIds = useRef(new Set<string>())
-  const activeRun = useRef<{ scope: Message['scope']; id: string; stopRequested: boolean } | null>(
-    null
-  )
+  const activeRun = useRef<{
+    scope: Message['scope']
+    id: string
+    conversationId: string
+    stopRequested: boolean
+  } | null>(null)
   const sendRevision = useRef(0)
-  const conversation = target ? `${target.scope}:${target.id}` : ''
+  const owner = target ? `${target.scope}:${target.id}` : ''
+  const conversation = selection.owner === owner ? selection.id : ''
+  const ownerRef = useRef(owner)
+  ownerRef.current = owner
   const conversationRef = useRef(conversation)
   conversationRef.current = conversation
 
@@ -73,13 +95,21 @@ export function useChatController(
 
   useEffect(() => {
     const offProgress = window.mindmesh.chat.onProgress((event) => {
+      if (conversationRef.current !== (event.conversationId ?? `${event.scope}:${event.scopeId}`))
+        return
       setProgress(event)
       setStreamingText('')
       setStreamingReasoning('')
       if (event.scope === 'space') {
-        void window.mindmesh.chat.messages(event.scope, event.scopeId).then((next) => {
-          if (conversationRef.current === `${event.scope}:${event.scopeId}`) showLiveMessages(next)
-        })
+        void window.mindmesh.chat
+          .messages(event.scope, event.scopeId, event.conversationId)
+          .then((next) => {
+            if (
+              conversationRef.current ===
+              (event.conversationId ?? `${event.scope}:${event.scopeId}`)
+            )
+              showLiveMessages(next)
+          })
       }
     })
     // The legacy chat:delta channel is superseded by onRuntimeEvent, which carries
@@ -174,21 +204,62 @@ export function useChatController(
   useEffect(() => {
     if (!target) return
     let active = true
-    const revision = sendRevision.current
-    setMessages([])
-    setStreamingText('')
-    setStreamingReasoning('')
-    setToolCalls([])
-    toolCallKeys.current.clear()
-    liveReplyIds.current.clear()
-    void window.mindmesh.chat.messages(target.scope, target.id).then((next) => {
-      // A history read started before a send must not overwrite its pending message or result.
-      if (active && revision === sendRevision.current) setMessages(next)
-    })
+    setConversations([])
+    setConversationError('')
+    void window.mindmesh.chat
+      .conversations(target.scope, target.id)
+      .then((next) => {
+        if (!active) return
+        setConversations(next)
+        setSelection({ owner, id: next.find((item) => !item.archivedAt)?.id ?? '' })
+      })
+      .catch(() => {
+        if (active) {
+          setSelection({ owner, id: '' })
+          setConversationError('对话列表加载失败，请重新选择智能体或空间。')
+        }
+      })
     return () => {
       active = false
     }
-  }, [target?.scope, target?.id])
+  }, [owner])
+
+  useEffect(() => {
+    setMessages([])
+    setExecutions([])
+    setProgress(null)
+    setStreamingText('')
+    setStreamingReasoning('')
+    setToolCalls([])
+    if (!target || !conversation) return
+    let active = true
+    const revision = sendRevision.current
+    setConversationError('')
+    toolCallKeys.current.clear()
+    liveReplyIds.current.clear()
+    void window.mindmesh.chat
+      .messages(target.scope, target.id, conversation)
+      .then((next) => {
+        // A history read started before a send must not overwrite its pending message or result.
+        if (active && revision === sendRevision.current) setMessages(next)
+      })
+      .catch(() => {
+        if (active && revision === sendRevision.current)
+          setConversationError('消息加载失败，请重新选择对话。')
+      })
+    void window.mindmesh.chat
+      .executions(conversation)
+      .then((next) => {
+        if (active && revision === sendRevision.current) setExecutions(next)
+      })
+      .catch(() => {
+        if (active && revision === sendRevision.current)
+          setConversationError('回答版本加载失败，请重新选择对话。')
+      })
+    return () => {
+      active = false
+    }
+  }, [conversation])
 
   async function send(
     content: string,
@@ -196,11 +267,11 @@ export function useChatController(
     options: ChatRunOptions = {}
   ): Promise<boolean> {
     if ((!content.trim() && attachments.length === 0) || busy) return true
-    if (!target) return false
+    if (!target || !conversation) return false
     sendRevision.current += 1
     const { scope, id } = target
-    const requestConversation = `${scope}:${id}`
-    const requestRun = { scope, id, stopRequested: false }
+    const requestConversation = conversation
+    const requestRun = { scope, id, conversationId: conversation, stopRequested: false }
     const knownIds = new Set(messages.map((message) => message.id))
     activeRun.current = requestRun
     setBusy(true)
@@ -224,21 +295,15 @@ export function useChatController(
       setProgress({ scope, scopeId: id, agentName: target.agent.name })
     }
     try {
-      const runOptions = Object.keys(options).length > 0 ? options : undefined
+      const runOptions = { ...options, conversationId: conversation }
       const result =
         scope === 'private'
-          ? runOptions
-            ? await window.mindmesh.chat.sendPrivate(id, content.trim(), attachments, runOptions)
-            : attachments.length > 0
-              ? await window.mindmesh.chat.sendPrivate(id, content.trim(), attachments)
-              : await window.mindmesh.chat.sendPrivate(id, content.trim())
-          : runOptions
-            ? await window.mindmesh.chat.sendSpace(id, content.trim(), attachments, runOptions)
-            : attachments.length > 0
-              ? await window.mindmesh.chat.sendSpace(id, content.trim(), attachments)
-              : await window.mindmesh.chat.sendSpace(id, content.trim())
+          ? await window.mindmesh.chat.sendPrivate(id, content.trim(), attachments, runOptions)
+          : await window.mindmesh.chat.sendSpace(id, content.trim(), attachments, runOptions)
       if (conversationRef.current === requestConversation) {
         showLiveMessages(result, !requestRun.stopRequested)
+        const nextExecutions = await window.mindmesh.chat.executions(requestConversation)
+        if (conversationRef.current === requestConversation) setExecutions(nextExecutions)
         setStreamingText('')
         setStreamingReasoning('')
         setToolCalls([])
@@ -253,7 +318,7 @@ export function useChatController(
       let saved = true
       let next: Message[] | null = null
       try {
-        next = await window.mindmesh.chat.messages(scope, id)
+        next = await window.mindmesh.chat.messages(scope, id, requestConversation)
         saved = next.some((message) => message.authorType === 'user' && !knownIds.has(message.id))
       } catch {
         /* Keep the pending message when persistence cannot be checked. */
@@ -292,7 +357,11 @@ export function useChatController(
     if (!request) return false
     request.stopRequested = true
     try {
-      const stopped = await window.mindmesh.chat.stop(request.scope, request.id)
+      const stopped = await window.mindmesh.chat.stop(
+        request.scope,
+        request.id,
+        request.conversationId
+      )
       if (!stopped) request.stopRequested = false
       return stopped
     } catch (error) {
@@ -301,7 +370,83 @@ export function useChatController(
     }
   }
 
+  async function refreshConversations(id: string): Promise<void> {
+    if (!target) return
+    const next = await window.mindmesh.chat.conversations(target.scope, target.id)
+    if (ownerRef.current !== owner || conversationRef.current !== conversation) return
+    setConversations(next)
+    setSelection({ owner, id })
+  }
+
+  async function createConversation(): Promise<void> {
+    if (!target || busy) return
+    const next = await window.mindmesh.chat.createConversation(target.scope, target.id)
+    await refreshConversations(next.id)
+  }
+
+  async function renameConversation(title: string): Promise<void> {
+    await window.mindmesh.chat.renameConversation(conversation, title)
+    await refreshConversations(conversation)
+  }
+
+  async function archiveConversation(): Promise<void> {
+    if (!target || busy || !conversation) return
+    await window.mindmesh.chat.archiveConversation(conversation)
+    const next = await window.mindmesh.chat.conversations(target.scope, target.id)
+    if (ownerRef.current !== owner || conversationRef.current !== conversation) return
+    setConversations(next)
+    setSelection({ owner, id: next.find((item) => !item.archivedAt)?.id ?? '' })
+  }
+
+  async function regenerate(): Promise<void> {
+    if (!target || busy || !conversation) return
+    const id = conversation
+    const request = { scope: target.scope, id: target.id, conversationId: id, stopRequested: false }
+    activeRun.current = request
+    sendRevision.current += 1
+    setBusy(true)
+    setStreamingText('')
+    setStreamingReasoning('')
+    try {
+      const next = await window.mindmesh.chat.regenerate(id)
+      const nextExecutions = await window.mindmesh.chat.executions(id)
+      if (conversationRef.current === id) {
+        showLiveMessages(next, !request.stopRequested)
+        setExecutions(nextExecutions)
+      }
+    } catch (error) {
+      const saved = await Promise.allSettled([
+        window.mindmesh.chat.messages(target.scope, target.id, id),
+        window.mindmesh.chat.executions(id),
+      ])
+      if (conversationRef.current === id) {
+        if (saved[0].status === 'fulfilled') setMessages(saved[0].value)
+        if (saved[1].status === 'fulfilled') setExecutions(saved[1].value)
+      }
+      throw error
+    } finally {
+      if (activeRun.current === request) activeRun.current = null
+      setBusy(false)
+      setProgress(null)
+      setStreamingText('')
+      setStreamingReasoning('')
+      setToolCalls([])
+    }
+  }
+
   return {
+    conversations,
+    conversationId: conversation,
+    conversationReady: selection.owner === owner,
+    conversationError,
+    executions,
+    selectConversation: (id) => {
+      if (!busy) setSelection({ owner, id })
+    },
+    createConversation,
+    renameConversation,
+    archiveConversation,
+    regenerate,
     messages,
     busy,
     progress,

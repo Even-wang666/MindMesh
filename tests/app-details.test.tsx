@@ -49,6 +49,73 @@ const agent: Agent = {
   createdAt: '',
 }
 
+it('resets the displayed answer version when returning to a conversation', async () => {
+  const api = mockApi()
+  const conversation = {
+    id: 'a',
+    scope: 'private' as const,
+    scopeId: agent.id,
+    title: 'A',
+    archivedAt: null,
+    createdAt: '',
+    updatedAt: '',
+  }
+  api.chat.conversations = vi.fn(async () => [
+    conversation,
+    { ...conversation, id: 'b', title: 'B' },
+  ])
+  api.chat.executions = vi.fn(async (id) =>
+    id === 'a'
+      ? [1, 2].map((generationIndex) => ({
+          id: `e${generationIndex}`,
+          conversationId: 'a',
+          triggerMessageId: 'u',
+          generationIndex,
+          status: 'completed' as const,
+          regeneratedFromExecutionId: generationIndex === 1 ? null : 'e1',
+        }))
+      : []
+  )
+  api.chat.messages = vi.fn(async (_scope, _id, id) =>
+    id === 'a'
+      ? [
+          {
+            id: 'u',
+            scope: 'private' as const,
+            scopeId: agent.id,
+            authorType: 'user' as const,
+            authorName: 'You',
+            content: 'Question',
+            sequence: 1,
+            createdAt: '',
+          },
+          ...[1, 2].map((index) => ({
+            id: `reply${index}`,
+            executionId: `e${index}`,
+            scope: 'private' as const,
+            scopeId: agent.id,
+            authorType: 'agent' as const,
+            authorName: agent.name,
+            content: `Version ${index}`,
+            sequence: index + 1,
+            createdAt: '',
+          })),
+        ]
+      : []
+  )
+  Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+  render(<App />)
+  await screen.findByText('Version 2')
+  fireEvent.click(screen.getByLabelText('上一回答版本'))
+  expect(screen.getByText('Version 1')).toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('切换对话'), { target: { value: 'b' } })
+  await waitFor(() => expect(screen.queryByText('Version 1')).not.toBeInTheDocument())
+  fireEvent.change(screen.getByLabelText('切换对话'), { target: { value: 'a' } })
+  await screen.findByText('Version 2')
+  expect(screen.getByText('回答版本 2 / 2')).toBeInTheDocument()
+  expect(screen.queryByText('Version 1')).not.toBeInTheDocument()
+})
+
 function mockApi(): MindMeshApi {
   let storedProfile: UserProfile = { name: '你', avatar: null }
   return {
@@ -73,6 +140,22 @@ function mockApi(): MindMeshApi {
       updateContext: vi.fn(),
     },
     chat: {
+      conversations: vi.fn(async (scope, scopeId) => [
+        {
+          id: `${scope}:${scopeId}`,
+          scope,
+          scopeId,
+          title: 'Conversation',
+          archivedAt: null,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ]),
+      createConversation: vi.fn(),
+      renameConversation: vi.fn(),
+      archiveConversation: vi.fn(),
+      executions: vi.fn(async () => []),
+      regenerate: vi.fn(async () => []),
       messages: vi.fn(async () => []),
       sendPrivate: vi.fn(async () => []),
       sendSpace: vi.fn(async () => []),
@@ -1193,6 +1276,7 @@ describe('chat flow', () => {
 
     await waitFor(() =>
       expect(api.chat.sendPrivate).toHaveBeenCalledWith(agent.id, '使用新模型', [], {
+        conversationId: `private:${agent.id}`,
         model: 'deepseek-v4-pro',
         permission: 'chat',
       })
@@ -1214,6 +1298,7 @@ describe('chat flow', () => {
 
     await waitFor(() =>
       expect(api.chat.sendPrivate).toHaveBeenCalledWith(agent.id, '普通对话', [], {
+        conversationId: `private:${agent.id}`,
         permission: 'chat',
       })
     )
@@ -1257,7 +1342,7 @@ describe('chat flow', () => {
         agent.id,
         '',
         [expect.objectContaining({ type: 'image', name: 'chart.png', mediaType: 'image/png' })],
-        { model: 'deepseek-v4-flash', permission: 'chat' }
+        { conversationId: `private:${agent.id}`, model: 'deepseek-v4-flash', permission: 'chat' }
       )
     )
   })
@@ -1415,6 +1500,7 @@ describe('chat flow', () => {
       const { result } = renderHook(() =>
         useChatController({ scope, id: agent.id, agent }, '你', vi.fn())
       )
+      await waitFor(() => expect(result.current.conversationId).toBe(`${scope}:${agent.id}`))
       let send!: Promise<boolean>
       act(() => {
         send = result.current.send('状态未知')
@@ -1465,6 +1551,7 @@ describe('chat flow', () => {
       const { result } = renderHook(() =>
         useChatController({ scope, id: agent.id, agent }, '你', vi.fn())
       )
+      await waitFor(() => expect(result.current.conversationId).toBe(`${scope}:${agent.id}`))
       await act(async () => {
         await result.current.send('问题')
       })
@@ -1523,6 +1610,7 @@ describe('chat flow', () => {
     const { result } = renderHook(() =>
       useChatController({ scope: 'private', id: agent.id, agent }, '你', vi.fn())
     )
+    await waitFor(() => expect(result.current.conversationId).toBe(`private:${agent.id}`))
     let send!: Promise<boolean>
     act(() => {
       send = result.current.send('请分析')
@@ -1608,6 +1696,7 @@ describe('chat flow', () => {
     const { result } = renderHook(() =>
       useChatController({ scope: 'private', id: agent.id, agent }, '你', vi.fn())
     )
+    await waitFor(() => expect(result.current.conversationId).toBe(`private:${agent.id}`))
     let send!: Promise<boolean>
     act(() => {
       send = result.current.send('请分析')
@@ -1743,6 +1832,7 @@ describe('chat flow', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() =>
       expect(api.chat.sendSpace).toHaveBeenCalledWith('space', '你好 @数据分析师', [], {
+        conversationId: 'space:space',
         model: 'deepseek-v4-flash',
         permission: 'chat',
       })
@@ -1924,7 +2014,9 @@ describe('chat flow', () => {
     const stopButton = await screen.findByRole('button', { name: '停止生成' })
     expect(stopButton).toBeEnabled()
     fireEvent.click(stopButton)
-    await waitFor(() => expect(stop).toHaveBeenCalledWith('private', agent.id))
+    await waitFor(() =>
+      expect(stop).toHaveBeenCalledWith('private', agent.id, `private:${agent.id}`)
+    )
     act(() =>
       notify({
         type: 'text:delta',
@@ -2158,7 +2250,9 @@ describe('chat flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '协作空间' }))
     await screen.findByRole('heading', { name: '协作' })
-    await waitFor(() => expect(api.chat.messages).toHaveBeenCalledWith('space', space.id))
+    await waitFor(() =>
+      expect(api.chat.messages).toHaveBeenCalledWith('space', space.id, `space:${space.id}`)
+    )
     act(() => notify({ scope: 'space', scopeId: space.id, agentName: second.name }))
     expect(await screen.findByText('第一位已完成')).toBeInTheDocument()
     expect(screen.getByRole('status').closest('.message')).toHaveTextContent('Developer')

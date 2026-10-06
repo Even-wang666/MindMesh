@@ -1,8 +1,10 @@
 # MindMesh 实施状态
 
-更新日期：2026-10-04
+更新日期：2026-10-06
 
 ## 已完成
+
+- Phase 2 Conversation Control：私聊/Space 对话新建、切换、重命名和归档；最后一轮重新生成、fresh Harness Session、原工作流快照重试、回答版本切换和复制。旧消息/Run/工具记录保留，模型上下文只使用最新代。详见 [Phase 2 实施记录](phase2-conversation-control.md)。Artifact 归属及成果捕获继续在 Phase 3 实施。
 
 - 下一阶段 PR 1A 基线与 PR 1B DSH `0.2.0-rc.2` 升级已完成，详见 `docs/migration/` 验收记录。
 - PR 2 Runtime V2：显式权限与 schema/DSH/Skill/Provider/workspace revision、冻结运行快照、新 namespace 的独立 Home 物化、逐 Session 历史恢复、七天磁盘保留和 Electron 单实例锁。详见 [Runtime V2 验收与迁移](../migration/runtime-v2-2026-10.md)。

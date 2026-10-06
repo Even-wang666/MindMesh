@@ -1,3 +1,4 @@
+import { ConversationControls, visibleGenerationMessages } from './ConversationControls'
 import { modelsForProvider } from './model-options'
 import { Composer } from './Composer'
 import { MessageList } from './MessageList'
@@ -71,6 +72,7 @@ export function App(): React.JSX.Element {
   const appRef = useRef<HTMLElement | null>(null)
   const [shares, setShares] = usePaneShares(appRef)
 
+  const [visibleGenerations, setVisibleGenerations] = useState<Record<string, string>>({})
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId)
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId)
   const chatTarget =
@@ -81,6 +83,16 @@ export function App(): React.JSX.Element {
         : null
   const {
     messages,
+    conversations,
+    conversationId,
+    conversationReady,
+    conversationError,
+    executions,
+    selectConversation,
+    createConversation,
+    renameConversation,
+    archiveConversation,
+    regenerate,
     busy,
     progress,
     streamingText,
@@ -90,6 +102,9 @@ export function App(): React.JSX.Element {
     send,
     stop,
   } = useChatController(chatTarget, profile.name, setRuntime)
+  useEffect(() => {
+    setVisibleGenerations({})
+  }, [conversationId])
 
   async function refresh(): Promise<void> {
     setRefreshing(true)
@@ -205,15 +220,40 @@ export function App(): React.JSX.Element {
                 </div>
               )
           )}
+          {conversationError && (
+            <p className="form-error" role="alert">
+              {conversationError}
+            </p>
+          )}
+          {chatTarget && (
+            <ConversationControls
+              key={conversationId || `${chatTarget.scope}:${chatTarget.id}`}
+              conversations={conversations}
+              conversationId={conversationId}
+              executions={executions}
+              messages={messages}
+              busy={busy}
+              onSelect={selectConversation}
+              onCreate={createConversation}
+              onRename={renameConversation}
+              onArchive={archiveConversation}
+              onRegenerate={regenerate}
+              onMessages={(next) => setVisibleGenerations(next)}
+            />
+          )}
           {view === 'chats' &&
-            (selectedAgent ? (
+            (selectedAgent && conversationReady ? (
               <ChatPanel
-                key={selectedAgent.id}
+                key={`${selectedAgent.id}:${conversationId}`}
                 agent={selectedAgent}
                 models={models}
-                messages={messages}
+                messages={visibleGenerationMessages(messages, executions, visibleGenerations)}
                 profile={profile}
                 busy={busy}
+                readOnly={
+                  !conversationId ||
+                  !!conversations.find((item) => item.id === conversationId)?.archivedAt
+                }
                 streamingText={streamingText}
                 streamingReasoning={streamingReasoning}
                 liveReplyIds={liveReplyIds}
@@ -232,15 +272,19 @@ export function App(): React.JSX.Element {
               <EmptyState onCreate={() => setAgentWizard(true)} />
             ))}
           {view === 'spaces' &&
-            (selectedSpace ? (
+            (selectedSpace && conversationReady ? (
               <SpacePanel
-                key={selectedSpace.id}
+                key={`${selectedSpace.id}:${conversationId}`}
                 space={selectedSpace}
                 agents={agents}
                 models={models}
-                messages={messages}
+                messages={visibleGenerationMessages(messages, executions, visibleGenerations)}
                 profile={profile}
                 busy={busy}
+                readOnly={
+                  !conversationId ||
+                  !!conversations.find((item) => item.id === conversationId)?.archivedAt
+                }
                 streamingText={streamingText}
                 streamingReasoning={streamingReasoning}
                 liveReplyIds={liveReplyIds}
@@ -598,6 +642,7 @@ function ChatPanel({
   messages,
   profile,
   busy,
+  readOnly,
   progress,
   streamingText,
   streamingReasoning,
@@ -613,6 +658,7 @@ function ChatPanel({
   messages: Message[]
   profile: UserProfile
   busy: boolean
+  readOnly: boolean
   progress?: string
   streamingText: string
   streamingReasoning: string
@@ -662,21 +708,23 @@ function ChatPanel({
         starters={['介绍一下你自己', '帮我梳理一个思路', '你能做些什么？']}
         onStarter={setDraft}
       />
-      <Composer
-        busy={busy}
-        canAttach={supportsImageInput(agent.provider, model)}
-        placeholder={`给 ${agent.name} 发送消息…`}
-        value={draft}
-        onChange={setDraft}
-        onSend={onSend}
-        onStop={onStop}
-        messages={messages}
-        provider={agent.provider}
-        model={model}
-        models={availableModels}
-        onModelChange={agent.provider === 'deepseek-official' ? setModel : undefined}
-        invocableSkills={invocableForAgent}
-      />
+      {!readOnly && (
+        <Composer
+          busy={busy}
+          canAttach={supportsImageInput(agent.provider, model)}
+          placeholder={`给 ${agent.name} 发送消息…`}
+          value={draft}
+          onChange={setDraft}
+          onSend={onSend}
+          onStop={onStop}
+          messages={messages}
+          provider={agent.provider}
+          model={model}
+          models={availableModels}
+          onModelChange={agent.provider === 'deepseek-official' ? setModel : undefined}
+          invocableSkills={invocableForAgent}
+        />
+      )}
     </div>
   )
 }
@@ -688,6 +736,7 @@ function SpacePanel({
   messages,
   profile,
   busy,
+  readOnly,
   progress,
   streamingText,
   streamingReasoning,
@@ -706,6 +755,7 @@ function SpacePanel({
   messages: Message[]
   profile: UserProfile
   busy: boolean
+  readOnly: boolean
   progress?: string
   streamingText: string
   streamingReasoning: string
@@ -834,21 +884,23 @@ function SpacePanel({
             starters={['先让每位成员给出一版方案', '统一背景信息后再开始讨论']}
             onStarter={setDraft}
           />
-          <Composer
-            busy={busy}
-            canAttach={canAttach}
-            placeholder="输入任务；可用 @ 选择部分成员…"
-            members={members}
-            value={draft}
-            onChange={setDraft}
-            onSend={sendWorkflow}
-            onStop={onStop}
-            messages={messages}
-            provider={routeAgent?.provider}
-            model={model}
-            models={availableModels}
-            onModelChange={canSelectModel ? setModel : undefined}
-          />
+          {!readOnly && (
+            <Composer
+              busy={busy}
+              canAttach={canAttach}
+              placeholder="输入任务；可用 @ 选择部分成员…"
+              members={members}
+              value={draft}
+              onChange={setDraft}
+              onSend={sendWorkflow}
+              onStop={onStop}
+              messages={messages}
+              provider={routeAgent?.provider}
+              model={model}
+              models={availableModels}
+              onModelChange={canSelectModel ? setModel : undefined}
+            />
+          )}
         </div>
         {drawerOpen && (
           <aside className="context-drawer">

@@ -6,6 +6,8 @@ import type {
   Agent,
   AgentSource,
   ChatImageAttachment,
+  Conversation,
+  Execution,
   CreateAgentInput,
   CreateSpaceInput,
   ExecutionStatus,
@@ -1092,8 +1094,8 @@ export class MindMeshDatabase {
       )
     // See updateSpace: the default conversation is titled after its owner.
     this.db
-      .prepare('UPDATE conversations SET title = ? WHERE id = ?')
-      .run(agent.name, this.conversationIdFor('private', id))
+      .prepare('UPDATE conversations SET title = ? WHERE id = ? AND title = ?')
+      .run(agent.name, this.conversationIdFor('private', id), existing.name)
     return agent
   }
 
@@ -1341,7 +1343,8 @@ export class MindMeshDatabase {
 
   updateSpace(id: string, input: CreateSpaceInput): Space {
     validateRecordId(id)
-    if (!this.getSpace(id)) throw new Error('协作空间不存在')
+    const existing = this.getSpace(id)
+    if (!existing) throw new Error('协作空间不存在')
     const normalized = normalizeSpaceInput(input)
     this.db.exec('BEGIN')
     try {
@@ -1364,8 +1367,8 @@ export class MindMeshDatabase {
       // Keep the default conversation's title in step with the space name; Phase 2
       // lists conversations by title, so a stale name would surface in the UI.
       this.db
-        .prepare('UPDATE conversations SET title = ? WHERE id = ?')
-        .run(normalized.name, this.conversationIdFor('space', id))
+        .prepare('UPDATE conversations SET title = ? WHERE id = ? AND title = ?')
+        .run(normalized.name, this.conversationIdFor('space', id), existing.name)
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -1437,8 +1440,9 @@ export class MindMeshDatabase {
   private listMessageRows(where: string, ...params: Array<string | number>): Message[] {
     return this.db
       .prepare(`
-      SELECT m.*, c.scope AS conversationScope, c.scopeId AS conversationScopeId
+      SELECT m.*, r.executionId, c.scope AS conversationScope, c.scopeId AS conversationScopeId
       FROM messages m JOIN conversations c ON c.id = m.conversationId
+      LEFT JOIN runs r ON r.responseMessageId = m.id
       ${where}
     `)
       .all(...params)
@@ -1614,8 +1618,10 @@ export class MindMeshDatabase {
   }
 
   addMessage(input: Omit<Message, 'id' | 'sequence' | 'createdAt'>): Message {
-    const conversationId = this.conversationIdFor(input.scope, input.scopeId)
-    this.ensureConversation(conversationId, input.scope, input.scopeId)
+    const conversationId =
+      input.conversationId ?? this.conversationIdFor(input.scope, input.scopeId)
+    if (input.conversationId) this.requireConversation(input.scope, input.scopeId, conversationId)
+    else this.ensureConversation(conversationId, input.scope, input.scopeId)
     const next = this.db
       .prepare(
         'SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM messages WHERE conversationId = ?'
@@ -1623,6 +1629,7 @@ export class MindMeshDatabase {
       .get(conversationId) as { sequence: number }
     const message: Message = {
       ...input,
+      conversationId,
       reasoning: input.reasoning ?? null,
       attachments: input.attachments ?? [],
       stopped: input.stopped ?? false,
@@ -1648,6 +1655,9 @@ export class MindMeshDatabase {
         message.sequence,
         message.createdAt
       )
+    this.db
+      .prepare('UPDATE conversations SET updatedAt = ? WHERE id = ?')
+      .run(message.createdAt, conversationId)
     return message
   }
 
@@ -1704,6 +1714,90 @@ export class MindMeshDatabase {
     this.db.close()
   }
 
+  listConversations(scope: Message['scope'], scopeId: string): Conversation[] {
+    if (scope !== 'private' && scope !== 'space') throw new Error('无效的对话范围')
+    if (!(scope === 'private' ? this.getAgent(scopeId) : this.getSpace(scopeId)))
+      throw new Error('对话所属对象不存在')
+    return this.db
+      .prepare(
+        'SELECT * FROM conversations WHERE scope = ? AND scopeId = ? ORDER BY updatedAt DESC, rowid DESC'
+      )
+      .all(scope, scopeId) as Conversation[]
+  }
+
+  requireConversation(scope: Message['scope'], scopeId: string, id?: string): Conversation {
+    const conversation = this.listConversations(scope, scopeId).find(
+      (item) => item.id === (id ?? this.conversationIdFor(scope, scopeId))
+    )
+    if (!conversation || conversation.archivedAt) throw new Error('对话不存在或已归档')
+    return conversation
+  }
+
+  getConversation(id: string): Conversation {
+    const row = this.db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as
+      | Conversation
+      | undefined
+    if (!row) throw new Error('对话不存在')
+    return row
+  }
+
+  createConversation(scope: Message['scope'], scopeId: string): Conversation {
+    this.listConversations(scope, scopeId)
+    const id = randomUUID()
+    this.ensureConversation(id, scope, scopeId, '新对话')
+    return this.getConversation(id)
+  }
+
+  renameConversation(id: string, title: string): Conversation {
+    if (typeof title !== 'string' || !title.trim() || title.trim().length > 200)
+      throw new Error('对话名称须为 1–200 个字符')
+    this.getConversation(id)
+    this.db
+      .prepare('UPDATE conversations SET title = ?, updatedAt = ? WHERE id = ?')
+      .run(title.trim(), new Date().toISOString(), id)
+    return this.getConversation(id)
+  }
+
+  archiveConversation(id: string): void {
+    this.getConversation(id)
+    this.db
+      .prepare('UPDATE conversations SET archivedAt = ?, updatedAt = ? WHERE id = ?')
+      .run(new Date().toISOString(), new Date().toISOString(), id)
+  }
+
+  executionConversationId(id: string): string {
+    const row = this.db.prepare('SELECT conversationId FROM executions WHERE id = ?').get(id) as
+      | { conversationId: string }
+      | undefined
+    if (!row) throw new Error('执行不存在')
+    return row.conversationId
+  }
+
+  listExecutions(conversationId: string): Execution[] {
+    this.getConversation(conversationId)
+    return this.db
+      .prepare(
+        'SELECT id, conversationId, triggerMessageId, status, generationIndex, regeneratedFromExecutionId FROM executions WHERE conversationId = ? ORDER BY rowid'
+      )
+      .all(conversationId) as Execution[]
+  }
+
+  /** Only latest generations enter model context; UI history retains every reply. */
+  listActiveMessages(conversationId: string): Message[] {
+    const executions = this.listExecutions(conversationId)
+    const latest = new Map<string, Execution>()
+    for (const execution of executions) {
+      if (
+        (latest.get(execution.triggerMessageId)?.generationIndex ?? 0) < execution.generationIndex
+      )
+        latest.set(execution.triggerMessageId, execution)
+    }
+    const active = new Set([...latest.values()].map((item) => item.id))
+    return this.listMessages(conversationId).filter(
+      (message) => !message.executionId || active.has(message.executionId)
+    )
+  }
+
   // ── Execution history (§4.3–4.5) ─────────────────────────────────────────
 
   /**
@@ -1715,18 +1809,23 @@ export class MindMeshDatabase {
     conversationId: string
     triggerMessageId: string
     workflowSnapshot?: SpaceWorkflowSnapshot
+    regeneratedFromExecutionId?: string
   }): void {
     this.db
       .prepare(`
-      INSERT INTO executions (id, conversationId, triggerMessageId, status, workflowSnapshot, startedAt)
-      VALUES (?, ?, ?, 'running', ?, ?)
+      INSERT INTO executions (id, conversationId, triggerMessageId, status, workflowSnapshot, startedAt, generationIndex, regeneratedFromExecutionId)
+      VALUES (?, ?, ?, 'running', ?, ?, ?, ?)
     `)
       .run(
         input.id,
         input.conversationId,
         input.triggerMessageId,
         input.workflowSnapshot ? JSON.stringify(input.workflowSnapshot) : null,
-        new Date().toISOString()
+        new Date().toISOString(),
+        this.listExecutions(input.conversationId)
+          .filter((item) => item.triggerMessageId === input.triggerMessageId)
+          .reduce((max, item) => Math.max(max, item.generationIndex), 0) + 1,
+        input.regeneratedFromExecutionId ?? null
       )
   }
 
@@ -1818,7 +1917,7 @@ export class MindMeshDatabase {
   }
 
   /** Derive the execution's state from its persisted runs, never from loop exit. */
-  finishExecution(id: string): void {
+  finishExecution(id: string, failed = false): void {
     const states = (
       this.db.prepare('SELECT status FROM runs WHERE executionId = ?').all(id) as Array<{
         status: RunStatus
@@ -1830,7 +1929,7 @@ export class MindMeshDatabase {
       ? 'stopped'
       : states.includes('interrupted')
         ? 'interrupted'
-        : states.includes('error') || !states.length
+        : failed || states.includes('error') || !states.length
           ? states.includes('completed')
             ? 'completed_with_errors'
             : 'error'

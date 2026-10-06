@@ -16,18 +16,22 @@ const teamsOnly = process.argv.includes('--teams')
 const pluginUi = process.argv.includes('--plugin-marketplace')
 const bundledPluginUi = process.argv.includes('--bundled-plugins')
 const pluginCatalogOnly = process.argv.includes('--plugin-catalog')
+const conversationControlLive = process.argv.includes('--conversation-control-live')
+const conversationControlOnly =
+  process.argv.includes('--conversation-control') || conversationControlLive
 const securityOnly =
   process.argv.includes('--security-only') ||
   agencyOnly ||
   teamsOnly ||
   pluginUi ||
   bundledPluginUi ||
-  pluginCatalogOnly
+  pluginCatalogOnly ||
+  conversationControlOnly
 const keepUserData = process.env.MINDMESH_E2E_KEEP_USER_DATA === '1'
 const key = process.env.DEEPSEEK_API_KEY
 const providerOverride = process.env.MINDMESH_E2E_PROVIDER
 const modelOverride = process.env.MINDMESH_E2E_MODEL
-if (!key && !securityOnly) throw new Error('请先设置 DEEPSEEK_API_KEY')
+if (!key && (!securityOnly || conversationControlLive)) throw new Error('请先设置 DEEPSEEK_API_KEY')
 if (Boolean(providerOverride) !== Boolean(modelOverride)) {
   throw new Error('MINDMESH_E2E_PROVIDER 与 MINDMESH_E2E_MODEL 必须同时设置')
 }
@@ -88,6 +92,7 @@ async function runRound(round) {
   const port = await freePort()
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
+  if (conversationControlOnly && !conversationControlLive) delete env.DEEPSEEK_API_KEY
   if (pluginUi || bundledPluginUi || process.env.MINDMESH_E2E_NO_EXTERNAL_PNPM === '1')
     env.PATH = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
   const args = [`--remote-debugging-port=${port}`, `--user-data-dir=${userData}`]
@@ -149,6 +154,117 @@ async function runRound(round) {
       } finally {
         if (duplicate.exitCode === null) duplicate.kill()
       }
+    }
+    if (conversationControlOnly) {
+      await until(() => evaluate('Boolean(document.querySelector(".chat-page textarea"))'))
+      const click = (text) =>
+        evaluate(
+          `Array.from(document.querySelectorAll('.conversation-controls button')).find(button => button.textContent.trim() === ${JSON.stringify(text)}).click()`
+        )
+      const send = async (text, expected = text) => {
+        await evaluate(`(() => {
+          const input = document.querySelector('.chat-page textarea')
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(text)})
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+        })()`)
+        await evaluate(
+          `Array.from(document.querySelectorAll('.chat-page button')).find(button => button.getAttribute('aria-label') === '发送').click()`
+        )
+        await until(() =>
+          evaluate(
+            `document.querySelector('.chat-page .message.agent .message-body')?.textContent.includes(${JSON.stringify(expected)})`
+          )
+        )
+      }
+      if (round === 2) {
+        assert.equal(
+          await evaluate(`(async () => {
+          const agent = (await window.mindmesh.agents.list())[0]
+          const previous = (await window.mindmesh.chat.conversations('private', agent.id)).find(item => item.title === 'Phase 2 accepted' && item.archivedAt)
+          return !!previous && (await window.mindmesh.chat.executions(previous.id)).length === 2 && (await window.mindmesh.chat.messages('private', agent.id, previous.id)).length === 3
+        })()`),
+          true
+        )
+      }
+      const originalId = await evaluate('document.querySelector("[aria-label=切换对话]").value')
+      await click('新对话')
+      await until(() =>
+        evaluate(
+          `document.querySelector('[aria-label="切换对话"]').value !== ${JSON.stringify(originalId)}`
+        )
+      )
+      const id = await evaluate('document.querySelector("[aria-label=切换对话]").value')
+      await send('Reply exactly with: Phase 2 isolated task', 'Phase 2 isolated task')
+      await click('重新生成最后一轮')
+      await until(() =>
+        evaluate('document.querySelector(".generation-controls")?.textContent.includes("2 / 2")')
+      )
+      assert.equal(
+        await evaluate(
+          `window.mindmesh.chat.executions(${JSON.stringify(id)}).then(items => items.length)`
+        ),
+        2
+      )
+      await evaluate('document.querySelector("[aria-label=上一回答版本]").click()')
+      await until(() =>
+        evaluate('document.querySelector(".generation-controls")?.textContent.includes("1 / 2")')
+      )
+      assert.equal(
+        await evaluate(
+          `window.mindmesh.chat.executions(${JSON.stringify(id)}).then(items => items.length)`
+        ),
+        2
+      )
+      await click('重命名')
+      await evaluate(`(() => {
+        const input = document.querySelector('[aria-label="对话名称"]')
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Phase 2 accepted')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })()`)
+      await click('保存名称')
+      await until(() =>
+        evaluate(
+          'document.querySelector("[aria-label=切换对话] option:checked")?.textContent === "Phase 2 accepted"'
+        )
+      )
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".chat-page .composer").getBoundingClientRect().bottom <= innerHeight'
+        ),
+        true
+      )
+      if (process.env.MINDMESH_E2E_SCREENSHOT) {
+        const screenshot = await client.call('Page.captureScreenshot', { format: 'png' })
+        writeFileSync(process.env.MINDMESH_E2E_SCREENSHOT, Buffer.from(screenshot.data, 'base64'))
+      }
+      await click('归档')
+      await until(() =>
+        evaluate(
+          `document.querySelector('[aria-label="切换对话"]').value === ${JSON.stringify(originalId)}`
+        )
+      )
+      await until(() => evaluate('document.querySelectorAll(".chat-page .message").length === 0'))
+      const spaceResult = await evaluate(`(async () => {
+        const space = (await window.mindmesh.spaces.list())[0]
+        const conversation = await window.mindmesh.chat.createConversation('space', space.id)
+        await window.mindmesh.chat.sendSpace(space.id, 'Phase 2 Space task', [], { conversationId: conversation.id })
+        await window.mindmesh.chat.regenerate(conversation.id)
+        return { memberCount: space.memberIds.length, executions: await window.mindmesh.chat.executions(conversation.id), messages: await window.mindmesh.chat.messages('space', space.id, conversation.id) }
+      })()`)
+      assert.deepEqual(
+        spaceResult.executions.map((item) => item.generationIndex),
+        [1, 2]
+      )
+      assert.ok(spaceResult.executions.every((item) => item.status === 'completed'))
+      assert.equal(spaceResult.messages.filter((item) => item.authorType === 'user').length, 1)
+      assert.equal(
+        spaceResult.messages.filter((item) => item.authorType === 'agent').length,
+        spaceResult.memberCount * 2
+      )
+      console.log(
+        'Electron Phase 2 new/switch/rename/archive, regeneration, preserved generations and Space IPC: OK'
+      )
+      return
     }
     if (securityOnly) {
       const policy = await evaluate(
