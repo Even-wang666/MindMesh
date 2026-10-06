@@ -99,6 +99,8 @@ export type Execution = {
 export type Message = {
   conversationId?: string
   executionId?: string
+  runId?: string
+  artifacts?: Artifact[]
   id: string
   scope: 'private' | 'space'
   scopeId: string
@@ -112,6 +114,19 @@ export type Message = {
   sequence: number
   createdAt: string
   toolCalls?: ToolCallRecord[]
+}
+
+export type FileChange = { path: string; type: 'generated_file' | 'modified_file' }
+export type Artifact = FileChange & {
+  id: string
+  executionId: string
+  conversationId: string
+  runId: string | null
+  agentId: string | null
+  agentName?: string | null
+  name: string
+  mimeType: string
+  createdAt: string
 }
 
 /** A persisted tool call, attached to its reply message for the audit trail. */
@@ -301,6 +316,7 @@ export type RuntimeEvent =
       text: string
       isError: boolean
       truncated: boolean
+      fileChanges?: FileChange[]
     })
   | (RuntimeEventIdentity & {
       type: 'tool:end'
@@ -359,6 +375,8 @@ export type MindMeshApi = {
     updateContext(id: string, context: string): Promise<Space>
   }
   chat: {
+    artifacts(conversationId: string): Promise<Artifact[]>
+    revealArtifact(id: string): Promise<void>
     conversations(scope: Message['scope'], scopeId: string): Promise<Conversation[]>
     createConversation(scope: Message['scope'], scopeId: string): Promise<Conversation>
     renameConversation(id: string, title: string): Promise<Conversation>

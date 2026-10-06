@@ -1,4 +1,5 @@
-import { ConversationControls, visibleGenerationMessages } from './ConversationControls'
+import { ExecutionOutputs } from './ArtifactList'
+import { ConversationControls, visibleGenerationItems } from './ConversationControls'
 import { modelsForProvider } from './model-options'
 import { Composer } from './Composer'
 import { MessageList } from './MessageList'
@@ -26,6 +27,7 @@ import {
 } from 'lucide-react'
 import type {
   Agent,
+  Artifact,
   CatalogItem,
   ChatImageAttachment,
   ChatRunOptions,
@@ -83,6 +85,7 @@ export function App(): React.JSX.Element {
         : null
   const {
     messages,
+    artifacts,
     conversations,
     conversationId,
     conversationReady,
@@ -247,7 +250,8 @@ export function App(): React.JSX.Element {
                 key={`${selectedAgent.id}:${conversationId}`}
                 agent={selectedAgent}
                 models={models}
-                messages={visibleGenerationMessages(messages, executions, visibleGenerations)}
+                artifacts={visibleGenerationItems(artifacts, executions, visibleGenerations)}
+                messages={visibleGenerationItems(messages, executions, visibleGenerations)}
                 profile={profile}
                 busy={busy}
                 readOnly={
@@ -278,7 +282,8 @@ export function App(): React.JSX.Element {
                 space={selectedSpace}
                 agents={agents}
                 models={models}
-                messages={visibleGenerationMessages(messages, executions, visibleGenerations)}
+                artifacts={visibleGenerationItems(artifacts, executions, visibleGenerations)}
+                messages={visibleGenerationItems(messages, executions, visibleGenerations)}
                 profile={profile}
                 busy={busy}
                 readOnly={
@@ -640,6 +645,7 @@ function ChatPanel({
   agent,
   models,
   messages,
+  artifacts,
   profile,
   busy,
   readOnly,
@@ -656,6 +662,7 @@ function ChatPanel({
   agent: Agent
   models: ModelOption[]
   messages: Message[]
+  artifacts: Artifact[]
   profile: UserProfile
   busy: boolean
   readOnly: boolean
@@ -696,6 +703,13 @@ function ChatPanel({
           查看详情 <ChevronRight size={15} />
         </button>
       </header>
+      <ExecutionOutputs
+        title="本轮成果"
+        artifacts={artifacts.filter(
+          (artifact) =>
+            !messages.some((message) => artifact.runId && message.runId === artifact.runId)
+        )}
+      />
       <MessageList
         messages={messages}
         profile={profile}
@@ -734,6 +748,7 @@ function SpacePanel({
   agents,
   models,
   messages,
+  artifacts,
   profile,
   busy,
   readOnly,
@@ -753,6 +768,7 @@ function SpacePanel({
   agents: Agent[]
   models: ModelOption[]
   messages: Message[]
+  artifacts: Artifact[]
   profile: UserProfile
   busy: boolean
   readOnly: boolean
@@ -863,6 +879,7 @@ function SpacePanel({
           </button>
         </div>
       </header>
+      <ExecutionOutputs artifacts={artifacts} />
       <div className="space-layout">
         <div className="space-chat">
           <div className="execution-indicator" aria-label="本次执行顺序">

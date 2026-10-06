@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { toolCallKey } from '../../shared/tool-display'
 import type {
   Agent,
+  Artifact,
   ChatImageAttachment,
   ChatProgress,
   ChatRunOptions,
@@ -33,6 +34,7 @@ export function useChatController(
   onRuntime: (runtime: RuntimeStatus) => void
 ): {
   messages: Message[]
+  artifacts: Artifact[]
   conversations: Conversation[]
   conversationId: string
   conversationReady: boolean
@@ -59,6 +61,7 @@ export function useChatController(
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selection, setSelection] = useState({ owner: '', id: '' })
   const [conversationError, setConversationError] = useState('')
+  const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [executions, setExecutions] = useState<Execution[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [busy, setBusy] = useState(false)
@@ -227,6 +230,7 @@ export function useChatController(
   useEffect(() => {
     setMessages([])
     setExecutions([])
+    setArtifacts([])
     setProgress(null)
     setStreamingText('')
     setStreamingReasoning('')
@@ -256,10 +260,31 @@ export function useChatController(
         if (active && revision === sendRevision.current)
           setConversationError('回答版本加载失败，请重新选择对话。')
       })
+    void window.mindmesh.chat
+      .artifacts(conversation)
+      .then((next) => {
+        if (active && revision === sendRevision.current) setArtifacts(next)
+      })
+      .catch(() => {
+        if (active && revision === sendRevision.current)
+          setConversationError('成果加载失败，请重新选择对话。')
+      })
     return () => {
       active = false
     }
   }, [conversation])
+
+  async function refreshOutputs(id: string): Promise<void> {
+    const results = await Promise.allSettled([
+      window.mindmesh.chat.executions(id),
+      window.mindmesh.chat.artifacts(id),
+    ])
+    if (conversationRef.current !== id) return
+    if (results[0].status === 'fulfilled') setExecutions(results[0].value)
+    if (results[1].status === 'fulfilled') setArtifacts(results[1].value)
+    if (results.some((item) => item.status === 'rejected'))
+      setConversationError('执行记录或成果加载失败，请重新选择对话。')
+  }
 
   async function send(
     content: string,
@@ -302,8 +327,7 @@ export function useChatController(
           : await window.mindmesh.chat.sendSpace(id, content.trim(), attachments, runOptions)
       if (conversationRef.current === requestConversation) {
         showLiveMessages(result, !requestRun.stopRequested)
-        const nextExecutions = await window.mindmesh.chat.executions(requestConversation)
-        if (conversationRef.current === requestConversation) setExecutions(nextExecutions)
+        await refreshOutputs(requestConversation)
         setStreamingText('')
         setStreamingReasoning('')
         setToolCalls([])
@@ -409,19 +433,20 @@ export function useChatController(
     setStreamingReasoning('')
     try {
       const next = await window.mindmesh.chat.regenerate(id)
-      const nextExecutions = await window.mindmesh.chat.executions(id)
+      await refreshOutputs(id)
       if (conversationRef.current === id) {
         showLiveMessages(next, !request.stopRequested)
-        setExecutions(nextExecutions)
       }
     } catch (error) {
       const saved = await Promise.allSettled([
         window.mindmesh.chat.messages(target.scope, target.id, id),
         window.mindmesh.chat.executions(id),
+        window.mindmesh.chat.artifacts(id),
       ])
       if (conversationRef.current === id) {
         if (saved[0].status === 'fulfilled') setMessages(saved[0].value)
         if (saved[1].status === 'fulfilled') setExecutions(saved[1].value)
+        if (saved[2].status === 'fulfilled') setArtifacts(saved[2].value)
       }
       throw error
     } finally {
@@ -448,6 +473,7 @@ export function useChatController(
     archiveConversation,
     regenerate,
     messages,
+    artifacts,
     busy,
     progress,
     streamingText,

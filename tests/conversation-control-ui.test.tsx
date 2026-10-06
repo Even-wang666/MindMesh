@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Conversation, Execution, Message, MindMeshApi } from '../src/shared/contracts'
 import {
   ConversationControls,
-  visibleGenerationMessages,
+  visibleGenerationItems,
 } from '../src/renderer/src/ConversationControls'
 import { MessageList } from '../src/renderer/src/MessageList'
 import { useChatController } from '../src/renderer/src/useChatController'
@@ -65,7 +65,7 @@ const conversations: Conversation[] = [
 
 describe('conversation controls', () => {
   it('retains reply content when version metadata is unavailable', () => {
-    expect(visibleGenerationMessages(messages, [], {}).map((m) => m.id)).toEqual(['u', 'e1', 'e2'])
+    expect(visibleGenerationItems(messages, [], {}).map((m) => m.id)).toEqual(['u', 'e1', 'e2'])
   })
   it('shows the latest generation and switches versions without execution', () => {
     const onRegenerate = vi.fn()
@@ -85,13 +85,10 @@ describe('conversation controls', () => {
         onMessages={onMessages}
       />
     )
-    expect(visibleGenerationMessages(messages, executions, {}).map((m) => m.id)).toEqual([
-      'u',
-      'e2',
-    ])
+    expect(visibleGenerationItems(messages, executions, {}).map((m) => m.id)).toEqual(['u', 'e2'])
     fireEvent.click(screen.getByLabelText('上一回答版本'))
     expect(onMessages).toHaveBeenCalledWith({ u: 'e1' })
-    expect(visibleGenerationMessages(messages, executions, { u: 'e1' }).map((m) => m.id)).toEqual([
+    expect(visibleGenerationItems(messages, executions, { u: 'e1' }).map((m) => m.id)).toEqual([
       'u',
       'e1',
     ])
@@ -152,6 +149,7 @@ describe('conversation controls', () => {
     }) => void
     let finishOld!: (value: Message[]) => void
     const api = {
+      artifacts: async () => [],
       conversations: vi.fn(async () => [...conversations, { ...conversations[0], id: 'other' }]),
       messages: vi.fn(async (_scope, _id, conversationId) =>
         conversationId === 'c'
@@ -186,6 +184,7 @@ describe('conversation controls', () => {
 
   it('refreshes partial persisted generations when regeneration rejects', async () => {
     const api = {
+      artifacts: async () => [],
       conversations: async () => conversations,
       messages: vi.fn().mockResolvedValueOnce(messages.slice(0, 2)).mockResolvedValue(messages),
       executions: vi
@@ -211,7 +210,7 @@ describe('conversation controls', () => {
     })
     expect(result.current.executions).toHaveLength(2)
     expect(
-      visibleGenerationMessages(result.current.messages, result.current.executions, {}).map(
+      visibleGenerationItems(result.current.messages, result.current.executions, {}).map(
         (m) => m.id
       )
     ).toEqual(['u', 'e2'])
@@ -220,6 +219,7 @@ describe('conversation controls', () => {
   it('ignores the version query started before a send', async () => {
     let finishVersions!: (value: Execution[]) => void
     const api = {
+      artifacts: async () => [],
       conversations: async () => conversations,
       messages: async () => [],
       executions: vi
@@ -251,7 +251,7 @@ describe('conversation controls', () => {
     })
     expect(result.current.executions).toEqual(executions)
     expect(
-      visibleGenerationMessages(result.current.messages, result.current.executions, {}).map(
+      visibleGenerationItems(result.current.messages, result.current.executions, {}).map(
         (m) => m.id
       )
     ).toEqual(['u', 'e2'])

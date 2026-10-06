@@ -26,6 +26,16 @@ beforeAll(async () => {
 })
 
 describe('preload chat boundary', () => {
+  it('lists artifacts and reveals recorded IDs over fixed IPC channels', async () => {
+    electron.invoke.mockClear()
+    await api.chat.artifacts('conversation')
+    await api.chat.revealArtifact('artifact-id')
+    expect(electron.invoke.mock.calls).toEqual([
+      ['chat:artifacts', 'conversation'],
+      ['chat:revealArtifact', 'artifact-id'],
+    ])
+    electron.invoke.mockClear()
+  })
   it('forwards structured plugin actions on fixed channels and unsubscribes progress', async () => {
     electron.invoke.mockClear()
     const request = {

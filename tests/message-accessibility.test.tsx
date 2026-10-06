@@ -14,6 +14,7 @@ describe('message announcements', () => {
       configurable: true,
       value: {
         chat: {
+          artifacts: async () => [],
           conversations: async () => [{ id: 'private:a', archivedAt: null }],
           executions: async () => [],
           messages: async () => [],

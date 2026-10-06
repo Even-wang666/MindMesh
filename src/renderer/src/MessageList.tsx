@@ -6,6 +6,7 @@ import type { ToolCallState } from './useChatController'
 import { toolStatusPhrase } from '../../shared/tool-display'
 import { Avatar } from './Ui'
 import { BrandLogo } from './BrandLogo'
+import { ArtifactList } from './ArtifactList'
 
 export function MessageList({
   messages,
@@ -142,6 +143,7 @@ export function MessageList({
             {message.content && (
               <MessageBody content={message.content} animated={liveReplyIds.has(message.id)} />
             )}
+            <ArtifactList artifacts={message.artifacts ?? []} title="本轮成果" />
             {message.authorType === 'agent' && message.content && (
               <button
                 className="ghost-button compact"

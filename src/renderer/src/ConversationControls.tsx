@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import type { Conversation, Execution, Message } from '../../shared/contracts'
 
-export function visibleGenerationMessages(
-  messages: Message[],
+export function visibleGenerationItems<T extends { executionId?: string }>(
+  messages: T[],
   executions: Execution[],
   selected: Record<string, string>
-): Message[] {
+): T[] {
   const active = new Map<string, Execution>()
   for (const execution of executions) {
     const current = active.get(execution.triggerMessageId)

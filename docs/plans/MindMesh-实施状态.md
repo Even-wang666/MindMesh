@@ -4,6 +4,8 @@
 
 ## 已完成
 
+- Phase 3 Run Outputs & Artifacts：schema 11 成果记录、write/edit 工具证据捕获、Run 成果与 Space 汇总、回答版本归属、安全文件夹定位及重启保留。详见 [Phase 3 实施记录](phase3-run-outputs-artifacts.md)。
+
 - Phase 2 Conversation Control：私聊/Space 对话新建、切换、重命名和归档；最后一轮重新生成、fresh Harness Session、原工作流快照重试、回答版本切换和复制。旧消息/Run/工具记录保留，模型上下文只使用最新代。详见 [Phase 2 实施记录](phase2-conversation-control.md)。Artifact 归属及成果捕获继续在 Phase 3 实施。
 
 - 下一阶段 PR 1A 基线与 PR 1B DSH `0.2.0-rc.2` 升级已完成，详见 `docs/migration/` 验收记录。

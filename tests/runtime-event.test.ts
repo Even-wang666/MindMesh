@@ -268,6 +268,58 @@ function sessionEvent(
 }
 
 describe('adapter event mapping', () => {
+  it('extracts mutation evidence from the matched native Session tool result only', async () => {
+    const { adapter, agent } = fixture()
+    const confirmation =
+      '<path>report.md</path>\n<type>file</type>\n<content>\nCreated file\n</content>'
+    sdk.events = [
+      sessionEvent('tool/call', { callId: 'same', name: 'write', arguments: '{}' }, 1),
+      sessionEvent('tool/call', { callId: 'same', name: 'read', arguments: '{}' }, 1),
+      sessionEvent(
+        'tool/result',
+        { message: { toolCallId: 'same', content: confirmation, isError: false } },
+        2
+      ),
+      sessionEvent(
+        'tool/result',
+        { message: { toolCallId: 'same', content: confirmation, isError: false } },
+        2
+      ),
+      sessionEvent('tool/call', { callId: 'bad', name: 'write', arguments: '{}' }, 3),
+      sessionEvent(
+        'tool/result',
+        { message: { toolCallId: 'bad', content: confirmation, isError: true } },
+        4
+      ),
+    ]
+    sdk.sessionIds = ['root', 'child', 'child', 'root', 'root', 'root']
+    const emitted: RuntimeEvent[] = []
+    await adapter.run(
+      agent,
+      'hi',
+      's',
+      undefined,
+      [],
+      adapter.prepareRun(agent, 'chat'),
+      false,
+      {
+        contextKey: 'c',
+        requestId: 'r1',
+        conversationId: 'private:a',
+        executionId: 'e1',
+        triggerMessageId: 'm1',
+        recoveryPrompt: () => '',
+      },
+      (event) => emitted.push(event)
+    )
+    const results = emitted.filter((event) => event.type === 'tool:output')
+    expect(results.map((event) => event.fileChanges)).toEqual([
+      [],
+      [{ path: 'report.md', type: 'generated_file' }],
+      [],
+    ])
+    await adapter.shutdownAll()
+  })
   it('routes conversationId as the renderer-facing value, not the contextKey', async () => {
     const { adapter, agent } = fixture()
     sdk.events = [

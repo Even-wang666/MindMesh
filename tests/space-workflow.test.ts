@@ -73,6 +73,7 @@ describe('sequential Space workflow', () => {
       })
       db.close()
       const raw = new DatabaseSync(path)
+      raw.exec('DROP TABLE artifacts')
       raw.exec('ALTER TABLE spaces DROP COLUMN executionMode')
       raw.prepare("UPDATE app_meta SET value = '9' WHERE key = 'schema_version'").run()
       raw.close()

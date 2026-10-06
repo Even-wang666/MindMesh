@@ -129,6 +129,7 @@ describe('every scope owns its default conversation', () => {
         const retainedId = legacy.conversationIdFor('private', legacy.listAgents()[0].id)
         legacy.close()
         const raw = new DatabaseSync(path)
+        raw.exec('DROP TABLE artifacts')
         raw.exec('ALTER TABLE spaces DROP COLUMN executionMode')
         raw.prepare('DELETE FROM conversations WHERE id IN (?, ?)').run(privateId, spaceId)
         raw
@@ -477,6 +478,7 @@ describe('runs carry authoritative usage columns', () => {
         agentSnapshot TEXT
       )`)
       raw.exec('DROP TABLE runs')
+      raw.exec('DROP TABLE artifacts')
       raw.exec('ALTER TABLE spaces DROP COLUMN executionMode')
       raw.exec('ALTER TABLE runs_v7 RENAME TO runs')
       raw.exec(

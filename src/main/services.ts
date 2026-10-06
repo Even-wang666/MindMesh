@@ -1,3 +1,4 @@
+import { artifactFile } from './artifacts'
 import { getAgentCapabilityHash } from './agent-capability'
 import type { WebContents } from 'electron'
 import type {
@@ -196,6 +197,12 @@ export class MindMeshServices {
     this.cleanupUnusedHomes()
   }
   updateSpaceContext = (id: string, context: string) => this.db.updateSpaceContext(id, context)
+  artifacts = (id: string) => this.db.listArtifacts(id)
+  artifactPath(id: string): string {
+    const artifact = this.db.getArtifact(id)
+    if (!artifact) throw new Error('成果不存在')
+    return artifactFile(artifact.path, '').path
+  }
   conversations = (scope: Message['scope'], scopeId: string) =>
     this.db.listConversations(scope, scopeId)
   createConversation = (scope: Message['scope'], scopeId: string) =>
@@ -1044,6 +1051,26 @@ export class MindMeshServices {
       // forwarding; a persistence hiccup must not interrupt the stream.
       try {
         this.persistRunEvent(requestId, event, toolCallIds)
+        if (
+          event.type === 'tool:output' &&
+          !event.isError &&
+          toolCallIds.has(toolCallKey(requestId, event.sessionId, event.callId))
+        ) {
+          for (const change of event.fileChanges ?? []) {
+            try {
+              this.db.addArtifact(
+                executionId,
+                {
+                  ...artifactFile(change.path, runtimeRequest.workspace),
+                  type: change.type,
+                },
+                requestId
+              )
+            } catch {
+              /* A missing or invalid file must not turn a successful model reply into a failure. */
+            }
+          }
+        }
       } catch {
         /* Best-effort persistence. */
       }

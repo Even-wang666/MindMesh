@@ -40,6 +40,8 @@ const api: MindMeshApi = {
     updateContext: (id, context) => ipcRenderer.invoke('spaces:updateContext', id, context),
   },
   chat: {
+    artifacts: (id) => ipcRenderer.invoke('chat:artifacts', id),
+    revealArtifact: (id) => ipcRenderer.invoke('chat:revealArtifact', id),
     conversations: (scope, id) => ipcRenderer.invoke('chat:conversations', scope, id),
     createConversation: (scope, id) => ipcRenderer.invoke('chat:createConversation', scope, id),
     renameConversation: (id, title) => ipcRenderer.invoke('chat:renameConversation', id, title),

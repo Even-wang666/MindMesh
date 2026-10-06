@@ -140,6 +140,8 @@ function mockApi(): MindMeshApi {
       updateContext: vi.fn(),
     },
     chat: {
+      artifacts: vi.fn(async () => []),
+      revealArtifact: vi.fn(),
       conversations: vi.fn(async (scope, scopeId) => [
         {
           id: `${scope}:${scopeId}`,

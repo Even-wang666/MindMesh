@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { existsSync, mkdirSync, realpathSync, statSync, readFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { MindMeshDatabase } from './database'
 import { DeepSeekHarnessAdapter } from './harness-adapter'
 import { ModelProviderSettings } from './model-provider-settings'
@@ -154,6 +154,10 @@ function registerIpc(
   ipcMain.handle('spaces:updateContext', (_event, id, context) =>
     current.updateSpaceContext(id, context)
   )
+  ipcMain.handle('chat:artifacts', (_event, id) => current.artifacts(id))
+  ipcMain.handle('chat:revealArtifact', (_event, id) => {
+    shell.showItemInFolder(current.artifactPath(id))
+  })
   ipcMain.handle('chat:conversations', (_event, scope, id) => current.conversations(scope, id))
   ipcMain.handle('chat:createConversation', (_event, scope, id) =>
     current.createConversation(scope, id)

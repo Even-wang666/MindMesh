@@ -1,3 +1,4 @@
+import { fileChangesFromToolResult } from './artifacts'
 import { JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
 import type { SessionEvent, TurnEndReason } from '@deepseek-ai/dsh-session'
 import type {
@@ -273,7 +274,7 @@ export class DeepSeekHarnessAdapter {
     // interrupted run strands these, and they must surface as aborted. The map
     // records the native session so the synthetic aborted tool:end keeps its
     // attribution instead of collapsing onto a shared placeholder.
-    const openToolCalls = new Map<string, { sessionId: string; callId: string }>()
+    const openToolCalls = new Map<string, { sessionId: string; callId: string; toolName: string }>()
     let terminalReason: RunEndReason | undefined
     let terminalError: { message: string; code?: string; status?: number } | undefined
     let result
@@ -389,6 +390,7 @@ export class DeepSeekHarnessAdapter {
               openToolCalls.set(toolCallKey(eventRequestId, eventSessionId, event.data.callId), {
                 sessionId: eventSessionId,
                 callId: event.data.callId,
+                toolName: event.data.name,
               })
               emit({
                 type: 'tool:start',
@@ -409,7 +411,9 @@ export class DeepSeekHarnessAdapter {
             // tool/result: a tool invocation completes
             if (event.type === 'tool/result' && onRuntimeEvent) {
               const message = event.data.message
-              openToolCalls.delete(toolCallKey(eventRequestId, eventSessionId, message.toolCallId))
+              const callKey = toolCallKey(eventRequestId, eventSessionId, message.toolCallId)
+              const call = openToolCalls.get(callKey)
+              openToolCalls.delete(callKey)
               const raw =
                 typeof message.content === 'string'
                   ? message.content
@@ -438,6 +442,12 @@ export class DeepSeekHarnessAdapter {
                 text: preview,
                 isError: Boolean(message.isError),
                 truncated,
+                fileChanges:
+                  message.isError || !call
+                    ? []
+                    : fileChangesFromToolResult(call.toolName, raw).filter(
+                        (file) => redactPluginDiagnostic(file.path, secrets) === file.path
+                      ),
               })
               emit({
                 type: 'tool:end',

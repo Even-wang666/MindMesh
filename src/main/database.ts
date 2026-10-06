@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import type {
   Agent,
   AgentSource,
+  Artifact,
   ChatImageAttachment,
   Conversation,
   Execution,
@@ -61,7 +62,7 @@ const RUN_USAGE_COLUMNS = [
  * Bump when adding a migration step below. The migrator refuses to run against a
  * database written by a newer build, so this must never be lowered.
  */
-const SCHEMA_VERSION = 10
+const SCHEMA_VERSION = 11
 
 function validateFieldLength(value: string, label: string, limit: number): void {
   if (value.length > limit)
@@ -343,6 +344,7 @@ export class MindMeshDatabase {
       if (version < 10)
         this.db.exec(`ALTER TABLE spaces ADD COLUMN executionMode
         TEXT NOT NULL DEFAULT 'sequential' CHECK(executionMode IN ('sequential', 'parallel'))`)
+      if (version < 11) this.createArtifactTable()
       this.db
         .prepare('INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)')
         .run('schema_version', String(SCHEMA_VERSION))
@@ -605,6 +607,26 @@ export class MindMeshDatabase {
     this.db.exec('ALTER TABLE messages_v2 RENAME TO messages')
     this.db.exec(`CREATE UNIQUE INDEX messages_conversation_sequence
       ON messages(conversationId, sequence)`)
+  }
+
+  private createArtifactTable(): void {
+    this.db.exec(`CREATE TABLE artifacts (
+      id TEXT PRIMARY KEY,
+      executionId TEXT NOT NULL REFERENCES executions(id) ON DELETE CASCADE,
+      conversationId TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      runId TEXT REFERENCES runs(id) ON DELETE SET NULL,
+      agentId TEXT,
+      type TEXT NOT NULL CHECK(type IN ('generated_file', 'modified_file')),
+      name TEXT NOT NULL,
+      path TEXT NOT NULL,
+      mimeType TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    )`)
+    this.db.exec(
+      "CREATE UNIQUE INDEX artifacts_owner_path ON artifacts(executionId, COALESCE(runId, ''), path)"
+    )
+    this.db.exec('CREATE INDEX artifacts_execution ON artifacts(executionId)')
+    this.db.exec('CREATE INDEX artifacts_conversation ON artifacts(conversationId)')
   }
 
   /**
@@ -1440,7 +1462,7 @@ export class MindMeshDatabase {
   private listMessageRows(where: string, ...params: Array<string | number>): Message[] {
     return this.db
       .prepare(`
-      SELECT m.*, r.executionId, c.scope AS conversationScope, c.scopeId AS conversationScopeId
+      SELECT m.*, r.id AS runId, r.executionId, c.scope AS conversationScope, c.scopeId AS conversationScopeId
       FROM messages m JOIN conversations c ON c.id = m.conversationId
       LEFT JOIN runs r ON r.responseMessageId = m.id
       ${where}
@@ -1453,7 +1475,11 @@ export class MindMeshDatabase {
   private attachToolCalls(messages: Message[]): Message[] {
     return messages.map((message) =>
       message.authorType !== 'user'
-        ? { ...message, toolCalls: this.listToolCallsForResponse(message.id) }
+        ? {
+            ...message,
+            toolCalls: this.listToolCallsForResponse(message.id),
+            artifacts: message.runId ? this.artifactRows('WHERE a.runId = ?', message.runId) : [],
+          }
         : message
     )
   }
@@ -1712,6 +1738,49 @@ export class MindMeshDatabase {
 
   close(): void {
     this.db.close()
+  }
+
+  private artifactRows(where: string, id: string): Artifact[] {
+    return this.db
+      .prepare(`SELECT a.*, COALESCE(CASE WHEN json_valid(r.agentSnapshot) THEN json_extract(r.agentSnapshot, '$.name') END, agent.name, a.agentId) AS agentName
+      FROM artifacts a LEFT JOIN runs r ON r.id = a.runId
+      LEFT JOIN agents agent ON agent.id = a.agentId
+      ${where} ORDER BY a.createdAt, a.rowid`)
+      .all(id) as Artifact[]
+  }
+
+  listArtifacts(conversationId: string): Artifact[] {
+    this.getConversation(conversationId)
+    return this.artifactRows('WHERE a.conversationId = ?', conversationId)
+  }
+
+  getArtifact(id: string): Artifact | undefined {
+    return this.artifactRows('WHERE a.id = ?', id)[0]
+  }
+
+  addArtifact(
+    executionId: string,
+    file: Pick<Artifact, 'path' | 'type' | 'name' | 'mimeType'>,
+    runId?: string
+  ): void {
+    const result = this.db
+      .prepare(`INSERT INTO artifacts (id, executionId, conversationId, runId, agentId, type, name, path, mimeType, createdAt)
+      SELECT ?, e.id, e.conversationId, r.id, r.agentId, ?, ?, ?, ?, ?
+      FROM executions e LEFT JOIN runs r ON r.id = ? AND r.executionId = e.id
+      WHERE e.id = ? AND (? IS NULL OR r.id IS NOT NULL)
+      ON CONFLICT DO UPDATE SET type = CASE WHEN artifacts.type = 'generated_file' THEN artifacts.type ELSE excluded.type END`)
+      .run(
+        randomUUID(),
+        file.type,
+        file.name,
+        file.path,
+        file.mimeType,
+        new Date().toISOString(),
+        runId ?? null,
+        executionId,
+        runId ?? null
+      )
+    if (!result.changes) throw new Error('成果所属 Execution 或 Run 不存在或不匹配')
   }
 
   listConversations(scope: Message['scope'], scopeId: string): Conversation[] {

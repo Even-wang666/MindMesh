@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -16,6 +16,7 @@ const teamsOnly = process.argv.includes('--teams')
 const pluginUi = process.argv.includes('--plugin-marketplace')
 const bundledPluginUi = process.argv.includes('--bundled-plugins')
 const pluginCatalogOnly = process.argv.includes('--plugin-catalog')
+const artifactsOnly = process.argv.includes('--artifacts')
 const conversationControlLive = process.argv.includes('--conversation-control-live')
 const conversationControlOnly =
   process.argv.includes('--conversation-control') || conversationControlLive
@@ -26,12 +27,14 @@ const securityOnly =
   pluginUi ||
   bundledPluginUi ||
   pluginCatalogOnly ||
-  conversationControlOnly
+  conversationControlOnly ||
+  artifactsOnly
 const keepUserData = process.env.MINDMESH_E2E_KEEP_USER_DATA === '1'
 const key = process.env.DEEPSEEK_API_KEY
 const providerOverride = process.env.MINDMESH_E2E_PROVIDER
 const modelOverride = process.env.MINDMESH_E2E_MODEL
-if (!key && (!securityOnly || conversationControlLive)) throw new Error('请先设置 DEEPSEEK_API_KEY')
+if (!key && (!securityOnly || conversationControlLive || artifactsOnly))
+  throw new Error('请先设置 DEEPSEEK_API_KEY')
 if (Boolean(providerOverride) !== Boolean(modelOverride)) {
   throw new Error('MINDMESH_E2E_PROVIDER 与 MINDMESH_E2E_MODEL 必须同时设置')
 }
@@ -154,6 +157,88 @@ async function runRound(round) {
       } finally {
         if (duplicate.exitCode === null) duplicate.kill()
       }
+    }
+    if (artifactsOnly) {
+      const outputDirectory = join(userData, 'outputs')
+      mkdirSync(outputDirectory, { recursive: true })
+      if (round === 1) {
+        await evaluate(
+          `window.mindmesh.settings.chooseWorkspace(${JSON.stringify(outputDirectory)})`
+        )
+        const saved = await evaluate(`(async () => {
+          const agent = (await window.mindmesh.agents.list())[0]
+          await window.mindmesh.agents.update(agent.id, { ...agent, tools: ['文件'] })
+          const conversation = await window.mindmesh.chat.createConversation('private', agent.id)
+          await window.mindmesh.chat.renameConversation(conversation.id, 'Artifact test')
+          const options = { conversationId: conversation.id, permission: 'workspace' }
+          await window.mindmesh.chat.sendPrivate(agent.id, 'Use the write tool to create phase3-report.md containing exactly PHASE3_ALPHA. Do not just describe a file. Reply briefly after using the tool.', [], options)
+          await window.mindmesh.chat.sendPrivate(agent.id, 'Use the edit tool to replace PHASE3_ALPHA with PHASE3_BETA in phase3-report.md. Reply briefly after using the tool.', [], options)
+          const privateArtifacts = await window.mindmesh.chat.artifacts(conversation.id)
+          const members = (await window.mindmesh.agents.list()).slice(0, 2)
+          for (const member of members) await window.mindmesh.agents.update(member.id, { ...member, tools: ['文件'] })
+          const space = await window.mindmesh.spaces.create({ name: 'Phase3 collaboration', description: '', context: '', memberIds: members.map(item => item.id) })
+          const spaceConversation = (await window.mindmesh.chat.conversations('space', space.id))[0]
+          const task = 'Use the write tool to create a file containing PHASE3_SPACE. ' + members[0].name + ' must write phase3-plan.md; ' + members[1].name + ' must write phase3-review.md. Each member writes only its own file. Reply briefly after using the tool.'
+          await window.mindmesh.chat.sendSpace(space.id, task, [], { conversationId: spaceConversation.id, permission: 'workspace' })
+          return { privateArtifacts, spaceArtifacts: await window.mindmesh.chat.artifacts(spaceConversation.id), messages: await window.mindmesh.chat.messages('private', agent.id, conversation.id) }
+        })()`)
+        assert.deepEqual(
+          saved.privateArtifacts.map((item) => item.type),
+          ['generated_file', 'modified_file']
+        )
+        assert.equal(new Set(saved.privateArtifacts.map((item) => item.runId)).size, 2)
+        assert.equal(saved.messages.filter((item) => item.artifacts?.length).length, 2)
+        assert.equal(saved.spaceArtifacts.length, 2)
+        assert.equal(new Set(saved.spaceArtifacts.map((item) => item.executionId)).size, 1)
+        assert.equal(new Set(saved.spaceArtifacts.map((item) => item.agentId)).size, 2)
+        assert.match(readFileSync(join(outputDirectory, 'phase3-report.md'), 'utf8'), /PHASE3_BETA/)
+      } else {
+        const retained = await evaluate(`(async () => {
+          const agent = (await window.mindmesh.agents.list())[0]
+          const conversation = (await window.mindmesh.chat.conversations('private', agent.id)).find(item => item.title === 'Artifact test')
+          return await window.mindmesh.chat.artifacts(conversation.id)
+        })()`)
+        assert.deepEqual(
+          retained.map((item) => item.type),
+          ['generated_file', 'modified_file']
+        )
+      }
+      await evaluate('setTimeout(() => location.reload(), 0)')
+      await until(() =>
+        evaluate('document.querySelectorAll(".chat-page .artifact-file").length === 2')
+      )
+      await evaluate('document.querySelector("[data-nav=spaces]").click()')
+      await until(() =>
+        evaluate(
+          'Boolean(Array.from(document.querySelectorAll(".object-row")).find(item => item.textContent.includes("Phase3 collaboration")))'
+        )
+      )
+      await evaluate(
+        'Array.from(document.querySelectorAll(".object-row")).find(item => item.textContent.includes("Phase3 collaboration")).click()'
+      )
+      await until(() =>
+        evaluate(
+          'document.querySelector(".execution-outputs summary")?.textContent.includes("2 项")'
+        )
+      )
+      assert.equal(
+        await evaluate('document.querySelectorAll(".space-page .artifact-file").length'),
+        4
+      )
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".space-page .composer").getBoundingClientRect().bottom <= innerHeight'
+        ),
+        true
+      )
+      if (process.env.MINDMESH_E2E_SCREENSHOT) {
+        const screenshot = await client.call('Page.captureScreenshot', { format: 'png' })
+        writeFileSync(process.env.MINDMESH_E2E_SCREENSHOT, Buffer.from(screenshot.data, 'base64'))
+      }
+      console.log(
+        `Electron Phase 3 real write/edit artifacts, Run outputs, Space aggregation and persistence round ${round}: OK`
+      )
+      return
     }
     if (conversationControlOnly) {
       await until(() => evaluate('Boolean(document.querySelector(".chat-page textarea"))'))
