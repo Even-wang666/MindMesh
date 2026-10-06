@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { toolCallKey } from '../../shared/tool-display'
 import type {
   Agent,
   ChatImageAttachment,
@@ -15,6 +16,7 @@ type ChatTarget = {
 } | null
 
 export type ToolCallState = {
+  key: string
   callId: string
   toolName: string
   displayName: string
@@ -48,6 +50,7 @@ export function useChatController(
   const [streamingText, setStreamingText] = useState('')
   const [streamingReasoning, setStreamingReasoning] = useState('')
   const [toolCalls, setToolCalls] = useState<ToolCallState[]>([])
+  const toolCallKeys = useRef(new Map<string, string>())
   const liveReplyIds = useRef(new Set<string>())
   const activeRun = useRef<{ scope: Message['scope']; id: string; stopRequested: boolean } | null>(
     null
@@ -92,11 +95,15 @@ export function useChatController(
         if (event.type !== 'run:end' && !isToolClose) return
       }
 
+      const nativeKey =
+        'callId' in event ? toolCallKey(event.requestId, event.sessionId, event.callId) : ''
+      const key = toolCallKeys.current.get(nativeKey)
       switch (event.type) {
         case 'run:start':
           // A new run begins with a clean tool slate; the previous run's tools
           // stay visible until then so a completed reply keeps its audit trail.
           setToolCalls([])
+          toolCallKeys.current.clear()
           break
         case 'text:delta':
           setStreamingText((current) => current + event.text)
@@ -104,10 +111,13 @@ export function useChatController(
         case 'reasoning:delta':
           setStreamingReasoning((current) => current + event.text)
           break
-        case 'tool:start':
+        case 'tool:start': {
+          const key = crypto.randomUUID()
+          toolCallKeys.current.set(nativeKey, key)
           setToolCalls((current) => [
             ...current,
             {
+              key,
               callId: event.callId,
               toolName: event.toolName,
               displayName: event.displayName,
@@ -117,19 +127,18 @@ export function useChatController(
             },
           ])
           break
+        }
         case 'tool:delta':
           setToolCalls((current) =>
             current.map((call) =>
-              call.callId === event.callId
-                ? { ...call, output: call.output + event.text }
-                : call
+              call.key === key ? { ...call, output: call.output + event.text } : call
             )
           )
           break
         case 'tool:output':
           setToolCalls((current) =>
             current.map((call) =>
-              call.callId === event.callId
+              call.key === key
                 ? {
                     ...call,
                     output: event.text,
@@ -143,11 +152,12 @@ export function useChatController(
         case 'tool:end':
           setToolCalls((current) =>
             current.map((call) =>
-              call.callId === event.callId && call.status === 'running'
+              call.key === key && call.status === 'running'
                 ? { ...call, status: event.aborted ? 'aborted' : call.status }
                 : call
             )
           )
+          toolCallKeys.current.delete(nativeKey)
           break
         case 'run:end':
           // Keep the tool audit trail until the next run starts or the target
@@ -169,6 +179,7 @@ export function useChatController(
     setStreamingText('')
     setStreamingReasoning('')
     setToolCalls([])
+    toolCallKeys.current.clear()
     liveReplyIds.current.clear()
     void window.mindmesh.chat.messages(target.scope, target.id).then((next) => {
       // A history read started before a send must not overwrite its pending message or result.

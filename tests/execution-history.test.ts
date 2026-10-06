@@ -25,7 +25,11 @@ function cleanup(): void {
     }
 }
 
-function rows(db: MindMeshDatabase, sql: string, ...params: Array<string | number>): Array<Record<string, unknown>> {
+function rows(
+  db: MindMeshDatabase,
+  sql: string,
+  ...params: Array<string | number>
+): Array<Record<string, unknown>> {
   const internal = (db as unknown as { db: DatabaseSync }).db
   return internal.prepare(sql).all(...params) as Array<Record<string, unknown>>
 }
@@ -72,7 +76,7 @@ describe('execution-history persistence', () => {
         content: '分析结果',
       })
       db.finishRun('r1', 'completed', reply.id)
-      db.finishExecution('e1', 'completed')
+      db.finishExecution('e1')
 
       const run = rows(db, 'SELECT * FROM runs WHERE id = ?', 'r1')[0]
       expect(run).toMatchObject({
@@ -128,12 +132,8 @@ describe('execution-history persistence', () => {
       // Simulate a crash: everything is still `running`.
       db.markInterruptedRecovery()
 
-      expect(rows(db, 'SELECT status FROM runs WHERE id = ?', 'r1')[0].status).toBe(
-        'interrupted'
-      )
-      expect(rows(db, 'SELECT status FROM tool_calls WHERE id = ?', 'c1')[0].status).toBe(
-        'aborted'
-      )
+      expect(rows(db, 'SELECT status FROM runs WHERE id = ?', 'r1')[0].status).toBe('interrupted')
+      expect(rows(db, 'SELECT status FROM tool_calls WHERE id = ?', 'c1')[0].status).toBe('aborted')
       expect(rows(db, 'SELECT status FROM executions WHERE id = ?', 'e1')[0].status).toBe(
         'interrupted'
       )
@@ -179,7 +179,7 @@ describe('execution-history persistence', () => {
         content: '分析结果',
       })
       db.finishRun('r1', 'completed', reply.id)
-      db.finishExecution('e1', 'completed')
+      db.finishExecution('e1')
 
       // Reopening the history returns the reply with its tool trail attached.
       const history = db.listMessages(conversationId)

@@ -20,7 +20,7 @@ import {
 import { RuntimeSupervisor, type RuntimeOwner } from './runtime-supervisor'
 import { conversationRuntimeKeyPrefix } from './database'
 import { redactPluginDiagnostic } from './plugins/plugin-diagnostics'
-import { toolDisplayName } from '../shared/tool-display'
+import { toolCallKey, toolDisplayName } from '../shared/tool-display'
 import { randomUUID } from 'node:crypto'
 import { RuntimeFailure, runtimeFailureDetail } from './runtime-errors'
 import type { PluginSetManager } from './plugins/plugin-set'
@@ -42,7 +42,23 @@ export function toolPreview(
   value: string,
   secrets: readonly string[] = []
 ): { text: string; truncated: boolean } {
-  const text = redactPluginDiagnostic(value, secrets)
+  let text = redactPluginDiagnostic(value, secrets)
+  // Headers may contain arrays (multiple Set-Cookie values) or nested objects.
+  // Use JSON's own traversal rather than extending a string-value-only regex.
+  try {
+    let changed = false
+    const structured = JSON.stringify(JSON.parse(value), (key, item) => {
+      if (/^(?:cookie|set-cookie)$/i.test(key)) {
+        changed = true
+        return '[REDACTED]'
+      }
+      return item
+    })
+    if (changed) text = redactPluginDiagnostic(structured, secrets)
+  } catch {
+    // Non-JSON tool output is handled by the text rules below.
+  }
+  text = text
     // Header form: `Cookie: a=b` / `Set-Cookie: a=b; HttpOnly`.
     .replace(/((?:cookie|set-cookie)\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]')
     // Structured / JSON form: `"Cookie":"a=b"` / `"set-cookie": "a=b"`.
@@ -257,7 +273,7 @@ export class DeepSeekHarnessAdapter {
     // interrupted run strands these, and they must surface as aborted. The map
     // records the native session so the synthetic aborted tool:end keeps its
     // attribution instead of collapsing onto a shared placeholder.
-    const openToolCalls = new Map<string, { sessionId: string }>()
+    const openToolCalls = new Map<string, { sessionId: string; callId: string }>()
     let terminalReason: RunEndReason | undefined
     let terminalError: { message: string; code?: string; status?: number } | undefined
     let result
@@ -370,7 +386,10 @@ export class DeepSeekHarnessAdapter {
 
             // tool/call: a tool invocation starts
             if (event.type === 'tool/call' && onRuntimeEvent) {
-              openToolCalls.set(event.data.callId, { sessionId: eventSessionId })
+              openToolCalls.set(toolCallKey(eventRequestId, eventSessionId, event.data.callId), {
+                sessionId: eventSessionId,
+                callId: event.data.callId,
+              })
               emit({
                 type: 'tool:start',
                 requestId: eventRequestId,
@@ -390,7 +409,7 @@ export class DeepSeekHarnessAdapter {
             // tool/result: a tool invocation completes
             if (event.type === 'tool/result' && onRuntimeEvent) {
               const message = event.data.message
-              openToolCalls.delete(message.toolCallId)
+              openToolCalls.delete(toolCallKey(eventRequestId, eventSessionId, message.toolCallId))
               const raw =
                 typeof message.content === 'string'
                   ? message.content
@@ -470,7 +489,10 @@ export class DeepSeekHarnessAdapter {
       // A native turn/end:error can arrive before any body text (e.g. AUTH/401
       // on the first request). The empty reply is the error itself, not a
       // protocol failure — preserve the terminal reason instead of masking it.
-      if (terminalReason !== 'error' && !(assistantTexts.at(-1) ?? result.finalResponse).trim())
+      if (
+        (!terminalReason || terminalReason === 'completed') &&
+        !(assistantTexts.at(-1) ?? result.finalResponse).trim()
+      )
         throw new RuntimeFailure('protocol')
       lease.sessions.add(result.sessionId)
     } catch (error) {
@@ -489,7 +511,7 @@ export class DeepSeekHarnessAdapter {
       // events never collide with wire events or with each other.
       if (onRuntimeEvent) {
         let syntheticSeq = -1
-        for (const [callId, { sessionId: ownerSessionId }] of openToolCalls) {
+        for (const { callId, sessionId: ownerSessionId } of openToolCalls.values()) {
           emit({
             type: 'tool:end',
             requestId: eventRequestId,

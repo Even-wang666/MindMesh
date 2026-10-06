@@ -41,3 +41,8 @@ export function toolStatusPhrase(toolName: string): string {
   // Labels are already verb phrases; the status line prefixes "正在".
   return `正在${label}`
 }
+
+/** Provider call IDs are only meaningful inside one run and native Session. */
+export function toolCallKey(requestId: string, sessionId: string, callId: string): string {
+  return JSON.stringify([requestId, sessionId, callId])
+}

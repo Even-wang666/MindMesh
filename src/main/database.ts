@@ -1105,9 +1105,7 @@ export class MindMeshDatabase {
         .prepare('SELECT id FROM conversations WHERE scope = ? AND scopeId = ?')
         .all('private', id) as Array<{ id: string }>
       const deleteConversation = this.db.prepare('DELETE FROM conversations WHERE id = ?')
-      const deleteSessions = this.db.prepare(
-        'DELETE FROM runtime_sessions WHERE contextKey LIKE ?'
-      )
+      const deleteSessions = this.db.prepare('DELETE FROM runtime_sessions WHERE contextKey LIKE ?')
       for (const conversation of conversations) {
         deleteSessions.run(conversationRuntimeKeyPattern(conversation.id))
         deleteConversation.run(conversation.id)
@@ -1370,9 +1368,7 @@ export class MindMeshDatabase {
         .prepare('SELECT id FROM conversations WHERE scope = ? AND scopeId = ?')
         .all('space', id) as Array<{ id: string }>
       const deleteConversation = this.db.prepare('DELETE FROM conversations WHERE id = ?')
-      const deleteSessions = this.db.prepare(
-        'DELETE FROM runtime_sessions WHERE contextKey LIKE ?'
-      )
+      const deleteSessions = this.db.prepare('DELETE FROM runtime_sessions WHERE contextKey LIKE ?')
       for (const conversation of conversations) {
         deleteSessions.run(conversationRuntimeKeyPattern(conversation.id))
         deleteConversation.run(conversation.id)
@@ -1426,7 +1422,7 @@ export class MindMeshDatabase {
   /** Attach each reply message's persisted tool calls for the audit trail. */
   private attachToolCalls(messages: Message[]): Message[] {
     return messages.map((message) =>
-      message.authorType === 'agent'
+      message.authorType !== 'user'
         ? { ...message, toolCalls: this.listToolCallsForResponse(message.id) }
         : message
     )
@@ -1785,8 +1781,24 @@ export class MindMeshDatabase {
       )
   }
 
-  /** Close an execution with its aggregated state. */
-  finishExecution(id: string, status: ExecutionStatus): void {
+  /** Derive the execution's state from its persisted runs, never from loop exit. */
+  finishExecution(id: string): void {
+    const states = (
+      this.db.prepare('SELECT status FROM runs WHERE executionId = ?').all(id) as Array<{
+        status: RunStatus
+      }>
+    ).map((row) => row.status)
+    // Shutdown may leave a run in flight. Startup recovery will interrupt it.
+    if (states.includes('running')) return
+    const status: ExecutionStatus = states.includes('stopped')
+      ? 'stopped'
+      : states.includes('interrupted')
+        ? 'interrupted'
+        : states.includes('error') || !states.length
+          ? states.includes('completed')
+            ? 'completed_with_errors'
+            : 'error'
+          : 'completed'
     this.db
       .prepare('UPDATE executions SET status = ?, endedAt = ? WHERE id = ?')
       .run(status, new Date().toISOString(), id)
@@ -1853,14 +1865,10 @@ export class MindMeshDatabase {
   markInterruptedRecovery(): void {
     const now = new Date().toISOString()
     this.db
-      .prepare(
-        "UPDATE runs SET status = 'interrupted', endedAt = ? WHERE status = 'running'"
-      )
+      .prepare("UPDATE runs SET status = 'interrupted', endedAt = ? WHERE status = 'running'")
       .run(now)
     this.db
-      .prepare(
-        "UPDATE tool_calls SET status = 'aborted', endedAt = ? WHERE status = 'running'"
-      )
+      .prepare("UPDATE tool_calls SET status = 'aborted', endedAt = ? WHERE status = 'running'")
       .run(now)
     this.db
       .prepare(

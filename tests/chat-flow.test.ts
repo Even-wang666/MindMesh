@@ -754,7 +754,9 @@ describe('session context', () => {
       const agent = db.listAgents()[0]
       await service.sendPrivate(agent.id, '分析图片', [image])
       expect(run.mock.calls[0][4]).toEqual([image])
-      expect(db.listMessages(db.conversationIdFor('private', agent.id))[0].attachments).toEqual([image])
+      expect(db.listMessages(db.conversationIdFor('private', agent.id))[0].attachments).toEqual([
+        image,
+      ])
 
       db.updateAgent(agent.id, { ...agent, model: 'deepseek-v3.2' })
       await expect(service.sendPrivate(agent.id, '再看一张', [image])).rejects.toThrow(
@@ -818,7 +820,9 @@ describe('session context', () => {
       const agent = db.listAgents()[0]
       const messages = await service.sendPrivate(agent.id, '问题')
       expect(messages.at(-1)).toMatchObject({ content: '最终回答', reasoning: '第一步\n\n第二步' })
-      expect(db.listMessages(db.conversationIdFor('private', agent.id)).at(-1)?.reasoning).toBe('第一步\n\n第二步')
+      expect(db.listMessages(db.conversationIdFor('private', agent.id)).at(-1)?.reasoning).toBe(
+        '第一步\n\n第二步'
+      )
     } finally {
       db.close()
     }
@@ -1294,16 +1298,17 @@ describe('session context', () => {
       expect(runs[0].firstOutputAt).toBeTruthy()
       expect(runs[0].responseMessageId).toBeTruthy()
 
-      const toolCalls = internal
-        .prepare('SELECT * FROM tool_calls')
-        .all() as Array<Record<string, unknown>>
+      const toolCalls = internal.prepare('SELECT * FROM tool_calls').all() as Array<
+        Record<string, unknown>
+      >
       expect(toolCalls).toHaveLength(1)
       expect(toolCalls[0]).toMatchObject({
-        id: 'c1',
+        id: expect.any(String),
         runId: runs[0].id,
         status: 'ok',
         outputPreview: '文件内容',
       })
+      expect(toolCalls[0].id).not.toBe('c1')
     } finally {
       db.close()
     }

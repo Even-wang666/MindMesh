@@ -32,6 +32,37 @@ export function MessageList({
 }): React.JSX.Element {
   const end = useRef<HTMLDivElement>(null)
   const hasScrolled = useRef(false)
+  const [announcement, setAnnouncement] = useState('')
+  const previous = useRef({
+    ids: new Set<string>(),
+    tools: new Map<string, ToolCallState['status']>(),
+    progress: undefined as string | undefined,
+  })
+  useEffect(() => {
+    const notices: string[] = []
+    // Initial history loading is silent; only newly persisted replies are read.
+    if (previous.current.ids.size) {
+      for (const message of messages) {
+        if (message.authorType !== 'user' && !previous.current.ids.has(message.id)) {
+          notices.push(
+            `${message.authorName}${message.stopped ? '，已停止' : ''}：${message.content}`
+          )
+        }
+      }
+    }
+    for (const call of toolCalls) {
+      if (previous.current.tools.get(call.key) !== call.status) {
+        notices.push(`${call.displayName}，${TOOL_STATUS_LABEL[call.status]}`)
+      }
+    }
+    if (progress && progress !== previous.current.progress) notices.push(`${progress} 正在思考`)
+    previous.current = {
+      ids: new Set(messages.map((message) => message.id)),
+      tools: new Map(toolCalls.map((call) => [call.key, call.status])),
+      progress,
+    }
+    if (notices.length) setAnnouncement(notices.join('。'))
+  }, [messages, toolCalls, progress])
   useLayoutEffect(() => {
     if (!end.current) return
     end.current.scrollIntoView({ behavior: hasScrolled.current ? 'smooth' : 'auto' })
@@ -58,9 +89,12 @@ export function MessageList({
       </div>
     )
   return (
-    <div className="messages">
+    <div className="messages" role="log" aria-live="polite" aria-relevant="additions text">
+      <span className="visually-hidden" aria-atomic="true" data-announcement>
+        {announcement}
+      </span>
       {messages.map((message) => (
-        <article key={message.id} className={`message ${message.authorType}`}>
+        <article key={message.id} className={`message ${message.authorType}`} aria-live="off">
           <Avatar
             name={message.authorType === 'user' ? profile.name : message.authorName}
             image={message.authorType === 'user' ? profile.avatar : null}
@@ -111,7 +145,7 @@ export function MessageList({
         </article>
       ))}
       {(progress || streamingText || streamingReasoning || toolCalls.length > 0) && (
-        <article className="message agent">
+        <article className="message agent" aria-live="off">
           <Avatar name={progress ?? '智能体'} />
           <div>
             <header>
@@ -121,7 +155,7 @@ export function MessageList({
             {toolCalls.length > 0 && (
               <ToolCards
                 calls={toolCalls.map((call) => ({
-                  id: call.callId,
+                  id: call.key,
                   displayName: call.displayName,
                   status: call.status,
                   output: call.output,
@@ -133,7 +167,7 @@ export function MessageList({
               <MessageBody content={streamingText} />
             ) : (
               !streamingReasoning && (
-                <div className="chat-progress" role="status">
+                <div className="chat-progress" role="status" aria-live="off">
                   <span className="chat-progress-dot" />
                   {runningTool ? toolStatusPhrase(runningTool.toolName) : '思考中'}…
                 </div>
