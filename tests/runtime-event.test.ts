@@ -154,6 +154,18 @@ describe('toolPreview', () => {
     expect(text).toContain('Set-Cookie: [REDACTED]')
   })
 
+  it('redacts JSON-form Cookie and Set-Cookie headers', () => {
+    const value =
+      '{"headers":{"Cookie":"session=abc123","Set-Cookie":"token=xyz; HttpOnly","Accept":"*/*"}}'
+    const { text } = toolPreview(value)
+    expect(text).not.toContain('abc123')
+    expect(text).not.toContain('xyz')
+    expect(text).toContain('"Cookie":"[REDACTED]"')
+    expect(text).toContain('"Set-Cookie":"[REDACTED]"')
+    // Unrelated headers are untouched.
+    expect(text).toContain('"Accept":"*/*"')
+  })
+
   it('redacts a configured provider secret passed in as a secret', () => {
     const { text } = toolPreview('Authorization: Bearer supersecretvalue', ['supersecretvalue'])
     expect(text).not.toContain('supersecretvalue')
@@ -473,6 +485,33 @@ describe('adapter event mapping', () => {
     )
     expect(result.endReason).toBe('error')
     expect(result.endError).toEqual({ message: 'rate limited', code: 'RATE_LIMIT', status: 429 })
+    await adapter.shutdownAll()
+  })
+
+  it('does not mask a body-less native error as a protocol failure', async () => {
+    const { adapter, agent } = fixture()
+    // The SDK returns empty text because the error struck before any body.
+    sdk.finalResponse = ''
+    sdk.events = [
+      sessionEvent(
+        'turn/end',
+        { reason: { kind: 'error', error: { message: 'auth failed', code: 'AUTH', status: 401 } } },
+        1
+      ),
+    ]
+    const result = await adapter.run(
+      agent,
+      'hi',
+      's',
+      undefined,
+      [],
+      adapter.prepareRun(agent, 'chat'),
+      true,
+      { contextKey: 'c', requestId: 'r1', conversationId: 'private:a', executionId: 'e1', triggerMessageId: 'm1', recoveryPrompt: () => '' }
+    )
+    // The terminal reason survives instead of being replaced by a protocol error.
+    expect(result.endReason).toBe('error')
+    expect(result.endError).toMatchObject({ message: 'auth failed', code: 'AUTH', status: 401 })
     await adapter.shutdownAll()
   })
 

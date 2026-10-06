@@ -260,6 +260,8 @@ export type RuntimeEvent =
   | (RuntimeEventIdentity & {
       type: 'error'
       message: string
+      code?: string
+      status?: number
     })
   | (RuntimeEventIdentity & {
       type: 'run:end'

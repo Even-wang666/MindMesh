@@ -1533,6 +1533,73 @@ describe('chat flow', () => {
     await send
   })
 
+  it('keeps the tool audit trail after run:end and clears it on the next run', async () => {
+    const api = mockApi()
+    let notify!: (event: RuntimeEvent) => void
+    let resolveSend!: (messages: Message[]) => void
+    api.chat.onRuntimeEvent = vi.fn((listener) => {
+      notify = listener
+      return () => undefined
+    })
+    api.chat.sendPrivate = vi.fn(
+      () =>
+        new Promise<Message[]>((resolve) => {
+          resolveSend = resolve
+        })
+    )
+    Object.defineProperty(window, 'mindmesh', { configurable: true, value: api })
+    const { result } = renderHook(() =>
+      useChatController({ scope: 'private', id: agent.id, agent }, '你', vi.fn())
+    )
+    let send!: Promise<boolean>
+    act(() => {
+      send = result.current.send('请分析')
+    })
+    const base = {
+      requestId: 'r',
+      sessionId: 's',
+      conversationId: `private:${agent.id}`,
+      agentId: agent.id,
+      executionId: 'e1',
+      triggerMessageId: 'm1',
+      time: 0,
+    }
+    act(() =>
+      notify({
+        ...base,
+        type: 'tool:start',
+        seq: 1,
+        callId: 'c1',
+        toolName: 'read',
+        displayName: '读取文件',
+      })
+    )
+    act(() =>
+      notify({
+        ...base,
+        type: 'tool:output',
+        seq: 2,
+        callId: 'c1',
+        text: 'ok',
+        isError: false,
+        truncated: false,
+      })
+    )
+    expect(result.current.toolCalls[0]).toMatchObject({ callId: 'c1', status: 'ok' })
+
+    // run:end must not clear the tools, so the finished reply keeps its audit trail.
+    act(() => notify({ ...base, type: 'run:end', reason: 'completed' }))
+    expect(result.current.toolCalls).toHaveLength(1)
+    expect(result.current.toolCalls[0]).toMatchObject({ callId: 'c1', status: 'ok' })
+
+    // The next run starts with a clean slate.
+    act(() => notify({ ...base, type: 'run:start', agentName: agent.name, time: 0 }))
+    expect(result.current.toolCalls).toEqual([])
+
+    await act(async () => resolveSend([]))
+    await send
+  })
+
   it('renders tool cards and an action status while a tool is running', async () => {
     const api = mockApi()
     let notify!: (event: RuntimeEvent) => void

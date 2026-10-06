@@ -93,6 +93,11 @@ export function useChatController(
       }
 
       switch (event.type) {
+        case 'run:start':
+          // A new run begins with a clean tool slate; the previous run's tools
+          // stay visible until then so a completed reply keeps its audit trail.
+          setToolCalls([])
+          break
         case 'text:delta':
           setStreamingText((current) => current + event.text)
           break
@@ -145,7 +150,8 @@ export function useChatController(
           )
           break
         case 'run:end':
-          setToolCalls([])
+          // Keep the tool audit trail until the next run starts or the target
+          // changes; clearing here would hide the terminal aborted/error state.
           break
       }
     })

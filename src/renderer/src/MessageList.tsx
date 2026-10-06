@@ -126,6 +126,13 @@ export function MessageList({
   )
 }
 
+const TOOL_STATUS_LABEL: Record<ToolCallState['status'], string> = {
+  running: '执行中',
+  ok: '已完成',
+  error: '失败',
+  aborted: '已中止',
+}
+
 function ToolCards({ calls }: { calls: ToolCallState[] }): React.JSX.Element {
   return (
     <div className="tool-cards">
@@ -142,6 +149,7 @@ function ToolCards({ calls }: { calls: ToolCallState[] }): React.JSX.Element {
                     : '⊘'}
             </span>
             <span className="tool-card-name">{call.displayName}</span>
+            <span className="visually-hidden">{TOOL_STATUS_LABEL[call.status]}</span>
             {call.truncated && <span className="tool-card-truncated">已截断</span>}
           </summary>
           {call.output && (

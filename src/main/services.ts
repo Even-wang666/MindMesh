@@ -30,6 +30,15 @@ import {
 
 const SHUTDOWN_TIMEOUT_MS = 15_000
 
+/** Extract the native error code/status so they can ride on the error event. */
+function errorCodeStatus(error: unknown): { code?: string; status?: number } {
+  const value = error && typeof error === 'object' ? (error as Record<string, unknown>) : {}
+  return {
+    ...(typeof value.code === 'string' ? { code: value.code } : {}),
+    ...(typeof value.status === 'number' ? { status: value.status } : {}),
+  }
+}
+
 /**
  * Collects RuntimeEvents and flushes them in batches to avoid high-frequency
  * IPC chatter while streaming.
@@ -361,13 +370,16 @@ export class MindMeshServices {
         authorName: 'MindMesh',
         content: `${agent.name} 回复失败：${runtimeFailureDetail(this.runtimeFailureKind)}`,
       })
+      const { code, status } = errorCodeStatus(error)
       this.emitRunError(
         requestId,
         privateConversation,
         agent.id,
         executionId,
         triggerMessage.id,
-        runtimeFailureDetail(this.runtimeFailureKind)
+        runtimeFailureDetail(this.runtimeFailureKind),
+        code,
+        status
       )
       this.emitRunEnd(requestId, privateConversation, agent.id, executionId, triggerMessage.id, 'error')
       return this.db.listMessages(privateConversation)
@@ -530,13 +542,16 @@ export class MindMeshServices {
           authorName: 'MindMesh',
           content: `${agent.name} 回复失败：${runtimeFailureDetail(this.runtimeFailureKind)}`,
         })
+        const { code, status } = errorCodeStatus(error)
         this.emitRunError(
           requestId,
           spaceConversation,
           agent.id,
           executionId,
           triggerMessage.id,
-          runtimeFailureDetail(this.runtimeFailureKind)
+          runtimeFailureDetail(this.runtimeFailureKind),
+          code,
+          status
         )
         this.emitRunEnd(requestId, spaceConversation, agent.id, executionId, triggerMessage.id, 'error')
         continue
@@ -884,7 +899,9 @@ export class MindMeshServices {
     agentId: string,
     executionId: string,
     triggerMessageId: string,
-    message: string
+    message: string,
+    code?: string,
+    status?: number
   ): void {
     this.eventBuffer.add({
       type: 'error',
@@ -894,6 +911,8 @@ export class MindMeshServices {
       executionId,
       triggerMessageId,
       message,
+      ...(code ? { code } : {}),
+      ...(status ? { status } : {}),
     })
     this.eventBuffer.flush()
   }

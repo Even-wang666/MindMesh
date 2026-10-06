@@ -43,7 +43,10 @@ export function toolPreview(
   secrets: readonly string[] = []
 ): { text: string; truncated: boolean } {
   const text = redactPluginDiagnostic(value, secrets)
+    // Header form: `Cookie: a=b` / `Set-Cookie: a=b; HttpOnly`.
     .replace(/((?:cookie|set-cookie)\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]')
+    // Structured / JSON form: `"Cookie":"a=b"` / `"set-cookie": "a=b"`.
+    .replace(/("(?:cookie|set-cookie)"\s*:\s*)"(?:\\.|[^"\\])*"/gi, '$1"[REDACTED]"')
   if (text.length <= MAX_TOOL_PREVIEW_CHARS) return { text, truncated: false }
   return { text: text.slice(0, MAX_TOOL_PREVIEW_CHARS), truncated: true }
 }
@@ -464,7 +467,10 @@ export class DeepSeekHarnessAdapter {
         reasoning.length = assistantTexts.length = trace.length = 0
         result = await invoke(runOptions.recoveryPrompt(), `session-${randomUUID()}`)
       }
-      if (!(assistantTexts.at(-1) ?? result.finalResponse).trim())
+      // A native turn/end:error can arrive before any body text (e.g. AUTH/401
+      // on the first request). The empty reply is the error itself, not a
+      // protocol failure — preserve the terminal reason instead of masking it.
+      if (terminalReason !== 'error' && !(assistantTexts.at(-1) ?? result.finalResponse).trim())
         throw new RuntimeFailure('protocol')
       lease.sessions.add(result.sessionId)
     } catch (error) {

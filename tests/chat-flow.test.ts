@@ -1193,6 +1193,11 @@ describe('session context', () => {
       expect(runtimeEvents.find((event) => event.type === 'run:end')).toMatchObject({
         reason: 'error',
       })
+      // The native code/status ride on the error event, not just a generic message.
+      expect(runtimeEvents.find((event) => event.type === 'error')).toMatchObject({
+        code: 'RATE_LIMIT',
+        status: 429,
+      })
     } finally {
       db.close()
     }
