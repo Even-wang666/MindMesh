@@ -8,8 +8,11 @@ import type {
   ChatImageAttachment,
   CreateAgentInput,
   CreateSpaceInput,
+  ExecutionStatus,
   Message,
+  RunStatus,
   Space,
+  ToolCallStatus,
   UserProfile,
 } from '../shared/contracts'
 import { DEFAULT_AGENT_MODEL } from '../shared/model-providers'
@@ -1666,6 +1669,195 @@ export class MindMeshDatabase {
 
   close(): void {
     this.db.close()
+  }
+
+  // ── Execution history (§4.3–4.5) ─────────────────────────────────────────
+
+  /**
+   * Persist the start of an execution. The id is minted by the caller and reused
+   * across every run, so the renderer's `executionId` matches the stored row.
+   */
+  createExecution(input: {
+    id: string
+    conversationId: string
+    triggerMessageId: string
+    workflowSnapshot?: string
+  }): void {
+    this.db
+      .prepare(`
+      INSERT INTO executions (id, conversationId, triggerMessageId, status, workflowSnapshot, startedAt)
+      VALUES (?, ?, ?, 'running', ?, ?)
+    `)
+      .run(
+        input.id,
+        input.conversationId,
+        input.triggerMessageId,
+        input.workflowSnapshot ?? null,
+        new Date().toISOString()
+      )
+  }
+
+  /**
+   * Persist the start of a run. `id` is the request id that already identifies
+   * the run on every runtime event, so the event stream and the stored row share
+   * one identity.
+   */
+  createRun(input: {
+    id: string
+    executionId: string
+    conversationId: string
+    triggerMessageId: string
+    agentId: string
+    provider: string
+    model: string
+    permission: string
+    agentSnapshot?: string
+  }): void {
+    this.db
+      .prepare(`
+      INSERT INTO runs (id, executionId, conversationId, triggerMessageId, agentId, provider, model, permission, status, startedAt, agentSnapshot)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)
+    `)
+      .run(
+        input.id,
+        input.executionId,
+        input.conversationId,
+        input.triggerMessageId,
+        input.agentId,
+        input.provider,
+        input.model,
+        input.permission,
+        new Date().toISOString(),
+        input.agentSnapshot ?? null
+      )
+  }
+
+  /** Mark the first body output of a run, once. */
+  markRunFirstOutput(id: string): void {
+    this.db
+      .prepare('UPDATE runs SET firstOutputAt = COALESCE(firstOutputAt, ?) WHERE id = ?')
+      .run(new Date().toISOString(), id)
+  }
+
+  /** Close a run with its terminal state and, on success, the reply message id. */
+  finishRun(id: string, status: RunStatus, responseMessageId?: string): void {
+    this.db
+      .prepare('UPDATE runs SET status = ?, responseMessageId = ?, endedAt = ? WHERE id = ?')
+      .run(status, responseMessageId ?? null, new Date().toISOString(), id)
+  }
+
+  /** Accumulate the per-request usage onto the run's authoritative totals. */
+  accumulateRunUsage(
+    id: string,
+    usage: {
+      inputTokens?: number
+      outputTokens?: number
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
+    }
+  ): void {
+    this.db
+      .prepare(`
+      UPDATE runs SET
+        inputTokens = COALESCE(inputTokens, 0) + ?,
+        outputTokens = COALESCE(outputTokens, 0) + ?,
+        cacheReadTokens = COALESCE(cacheReadTokens, 0) + ?,
+        cacheWriteTokens = COALESCE(cacheWriteTokens, 0) + ?
+      WHERE id = ?
+    `)
+      .run(
+        usage.inputTokens ?? 0,
+        usage.outputTokens ?? 0,
+        usage.cacheReadTokens ?? 0,
+        usage.cacheWriteTokens ?? 0,
+        id
+      )
+  }
+
+  /** Close an execution with its aggregated state. */
+  finishExecution(id: string, status: ExecutionStatus): void {
+    this.db
+      .prepare('UPDATE executions SET status = ?, endedAt = ? WHERE id = ?')
+      .run(status, new Date().toISOString(), id)
+  }
+
+  /** Persist the start of a tool call, returning its per-run sequence. */
+  addToolCall(input: {
+    id: string
+    runId: string
+    toolName: string
+    displayName?: string
+  }): number {
+    const next = this.db
+      .prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM tool_calls WHERE runId = ?')
+      .get(input.runId) as { sequence: number }
+    this.db
+      .prepare(`
+      INSERT INTO tool_calls (id, runId, sequence, toolName, displayName, status, startedAt)
+      VALUES (?, ?, ?, ?, ?, 'running', ?)
+    `)
+      .run(
+        input.id,
+        input.runId,
+        next.sequence,
+        input.toolName,
+        input.displayName ?? null,
+        new Date().toISOString()
+      )
+    return next.sequence
+  }
+
+  /** Close a tool call with its terminal state and bounded previews. */
+  finishToolCall(input: {
+    id: string
+    status: ToolCallStatus
+    outputPreview?: string
+    errorPreview?: string
+  }): void {
+    this.db
+      .prepare(`
+      UPDATE tool_calls SET
+        status = ?,
+        outputPreview = ?,
+        errorPreview = ?,
+        endedAt = ?,
+        elapsedMs = CAST((julianday(?) - julianday(startedAt)) * 86400000 AS INTEGER)
+      WHERE id = ?
+    `)
+      .run(
+        input.status,
+        input.outputPreview ?? null,
+        input.errorPreview ?? null,
+        new Date().toISOString(),
+        new Date().toISOString(),
+        input.id
+      )
+  }
+
+  /**
+   * Startup recovery: a crash leaves runs and executions stuck in `running`.
+   * Runs become `interrupted`; their stranded running tool calls become
+   * `aborted`; and executions with no live run become `interrupted`.
+   */
+  markInterruptedRecovery(): void {
+    const now = new Date().toISOString()
+    this.db
+      .prepare(
+        "UPDATE runs SET status = 'interrupted', endedAt = ? WHERE status = 'running'"
+      )
+      .run(now)
+    this.db
+      .prepare(
+        "UPDATE tool_calls SET status = 'aborted', endedAt = ? WHERE status = 'running'"
+      )
+      .run(now)
+    this.db
+      .prepare(
+        `UPDATE executions SET status = 'interrupted', endedAt = ?
+         WHERE status = 'running'
+           AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.executionId = executions.id AND runs.status = 'running')`
+      )
+      .run(now)
   }
 }
 

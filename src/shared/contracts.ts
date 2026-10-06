@@ -156,6 +156,23 @@ export type RunEndReason =
   | 'interrupted'
 
 /**
+ * Persisted run/execution/tool-call states (§4.3–4.5). A single run is only a
+ * success or failure; `completed_with_errors` is an Execution-level aggregation
+ * that has no run counterpart.
+ */
+export type ExecutionStatus =
+  | 'running'
+  | 'completed'
+  | 'completed_with_errors'
+  | 'stopped'
+  | 'error'
+  | 'interrupted'
+
+export type RunStatus = 'running' | 'completed' | 'stopped' | 'error' | 'interrupted'
+
+export type ToolCallStatus = 'running' | 'ok' | 'error' | 'aborted'
+
+/**
  * The runtime event vocabulary surfaced to the renderer.
  *
  * Identity fields, in descending order of authority (spike §6, v9 review):

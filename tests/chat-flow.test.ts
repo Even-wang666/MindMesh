@@ -2,6 +2,7 @@ import { getAgentCapabilityHash } from '../src/main/agent-capability'
 import { mockHarness, mockProviderSettings } from './service-mocks'
 import { describe, expect, it, vi } from 'vitest'
 import type { WebContents } from 'electron'
+import { DatabaseSync } from 'node:sqlite'
 import { MindMeshDatabase, runtimeContextKey } from '../src/main/database'
 import { MindMeshServices } from '../src/main/services'
 import {
@@ -1197,6 +1198,111 @@ describe('session context', () => {
       expect(runtimeEvents.find((event) => event.type === 'error')).toMatchObject({
         code: 'RATE_LIMIT',
         status: 429,
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('persists the execution, run and tool calls across a private send', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const agent = db.listAgents()[0]
+    const conversationId = db.conversationIdFor('private', agent.id)
+    const run = vi.fn(
+      async (
+        _agent,
+        _prompt,
+        _id,
+        onText: (text: string) => void,
+        _attachments,
+        _request,
+        _fresh,
+        _runOptions,
+        onRuntimeEvent?: (event: RuntimeEvent) => void
+      ) => {
+        const base = {
+          requestId: 'r1',
+          sessionId: 's',
+          conversationId,
+          agentId: agent.id,
+          executionId: 'e1',
+          triggerMessageId: 'm1',
+          time: 0,
+        }
+        onText('分析结果')
+        onRuntimeEvent?.({
+          ...base,
+          type: 'text:delta',
+          seq: 1,
+          text: '分析结果',
+        })
+        onRuntimeEvent?.({
+          ...base,
+          type: 'tool:start',
+          seq: 2,
+          callId: 'c1',
+          toolName: 'read',
+          displayName: '读取文件',
+        })
+        onRuntimeEvent?.({
+          ...base,
+          type: 'tool:output',
+          seq: 3,
+          callId: 'c1',
+          text: '文件内容',
+          isError: false,
+          truncated: false,
+        })
+        onRuntimeEvent?.({
+          ...base,
+          type: 'usage',
+          seq: 4,
+          inputTokens: 50,
+          outputTokens: 10,
+          cacheReadTokens: 4,
+          cacheWriteTokens: 1,
+        })
+        return { text: '分析结果', sessionId: 'saved-session' }
+      }
+    )
+    const service = new MindMeshServices(
+      db,
+      mockHarness({ run }),
+      mockProviderSettings(),
+      () => undefined
+    )
+    try {
+      await service.sendPrivate(agent.id, '请分析')
+
+      const internal = (db as unknown as { db: DatabaseSync }).db
+      const executions = internal.prepare('SELECT * FROM executions').all() as Array<
+        Record<string, unknown>
+      >
+      expect(executions).toHaveLength(1)
+      expect(executions[0]).toMatchObject({ status: 'completed' })
+
+      const runs = internal.prepare('SELECT * FROM runs').all() as Array<Record<string, unknown>>
+      expect(runs).toHaveLength(1)
+      expect(runs[0]).toMatchObject({
+        status: 'completed',
+        agentId: agent.id,
+        inputTokens: 50,
+        outputTokens: 10,
+        cacheReadTokens: 4,
+        cacheWriteTokens: 1,
+      })
+      expect(runs[0].firstOutputAt).toBeTruthy()
+      expect(runs[0].responseMessageId).toBeTruthy()
+
+      const toolCalls = internal
+        .prepare('SELECT * FROM tool_calls')
+        .all() as Array<Record<string, unknown>>
+      expect(toolCalls).toHaveLength(1)
+      expect(toolCalls[0]).toMatchObject({
+        id: 'c1',
+        runId: runs[0].id,
+        status: 'ok',
+        outputPreview: '文件内容',
       })
     } finally {
       db.close()

@@ -6,10 +6,12 @@ import type {
   ChatRunOptions,
   CreateAgentInput,
   CreateSpaceInput,
+  ExecutionStatus,
   Message,
   ModelProviderId,
   ModelProviderStatus,
   RunEndReason,
+  RunStatus,
   RuntimeEvent,
   RuntimeStatus,
   SaveModelProviderInput,
@@ -36,6 +38,22 @@ function errorCodeStatus(error: unknown): { code?: string; status?: number } {
   return {
     ...(typeof value.code === 'string' ? { code: value.code } : {}),
     ...(typeof value.status === 'number' ? { status: value.status } : {}),
+  }
+}
+
+/** Map a run's terminal reason onto its persisted status. */
+function runStatusFromEndReason(reason: RunEndReason): RunStatus {
+  switch (reason) {
+    case 'completed':
+      return 'completed'
+    case 'stopped':
+      return 'stopped'
+    case 'interrupted':
+      return 'interrupted'
+    case 'error':
+    case 'blocked':
+    case 'max-tokens':
+      return 'error'
   }
 }
 
@@ -153,6 +171,9 @@ export class MindMeshServices {
     this.eventBuffer.onFlush((events) => {
       this.renderer()?.send('chat:runtimeEvent', events)
     })
+    // Startup recovery: a crash leaves runs/executions/tool_calls stuck in
+    // `running`; fold them into `interrupted`/`aborted` before serving history.
+    this.db.markInterruptedRecovery()
   }
 
   listAgents = () => this.db.listAgents()
@@ -325,6 +346,11 @@ export class MindMeshServices {
     // renderer and, later, the runs/executions tables can join them.
     const executionId = crypto.randomUUID()
     const requestId = crypto.randomUUID()
+    this.db.createExecution({
+      id: executionId,
+      conversationId: privateConversation,
+      triggerMessageId: triggerMessage.id,
+    })
     const history = this.db.listMessages(privateConversation).slice(-31, -1)
     this.emitProgress('private', agentId, sessionAgent.name)
     let result
@@ -358,6 +384,8 @@ export class MindMeshServices {
             stopped: true,
           })
         }
+        this.db.finishRun(requestId, 'stopped')
+        this.db.finishExecution(executionId, 'stopped')
         this.emitRunEnd(requestId, privateConversation, agent.id, executionId, triggerMessage.id, 'stopped')
         void this.refreshDeepSeekBalance()
         return this.db.listMessages(privateConversation)
@@ -370,6 +398,8 @@ export class MindMeshServices {
         authorName: 'MindMesh',
         content: `${agent.name} 回复失败：${runtimeFailureDetail(this.runtimeFailureKind)}`,
       })
+      this.db.finishRun(requestId, 'error')
+      this.db.finishExecution(executionId, 'error')
       const { code, status } = errorCodeStatus(error)
       this.emitRunError(
         requestId,
@@ -400,6 +430,8 @@ export class MindMeshServices {
       0,
       session
     )
+    this.db.finishRun(requestId, runStatusFromEndReason(result.endReason ?? 'completed'), reply.id)
+    this.db.finishExecution(executionId, 'completed')
     this.emitRunEnd(
       requestId,
       privateConversation,
@@ -473,6 +505,15 @@ export class MindMeshServices {
       })
       return this.db.listMessages(spaceConversation)
     }
+    this.db.createExecution({
+      id: executionId,
+      conversationId: spaceConversation,
+      triggerMessageId: triggerMessage.id,
+    })
+    // Track per-run outcomes to aggregate the execution status after the loop.
+    let sawSuccess = false
+    let sawError = false
+    let sawStopped = false
 
     for (const runAgent of runAgents) {
       if (this.shuttingDown || !this.db.getSpace(spaceId)) break
@@ -530,6 +571,8 @@ export class MindMeshServices {
               session
             )
           }
+          this.db.finishRun(requestId, 'stopped')
+          sawStopped = true
           this.emitRunEnd(requestId, spaceConversation, agent.id, executionId, triggerMessage.id, 'stopped')
           void this.refreshDeepSeekBalance()
           break
@@ -542,6 +585,8 @@ export class MindMeshServices {
           authorName: 'MindMesh',
           content: `${agent.name} 回复失败：${runtimeFailureDetail(this.runtimeFailureKind)}`,
         })
+        this.db.finishRun(requestId, 'error')
+        sawError = true
         const { code, status } = errorCodeStatus(error)
         this.emitRunError(
           requestId,
@@ -573,6 +618,8 @@ export class MindMeshServices {
         reply.sequence,
         session
       )
+      this.db.finishRun(requestId, runStatusFromEndReason(result.endReason ?? 'completed'), reply.id)
+      sawSuccess = true
       this.emitRunEnd(
         requestId,
         spaceConversation,
@@ -584,6 +631,16 @@ export class MindMeshServices {
       )
       void this.refreshDeepSeekBalance()
     }
+    // Aggregate the execution: stopped wins, then partial success, then pure
+    // failure, and only an all-success loop is `completed`.
+    const executionStatus: ExecutionStatus = sawStopped
+      ? 'stopped'
+      : sawError
+        ? sawSuccess
+          ? 'completed_with_errors'
+          : 'error'
+        : 'completed'
+    this.db.finishExecution(executionId, executionStatus)
     return this.shuttingDown ? [] : this.db.listMessages(spaceConversation)
   }
 
@@ -754,6 +811,19 @@ export class MindMeshServices {
     // rebuilding this inline once drifted from prepareSession and stranded leases.
     const contextKey = runtimeContextKey(this.db.conversationIdFor(scope, scopeId), agent.id)
     const conversationId = this.db.conversationIdFor(scope, scopeId)
+    // Persist the run before its first event so tool calls and usage have a row
+    // to attach to, and the run's identity matches the event stream's requestId.
+    this.db.createRun({
+      id: requestId,
+      executionId,
+      conversationId,
+      triggerMessageId,
+      agentId: agent.id,
+      provider: agent.provider,
+      model: agent.model,
+      permission: runtimeRequest.identity.permission,
+      agentSnapshot: JSON.stringify({ name: agent.name, role: agent.role }),
+    })
     this.eventBuffer.add({
       type: 'run:start',
       requestId,
@@ -800,6 +870,13 @@ export class MindMeshServices {
       else streamed += text
     }
     const onRuntimeEvent = (event: RuntimeEvent): void => {
+      // Persist tool calls, usage and first-output separately from the IPC
+      // forwarding; a persistence hiccup must not interrupt the stream.
+      try {
+        this.persistRunEvent(requestId, event)
+      } catch {
+        /* Best-effort persistence. */
+      }
       if (stopRequested) {
         // A confirmed stop suppresses further body text, but the adapter's
         // stranded-tool aborts must still reach the renderer or its tool cards
@@ -915,6 +992,41 @@ export class MindMeshServices {
       ...(status ? { status } : {}),
     })
     this.eventBuffer.flush()
+  }
+
+  /**
+   * Fold a runtime event into the persisted run/tool_call rows. Only the
+   * storage-relevant events are handled; text/reasoning deltas are ignored here
+   * because their content is already persisted with the reply message.
+   */
+  private persistRunEvent(requestId: string, event: RuntimeEvent): void {
+    switch (event.type) {
+      case 'tool:start':
+        this.db.addToolCall({
+          id: event.callId,
+          runId: requestId,
+          toolName: event.toolName,
+          displayName: event.displayName,
+        })
+        break
+      case 'tool:output':
+        this.db.finishToolCall({
+          id: event.callId,
+          status: event.isError ? 'error' : 'ok',
+          outputPreview: event.text,
+          ...(event.isError ? { errorPreview: event.text } : {}),
+        })
+        break
+      case 'tool:end':
+        if (event.aborted) this.db.finishToolCall({ id: event.callId, status: 'aborted' })
+        break
+      case 'usage':
+        this.db.accumulateRunUsage(requestId, event)
+        break
+      case 'text:delta':
+        this.db.markRunFirstOutput(requestId)
+        break
+    }
   }
 }
 
