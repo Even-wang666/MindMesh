@@ -505,6 +505,16 @@ export class MindMeshServices {
       content,
       attachments: images,
     })
+    if (!runAgents.length) {
+      this.db.addMessage({
+        scope: 'space',
+        scopeId: spaceId,
+        authorType: 'system',
+        authorName: 'MindMesh',
+        content: '空间没有可执行的智能体，请先添加成员。',
+      })
+      return this.db.listMessages(spaceConversation)
+    }
     // One execution fans out to one run per selected agent; all share the
     // trigger message and execution id.
     const executionId = crypto.randomUUID()
@@ -519,15 +529,6 @@ export class MindMeshServices {
         selectedAgentIds: selected.map((agent) => agent.id),
       },
     })
-    if (!runAgents.length) {
-      this.db.addMessage({
-        scope: 'space',
-        scopeId: spaceId,
-        authorType: 'system',
-        authorName: 'MindMesh',
-        content: '空间没有可执行的智能体，请先添加成员。',
-      })
-    }
     for (const runAgent of runAgents) {
       if (this.shuttingDown || !this.db.getSpace(spaceId)) break
       if (!this.db.getAgent(runAgent.id)) continue

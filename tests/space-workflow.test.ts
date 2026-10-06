@@ -9,6 +9,34 @@ import type { CreateSpaceInput } from '../src/shared/contracts'
 import { mockHarness, mockProviderSettings } from './service-mocks'
 
 describe('sequential Space workflow', () => {
+  it('keeps empty-space feedback without creating an execution or starting a run', async () => {
+    const db = new MindMeshDatabase(':memory:')
+    const harness = mockHarness()
+    const service = new MindMeshServices(db, harness, mockProviderSettings(), () => undefined)
+    try {
+      const space = db.createSpace({ name: 'Empty', description: '', context: '', memberIds: [] })
+      const raw = (db as unknown as { db: DatabaseSync }).db
+      const counts = () =>
+        raw
+          .prepare(`SELECT
+        (SELECT COUNT(*) FROM executions) AS executions,
+        (SELECT COUNT(*) FROM runs) AS runs`)
+          .get()
+      const before = counts()
+      const messages = await service.sendSpace(space.id, 'review this task')
+      expect(messages).toEqual([
+        expect.objectContaining({ authorType: 'user', content: 'review this task' }),
+        expect.objectContaining({
+          authorType: 'system',
+          content: '空间没有可执行的智能体，请先添加成员。',
+        }),
+      ])
+      expect(counts()).toEqual(before)
+      expect(harness.run).not.toHaveBeenCalled()
+    } finally {
+      db.close()
+    }
+  })
   it('migrates schema 9 without losing order and persists detached execution snapshots', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mindmesh-workflow-'))
     const path = join(directory, 'workflow.db')
